@@ -28549,58 +28549,51 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const halfWidth = 1.15 + 0.40;   // 1.55m
     const halfLength = 2.70 + 0.45;  // 3.15m
 
-    // A. NGƯỜI ĐI BỘ TRÊN VỈA HÈ & BÀ GIÀ ĐI BỘ / XE MÁY
-    const npcsToCheck = [];
-    if (typeof sidewalkNpcs !== 'undefined' && Array.isArray(sidewalkNpcs)) {
-      for (let i = 0; i < sidewalkNpcs.length; i++) {
-        const n = sidewalkNpcs[i];
-        if (n && n.visible) npcsToCheck.push(n);
-      }
-    }
-    if (typeof grannyObstacles !== 'undefined' && Array.isArray(grannyObstacles)) {
-      for (let i = 0; i < grannyObstacles.length; i++) {
-        const g = grannyObstacles[i];
-        if (g && g.visible) npcsToCheck.push(g);
-      }
-    }
+    // A. NGƯỜI ĐI BỘ TRÊN VỈA HÈ & BÀ GIÀ ĐI BỘ / XE MÁY (ZERO PER-FRAME ALLOCATION)
+    function preventNpcCarPenetration(npcList) {
+      if (!npcList || !Array.isArray(npcList)) return;
+      for (let i = 0; i < npcList.length; i++) {
+        const npc = npcList[i];
+        if (!npc || !npc.visible) continue;
+        const dx = npc.position.x - carPos.x;
+        const dz = npc.position.z - carPos.z;
 
-    for (let i = 0; i < npcsToCheck.length; i++) {
-      const npc = npcsToCheck[i];
-      const dx = npc.position.x - carPos.x;
-      const dz = npc.position.z - carPos.z;
+        // Khoảng cách sơ bộ
+        if (dx * dx + dz * dz > 36.0) continue;
 
-      // Khoảng cách sơ bộ
-      if (dx * dx + dz * dz > 36.0) continue;
+        // Chuyển sang tọa độ cục bộ OBB của xe
+        const localX = dx * cosYaw - dz * sinYaw;
+        const localZ = dx * sinYaw + dz * cosYaw;
 
-      // Chuyển sang tọa độ cục bộ OBB của xe
-      const localX = dx * cosYaw - dz * sinYaw;
-      const localZ = dx * sinYaw + dz * cosYaw;
+        // Nếu người đi bộ chạm hoặc lọt vào vùng thân xe:
+        if (Math.abs(localX) < halfWidth && Math.abs(localZ) < halfLength) {
+          const overlapX = halfWidth - Math.abs(localX);
+          const overlapZ = halfLength - Math.abs(localZ);
 
-      // Nếu người đi bộ chạm hoặc lọt vào vùng thân xe:
-      if (Math.abs(localX) < halfWidth && Math.abs(localZ) < halfLength) {
-        const overlapX = halfWidth - Math.abs(localX);
-        const overlapZ = halfLength - Math.abs(localZ);
+          let resLocalX = localX;
+          let resLocalZ = localZ;
 
-        let resLocalX = localX;
-        let resLocalZ = localZ;
+          // Đẩy ra mép gần nhất
+          if (overlapX < overlapZ) {
+            resLocalX = localX >= 0 ? halfWidth : -halfWidth;
+          } else {
+            resLocalZ = localZ >= 0 ? halfLength : -halfLength;
+          }
 
-        // Đẩy ra mép gần nhất
-        if (overlapX < overlapZ) {
-          resLocalX = localX >= 0 ? halfWidth : -halfWidth;
-        } else {
-          resLocalZ = localZ >= 0 ? halfLength : -halfLength;
-        }
+          // Đổi ngược lại tọa độ thế giới và đẩy NPC ra ngoài thân xe tức thì
+          npc.position.x = carPos.x + (resLocalX * cosYaw + resLocalZ * sinYaw);
+          npc.position.z = carPos.z + (-resLocalX * sinYaw + resLocalZ * cosYaw);
 
-        // Đổi ngược lại tọa độ thế giới và đẩy NPC ra ngoài thân xe tức thì
-        npc.position.x = carPos.x + (resLocalX * cosYaw + resLocalZ * sinYaw);
-        npc.position.z = carPos.z + (-resLocalX * sinYaw + resLocalZ * cosYaw);
-
-        // Đảo hướng đi bộ nếu người đi bộ đang đi thẳng đâm vào xe
-        if (npc.userData && npc.userData.railDir) {
-          if (Math.random() < 0.2) npc.userData.railDir = -npc.userData.railDir;
+          // Đảo hướng đi bộ nếu người đi bộ đang đi thẳng đâm vào xe
+          if (npc.userData && npc.userData.railDir) {
+            if (Math.random() < 0.2) npc.userData.railDir = -npc.userData.railDir;
+          }
         }
       }
     }
+
+    if (typeof sidewalkNpcs !== 'undefined') preventNpcCarPenetration(sidewalkNpcs);
+    if (typeof grannyObstacles !== 'undefined') preventNpcCarPenetration(grannyObstacles);
 
     // B. XE NPC TRÊN ĐƯỜNG (allTrafficVehicles) KHÔNG ĐƯỢC ĐI XUYÊN XE NGƯỜI CHƠI
     if (typeof allTrafficVehicles !== 'undefined' && Array.isArray(allTrafficVehicles)) {
