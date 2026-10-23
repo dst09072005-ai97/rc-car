@@ -1,88 +1,115 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
-#include <ESP32Servo.h> // Cài đặt qua Arduino IDE: Tools -> Manage Libraries -> tìm "ESP32Servo" của Kevin Harrington
+#include <ESP32Servo.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h" // Cài đặt trong Arduino IDE: Tools -> Manage Libraries -> tìm "ESP32Servo" của Kevin Harrington
 
 // ============================================================================
-// 1. CẤU HÌNH PHẦN CỨNG XE RC TIÊU CHUẨN (CHỈ DÙNG ĐÚNG 2 CHÂN TÍN HIỆU)
-// ============================================================================
-// SƠ ĐỒ ĐẤU NỐI CHUẨN XE RC CHUYÊN NGHIỆP:
-//
-// [1] SERVO LÁI (Rẽ Trái / Phải - Chuẩn 3 dây):
-//     - Dây Cam / Trắng (Tín hiệu PWM) -> Chân GPIO 12 của ESP32
-//     - Dây Đỏ (Nguồn dương 5V)        -> Chân 5V (hoặc VIN) của ESP32
-//     - Dây Nâu / Đen (GND)            -> Chân GND của ESP32
-//
-// [2] ESC ĐIỀU TỐC ĐỘNG CƠ (Ga Tiến / Thắng / Lùi - Chuẩn 3 dây có BEC):
-//     - Dây Trắng (Tín hiệu PWM)       -> Chân GPIO 13 của ESP32
-//     - Dây Đỏ (Nguồn BEC 5V từ ESC)   -> Cấp ngược lại nuôi chân 5V/VIN của ESP32 (Không cần nguồn ngoài!)
-//     - Dây Đen (GND chung)            -> Chân GND của ESP32
-//
-// LƯU Ý QUAN TRỌNG:
-// - Nguồn Pin LiPo (2S 7.4V hoặc 3S 11.1V) cắm trực tiếp vào giắc pin của ESC.
-// - BEC tích hợp sẵn trong ESC sẽ tự hạ áp xuống 5V để nuôi cả ESP32 và Servo.
-// ============================================================================
-
-const int PIN_SERVO = 12; // 1 chân duy nhất điều khiển Servo bẻ lái
-const int PIN_ESC   = 13; // 1 chân duy nhất điều khiển ESC ga/thắng/lùi
-
-Servo steerServo;
-Servo throttleEsc;
-
-// ============================================================================
-// 2. CẤU HÌNH WI-FI & CỔNG UDP ĐIỀU KHIỂN
+// 1. CẤU HÌNH WI-FI CHO MẠCH ĐIỀU KHIỂN XE RC (CÙNG MẠNG VỚI MÁY TÍNH WEB)
 // ============================================================================
 const char* WIFI_SSID = "BETEA";
-const char* WIFI_PASS = "daihongbao"; // <-- Điền mật khẩu Wi-Fi của bạn vào đây
+const char* WIFI_PASS = "daihongbao"; // <-- ĐIỀN MẬT KHẨU WI-FI CỦA BẠN VÀO ĐÂY
 
-// Cổng UDP lắng nghe lệnh từ Web Simulator / WebXR (Mặc định: 4210)
+// Cổng UDP nhận lệnh điều khiển lái & ga từ Web Simulator (Mặc định 4210)
 const unsigned int LOCAL_UDP_PORT = 4210;
 WiFiUDP udp;
+
+// ============================================================================
+// 2. CHỌN LOẠI PHẦN CỨNG XE RC CỦA BẠN:
+//    - Đặt = 0 nếu dùng XE RC CHUẨN (Servo lái + ESC điều tốc động cơ) [KHUYÊN DÙNG]
+//    - Đặt = 1 nếu dùng XE DIY DRIVER L298N / TB6612 (Servo lái + Động cơ DC IN1/IN2)
+// ============================================================================
+#define USE_L298N_MOTOR_DRIVER 0
+
+// Chân điều khiển Servo bẻ lái (Trái / Phải)
+const int PIN_SERVO_STEER = 12;
+
+#if USE_L298N_MOTOR_DRIVER == 0
+  // CẤU HÌNH A: RC ESC (Bộ điều tốc chuẩn RC 3 dây: Trắng-Đỏ-Đen)
+  const int PIN_ESC_THROTTLE = 13; // Chân xung PWM điều khiển ESC
+  Servo escThrottle;
+#else
+  // CẤU HÌNH B: Mạch cầu H L298N / TB6612
+  const int PIN_MOTOR_PWM = 13; // Chân ENA (Tốc độ)
+  const int PIN_MOTOR_IN1 = 14; // Chân IN1 (Chiều quay)
+  const int PIN_MOTOR_IN2 = 27; // Chân IN2 (Chiều quay)
+#endif
+
+Servo steeringServo;
 
 // ============================================================================
 // 3. THÔNG SỐ VẬN HÀNH & CƠ CHẾ DỪNG AN TOÀN (FAILSAFE)
 // ============================================================================
 unsigned long lastPacketTime = 0;
-const unsigned long FAILSAFE_TIMEOUT_MS = 500; // Mất tín hiệu quá 0.5s -> Phanh dừng ga và trả thẳng lái
+const unsigned long FAILSAFE_TIMEOUT_MS = 500; // Mất tín hiệu quá 0.5s -> Tự động phanh dừng hẳn
 bool isFailsafeActive = false;
 
-int16_t currentSteer = 90;      // Góc lái: 45° (Hết lái trái) - 90° (Thẳng) - 135° (Hết lái phải)
-int16_t currentThrottle = 1500;  // Xung ga: 1000us (Lùi hết cỡ) - 1500us (Dừng) - 2000us (Tiến hết cỡ)
+int16_t currentSteer = 90;     // Góc lái: 45° (Hết lái trái) - 90° (Thẳng) - 135° (Hết lái phải)
+int16_t currentThrottle = 1500; // Xung ga: 1000us (Lùi hết ga) - 1500us (Dừng) - 2000us (Tiến hết ga)
+
+void applyMotorThrottle(int16_t throttle) {
+#if USE_L298N_MOTOR_DRIVER == 0
+  // Xuất xung PWM 50Hz chuẩn ESC (1000us - 1500us - 2000us)
+  escThrottle.writeMicroseconds(throttle);
+#else
+  // Điều khiển L298N: 1500us là dừng, >1520us là tiến, <1480us là lùi
+  if (throttle > 1520) {
+    int pwm = map(throttle, 1520, 2000, 50, 255);
+    digitalWrite(PIN_MOTOR_IN1, HIGH);
+    digitalWrite(PIN_MOTOR_IN2, LOW);
+    analogWrite(PIN_MOTOR_PWM, pwm);
+  } else if (throttle < 1480) {
+    int pwm = map(throttle, 1480, 1000, 50, 255);
+    digitalWrite(PIN_MOTOR_IN1, LOW);
+    digitalWrite(PIN_MOTOR_IN2, HIGH);
+    analogWrite(PIN_MOTOR_PWM, pwm);
+  } else {
+    // Phanh dừng
+    digitalWrite(PIN_MOTOR_IN1, LOW);
+    digitalWrite(PIN_MOTOR_IN2, LOW);
+    analogWrite(PIN_MOTOR_PWM, 0);
+  }
+#endif
+}
 
 void setup() {
+  // Tắt bộ ngắt sụt áp Brownout để mạch không bị reset khi servo/motor kéo dòng từ pin
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
   Serial.begin(115200);
-  delay(500);
+  delay(1000);
   Serial.println("\n=======================================================");
-  Serial.println("  [ESP32 RC CAR] HỆ THỐNG ĐIỀU KHIỂN XE RC CHUẨN 2 CHÂN");
-  Serial.println("  - Servo Lái: GPIO 12");
-  Serial.println("  - ESC Ga:    GPIO 13");
+  Serial.println("  [ESP32 XE RC DIGITAL TWIN] HỆ THỐNG ĐIỀU KHIỂN XE");
   Serial.println("=======================================================");
 
-  // 1. Phân bổ Timer PWM phần cứng trên ESP32
+  // Khởi tạo bộ đếm PWM ESP32
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
 
-  // 2. Gắn chân Servo lái (Tần số 50Hz, góc 45° - 135°)
-  steerServo.setPeriodHertz(50);
-  steerServo.attach(PIN_SERVO, 500, 2500);
-  steerServo.write(90); // Trả thẳng bánh xe ngay khi bật nguồn
+  steeringServo.setPeriodHertz(50);
+  steeringServo.attach(PIN_SERVO_STEER, 500, 2500);
+  steeringServo.write(90); // Trả thẳng lái (90 độ)
 
-  // 3. Gắn chân ESC điều tốc động cơ (Tần số 50Hz, xung 1000us - 2000us)
-  throttleEsc.setPeriodHertz(50);
-  throttleEsc.attach(PIN_ESC, 1000, 2000);
-  throttleEsc.writeMicroseconds(1500); // Đặt mức Neutral 1500us (Dừng ga)
+#if USE_L298N_MOTOR_DRIVER == 0
+  escThrottle.setPeriodHertz(50);
+  escThrottle.attach(PIN_ESC_THROTTLE, 1000, 2000);
+  escThrottle.writeMicroseconds(1500); // Mức trung tính (dừng ga)
+  Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + ESC Động Cơ (GPIO 13)");
+#else
+  pinMode(PIN_MOTOR_IN1, OUTPUT);
+  pinMode(PIN_MOTOR_IN2, OUTPUT);
+  pinMode(PIN_MOTOR_PWM, OUTPUT);
+  applyMotorThrottle(1500);
+  Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + L298N (IN1=14, IN2=27, PWM=13)");
+#endif
 
-  // 4. Quy trình Arming an toàn cho ESC:
-  // Hầu hết các loại ESC RC (Hobbywing, Surpass, Tamiya...) cần nhận xung 1500us
-  // trong khoảng 1.5 giây đầu để kêu tiếng bíp mở khóa ga an toàn (Arming).
-  Serial.println("[ESC] Đang giữ mức Neutral 1500us để mở khóa (Arming) ESC...");
-  delay(1500);
-  Serial.println("[ESC] Đã mở khóa ESC thành công (Sẵn sàng chạy)!");
-
-  // 5. Kết nối Wi-Fi (Thử mạng chính trong 4.5 giây, nếu không có sẽ tự phát SoftAP)
+  // Kết nối Wi-Fi cùng mạng BETEA
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("[WiFi] Đang kết nối tới: ");
+  Serial.print("[WiFi] Đang kết nối tới mạng: ");
   Serial.println(WIFI_SSID);
 
   int attempts = 0;
@@ -93,98 +120,108 @@ void setup() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[WiFi] ĐÃ KẾT NỐI WI-FI THÀNH CÔNG!");
+    Serial.println("\n[WiFi] KẾT NỐI WI-FI THÀNH CÔNG!");
     Serial.print("[WiFi] IP CỦA XE LÀ: ");
     Serial.println(WiFi.localIP());
-    Serial.println("--> Nhập IP này vào giao diện Web để bắt đầu lái!");
+    Serial.println("--> HÃY NHẬP IP NÀY VÀO Ô 'IP MẠCH LÁI XE' TRÊN TRÌNH DUYỆT ĐỂ NỐI XE!");
   } else {
-    // Không có mạng nhà -> Tự phát sóng Wi-Fi để điện thoại / kính Quest kết nối trực tiếp
-    Serial.println("\n[WiFi] Không có Wi-Fi nhà -> Tự động phát SoftAP: FPV_RC_CAR");
+    Serial.println("\n[WiFi] Không kết nối được Wi-Fi chính -> Bật Wi-Fi phát trực tiếp (AP) FPV_RC_CAR");
     WiFi.mode(WIFI_AP);
     WiFi.softAP("FPV_RC_CAR", "12345678");
-    Serial.print("[WiFi] IP SoftAP của Xe: ");
+    Serial.print("[WiFi] IP AP của Xe: ");
     Serial.println(WiFi.softAPIP());
   }
 
-  // Khởi động lắng nghe gói tin điều khiển UDP
+  // Khởi động cổng nhận UDP từ Server Node.js
   udp.begin(LOCAL_UDP_PORT);
-  Serial.printf("[UDP] Đang lắng nghe tín hiệu điều khiển tại cổng: %d\n", LOCAL_UDP_PORT);
+  Serial.printf("[UDP] Đang lắng nghe tín hiệu lái xe tại cổng: %d\n", LOCAL_UDP_PORT);
+
+  // Gửi gói tin thông báo tự động (Beacon) tới Server Node.js qua UDP Broadcast
+  IPAddress initIp = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP() : WiFi.softAPIP();
+  udp.beginPacket("255.255.255.255", LOCAL_UDP_PORT);
+  String initBeacon = "{\"type\":\"ESP32_CAR\",\"role\":\"car\",\"port\":4210,\"ip\":\"" + initIp.toString() + "\"}";
+  udp.write((const uint8_t*)initBeacon.c_str(), initBeacon.length());
+  udp.endPacket();
+
   Serial.println("=======================================================\n");
 }
 
 void loop() {
-  // 1. Nhận gói tin điều khiển UDP từ Web Simulator / WebXR (Cổng 4210)
+  // 1. Nhận gói tin UDP điều khiển từ Web Simulator (Cổng 4210)
   int packetSize = udp.parsePacket();
   if (packetSize > 0) {
     uint8_t buffer[64];
     int len = udp.read(buffer, sizeof(buffer) - 1);
     buffer[len] = 0;
 
-    int16_t steer = currentSteer;
-    int16_t throttle = currentThrottle;
-    bool hasValidData = false;
+    // A. Gói tin nhị phân tốc độ cao 4 bytes: [Góc lái int16_t, Xung ga int16_t]
+    if (len >= 4) {
+      int16_t steer = buffer[0] | (buffer[1] << 8);
+      int16_t throttle = buffer[2] | (buffer[3] << 8);
 
-    // Định dạng A: Gói tin nhị phân tốc độ cao 4 bytes [int16_t steer, int16_t throttle]
-    if (len >= 4 && buffer[0] != '{') {
-      steer = (int16_t)(buffer[0] | (buffer[1] << 8));
-      throttle = (int16_t)(buffer[2] | (buffer[3] << 8));
-      hasValidData = true;
-    }
-    // Định dạng B: Gói tin JSON {"steer":90,"throttle":1500}
-    else if (buffer[0] == '{') {
-      int sVal = 90, tVal = 1500;
-      if (sscanf((char*)buffer, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) >= 1) {
-        steer = sVal;
-        throttle = tVal;
-        hasValidData = true;
-      }
-    }
+      steer = constrain(steer, 45, 135);        // 45° (trái) -> 90° (thẳng) -> 135° (phải)
+      throttle = constrain(throttle, 1000, 2000); // 1000us (lùi) -> 1500us (dừng) -> 2000us (tiến)
 
-    if (hasValidData) {
-      // Giới hạn biên an toàn:
-      // Góc lái Servo: 45° (Hết lái trái) -> 90° (Thẳng) -> 135° (Hết lái phải)
-      steer = constrain(steer, 45, 135);
-
-      // Xung ga ESC: 1000us (Lùi hết ga) -> 1500us (Dừng) -> 2000us (Tiến hết ga)
-      throttle = constrain(throttle, 1000, 2000);
-
-      // Xuất xung trực tiếp ra Servo lái
       if (steer != currentSteer) {
-        steerServo.write(steer);
+        steeringServo.write(steer);
         currentSteer = steer;
       }
-
-      // Xuất xung trực tiếp ra ESC động cơ
       if (throttle != currentThrottle) {
-        throttleEsc.writeMicroseconds(throttle);
+        applyMotorThrottle(throttle);
         currentThrottle = throttle;
       }
 
       lastPacketTime = millis();
       isFailsafeActive = false;
     }
+    // B. Dự phòng gói tin JSON nếu có công cụ khác gửi qua UDP
+    else if (buffer[0] == '{') {
+      char* str = (char*)buffer;
+      int sVal = 90, tVal = 1500;
+      if (sscanf(str, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) == 2) {
+        sVal = constrain(sVal, 45, 135);
+        tVal = constrain(tVal, 1000, 2000);
+        steeringServo.write(sVal);
+        applyMotorThrottle(tVal);
+        currentSteer = sVal;
+        currentThrottle = tVal;
+        lastPacketTime = millis();
+        isFailsafeActive = false;
+      }
+    }
   }
 
-  // 2. CƠ CHẾ DỪNG AN TOÀN (FAILSAFE):
-  // Nếu mất sóng Wi-Fi hoặc Web tắt quá 0.5s -> Xe lập tức dừng ga và trả thẳng lái!
+  // 2. TỰ ĐỘNG DỪNG AN TOÀN (FAILSAFE):
+  // Nếu Web đóng, ngắt kết nối hoặc mạng lag quá 0.5s -> Xe lập tức dừng ga và trả thẳng lái!
   if (!isFailsafeActive && (millis() - lastPacketTime > FAILSAFE_TIMEOUT_MS)) {
-    throttleEsc.writeMicroseconds(1500); // Ngắt ga về Neutral (Dừng hẳn)
-    steerServo.write(90);                // Trả thẳng góc lái
-    currentThrottle = 1500;
+    applyMotorThrottle(1500); // Tự động ngắt ga về 0 (Neutral)
+    steeringServo.write(90);  // Trả thẳng góc lái
     currentSteer = 90;
+    currentThrottle = 1500;
     isFailsafeActive = true;
   }
 
-  // 3. Báo cáo trạng thái vận hành ra Serial Monitor mỗi 2 giây
-  static unsigned long lastLogTime = 0;
-  if (millis() - lastLogTime >= 2000) {
-    lastLogTime = millis();
+  // 3. In trạng thái lên Serial Monitor mỗi 2 giây
+  static unsigned long lastLog = 0;
+  if (millis() - lastLog >= 2000) {
+    lastLog = millis();
     if (isFailsafeActive) {
-      Serial.println("[FAILSAFE] Đang chờ lệnh từ Web... (Xe đang dừng an toàn)");
+      Serial.println("[CHỜ LỆNH] Chưa có tín hiệu lái từ Web (Đang giữ an toàn: Dừng xe)");
     } else {
-      const char* dir = (currentThrottle > 1520) ? "TIẾN" : ((currentThrottle < 1480) ? "LÙI" : "DỪNG");
-      Serial.printf("[LÁI XE] Lái: %3d° | Ga ESC: %4dus | Trạng thái: [%s]\n",
-                    currentSteer, currentThrottle, dir);
+      Serial.printf("[ĐANG LÁI] Lái: %d° | Xung ga: %dus -> [%s]\n",
+                    currentSteer, currentThrottle,
+                    currentThrottle > 1520 ? "TIẾN" : (currentThrottle < 1480 ? "LÙI" : "DỪNG"));
     }
+  }
+
+  // 4. Phát beacon tự động mỗi 2.5 giây để Server/Trình duyệt luôn tự động nhận diện được IP xe
+  static unsigned long lastBeaconTime = 0;
+  if (millis() - lastBeaconTime >= 2500) {
+    lastBeaconTime = millis();
+    IPAddress currentIp = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP() : WiFi.softAPIP();
+    udp.beginPacket("255.255.255.255", LOCAL_UDP_PORT);
+    String beacon = "{\"type\":\"ESP32_CAR\",\"role\":\"car\",\"port\":4210,\"ip\":\"" + currentIp.toString() + "\",\"steer\":" + String(currentSteer) + ",\"throttle\":" + String(currentThrottle) + "}";
+    udp.write((const uint8_t*)beacon.c_str(), beacon.length());
+    udp.endPacket();
   }
 }

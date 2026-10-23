@@ -297,6 +297,36 @@ const discoveredEsp32Cams = {
   rear: { ip: null, port: 4213, lastSeen: 0 }
 };
 
+// Cấu hình mạch điều khiển xe RC thật (ESP32 Car Controller - GPIO 12/13 qua UDP 4210)
+const esp32CarConfig = {
+  ip: null,
+  port: 4210,
+  lastSeen: 0,
+  lastSentTime: 0,
+  packetsSent: 0
+};
+
+// Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
+function sendUdpCarCommand(steer, throttle) {
+  if (!esp32CarConfig.ip) return;
+  // Giới hạn biên an toàn tuyệt đối
+  const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
+  const t = Math.max(1000, Math.min(2000, Math.round(Number(throttle) || 1500)));
+
+  const buf = Buffer.alloc(4);
+  buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)
+  buf.writeInt16LE(t, 2); // Little Endian int16: Xung ga 1000..2000 (1500 dừng)
+
+  try {
+    udpServer.send(buf, 0, 4, esp32CarConfig.port || 4210, esp32CarConfig.ip, (err) => {
+      if (!err) {
+        esp32CarConfig.lastSentTime = Date.now();
+        esp32CarConfig.packetsSent++;
+      }
+    });
+  } catch (err) {}
+}
+
 let latestEsp32Telemetry = {
   connected: false,
   lastPacketTime: 0,
@@ -326,6 +356,15 @@ udpServer.on('message', (msg, rinfo) => {
       };
       console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${rinfo.address}:${data.port || 4213}`);
       return; // Chỉ cập nhật IP Camera, KHÔNG ghi đè telemetry xe!
+    }
+
+    // Tự động nhận diện IP của Mạch Lái Xe ESP32 (Controller GPIO 12/13 qua UDP 4210)
+    if (data.type === 'ESP32_CAR' || data.type === 'ESP32_CAR_ANNOUNCE' || data.role === 'car') {
+      esp32CarConfig.ip = rinfo.address;
+      esp32CarConfig.port = Number(data.port || 4210);
+      esp32CarConfig.lastSeen = Date.now();
+      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${esp32CarConfig.port}`);
+      return;
     }
 
     // Chỉ nhận Telemetry nếu gói tin thực sự chứa thông số lái xe ESP32 Twin / Godot
@@ -365,15 +404,40 @@ app.get('/api/esp32-telemetry', (req, res) => {
 
 // Endpoint tự động đăng ký IP cho ESP32 qua HTTP khi mạch vừa kết nối Wi-Fi mới
 app.get('/api/register-esp32', (req, res) => {
-  const role = (req.query.role === 'rear' || req.query.cam === 'rear') ? 'rear' : 'front';
+  const role = req.query.role || req.query.cam || 'front';
   const ip = req.query.ip || req.ip.replace('::ffff:', '');
-  const port = Number(req.query.port || 4213);
-  discoveredEsp32Cams[role] = { ip, port, lastSeen: Date.now() };
-  console.log(`[HTTP REGISTRATION] ESP32 ${role.toUpperCase()} đã đăng ký IP mới: ${ip}:${port}`);
-  res.json({ status: 'ok', role, ip, port });
+  const port = Number(req.query.port || (role === 'car' ? 4210 : 4213));
+
+  if (role === 'car') {
+    esp32CarConfig.ip = ip;
+    esp32CarConfig.port = port;
+    esp32CarConfig.lastSeen = Date.now();
+    console.log(`[HTTP REGISTRATION] ESP32 CAR CONTROLLER đã đăng ký IP mới: ${ip}:${port}`);
+    return res.json({ status: 'ok', role: 'car', ip, port });
+  }
+
+  const camRole = role === 'rear' ? 'rear' : 'front';
+  discoveredEsp32Cams[camRole] = { ip, port, lastSeen: Date.now() };
+  console.log(`[HTTP REGISTRATION] ESP32 ${camRole.toUpperCase()} đã đăng ký IP mới: ${ip}:${port}`);
+  res.json({ status: 'ok', role: camRole, ip, port });
 });
 
-// Endpoint cho Web Client hỏi danh sách IP Camera vừa phát hiện
+// Endpoint cấu hình hoặc kiểm tra IP mạch lái xe RC (Controller)
+app.all('/api/set-esp32-car-ip', (req, res) => {
+  const ip = (req.body && req.body.ip) || req.query.ip;
+  const port = Number((req.body && req.body.port) || req.query.port || 4210);
+  if (ip) {
+    esp32CarConfig.ip = String(ip).trim().replace('::ffff:', '');
+    esp32CarConfig.port = port;
+    esp32CarConfig.lastSeen = Date.now();
+    console.log(`[CAR IP CONFIGURED] IP Mạch Lái Xe RC đã được đặt: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
+    res.json({ success: true, carIp: esp32CarConfig.ip, port: esp32CarConfig.port });
+  } else {
+    res.status(400).json({ error: 'Missing IP parameter' });
+  }
+});
+
+// Endpoint cho Web Client hỏi danh sách IP Camera & Mạch Lái Xe vừa phát hiện
 app.get('/api/esp32-discovered', (req, res) => {
   const now = Date.now();
   res.json({
@@ -386,6 +450,11 @@ app.get('/api/esp32-discovered', (req, res) => {
       ...discoveredEsp32Cams.rear,
       active: (now - (discoveredEsp32Cams.rear.lastSeen || 0)) < 20000,
       ageSec: Math.round((now - (discoveredEsp32Cams.rear.lastSeen || 0)) / 1000)
+    },
+    car: {
+      ...esp32CarConfig,
+      active: (now - (esp32CarConfig.lastSeen || 0)) < 20000,
+      ageSec: Math.round((now - (esp32CarConfig.lastSeen || 0)) / 1000)
     }
   });
 });
@@ -630,6 +699,16 @@ function attachMultiplayerServer(serverInstance) {
               client.send(JSON.stringify(data));
             }
           }
+        } else if (data.type === 'CAR_CONTROL') {
+          // Điều khiển trực tiếp Mạch Xe RC Thật qua UDP 4210 (Góc lái 45..135, Xung ga 1000..2000)
+          sendUdpCarCommand(data.steer, data.throttle);
+        } else if (data.type === 'SET_ESP32_CAR_IP') {
+          if (data.ip) {
+            esp32CarConfig.ip = String(data.ip).trim().replace('::ffff:', '');
+            if (data.port) esp32CarConfig.port = Number(data.port);
+            esp32CarConfig.lastSeen = Date.now();
+            console.log(`[WS] ESP32 CAR IP cập nhật từ client: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
+          }
         }
         broadcastWorldState(wss);
       } catch (e) {}
@@ -654,6 +733,10 @@ function attachMultiplayerServer(serverInstance) {
         }
       }
       players.delete(playerId);
+      if (players.size === 0 || isFirstPlayer) {
+        // Phanh dừng xe an toàn khi tài xế hoặc tất cả người chơi thoát web
+        sendUdpCarCommand(90, 1500);
+      }
       broadcastWorldState(wss);
     });
   });

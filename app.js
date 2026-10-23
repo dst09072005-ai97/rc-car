@@ -20060,6 +20060,22 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
       const frontInput = document.getElementById('esp32-front-ip');
       const rearInput = document.getElementById('esp32-rear-ip');
+      const carInput = document.getElementById('esp32-car-ip');
+      const carStatus = document.getElementById('esp32-car-status');
+
+      // Tự động cập nhật IP Mạch Lái Xe nếu phát hiện IP mới
+      if (data.car && data.car.ip) {
+        if (carInput && (!carInput.value || carInput.value !== data.car.ip)) {
+          carInput.value = data.car.ip;
+          localStorage.setItem('esp32_car_ip', data.car.ip);
+        }
+        state.esp32CarIp = data.car.ip;
+        state.esp32CarConnected = Boolean(data.car.active);
+        if (carStatus) {
+          carStatus.textContent = data.car.active ? `🟢 Đã nối xe (${data.car.ip}:4210)` : `🟠 Thấy xe (${data.car.ip} - Chờ lệnh)`;
+          carStatus.style.color = data.car.active ? '#00ff88' : '#ff9500';
+        }
+      }
 
       // Tự động cập nhật IP Cam Trước nếu phát hiện IP mới
       if (data.front && data.front.ip) {
@@ -20124,14 +20140,88 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  // Gắn sự kiện nút bấm quét
+  // Gắn sự kiện nút bấm quét & kết nối mạch lái xe
   function initDiscoveryUi() {
     document.getElementById('btn-auto-discover-esp32')?.addEventListener('click', triggerManualEsp32Scan);
+
+    // Cấu hình mạch lái xe ESP32 Car Controller
+    const carInput = document.getElementById('esp32-car-ip');
+    const carStatus = document.getElementById('esp32-car-status');
+    const btnConnectCar = document.getElementById('btn-connect-car-esp32');
+    const btnInvertSteer = document.getElementById('btn-toggle-invert-steer');
+    const btnTestPulse = document.getElementById('btn-test-esp32-pulse');
+
+    const savedCarIp = localStorage.getItem('esp32_car_ip');
+    if (savedCarIp && carInput) {
+      carInput.value = savedCarIp;
+      state.esp32CarIp = savedCarIp;
+    }
+
+    function applyCarIp(ip) {
+      if (!ip) return;
+      const cleanIp = ip.trim().replace(/^https?:\/\//, '').replace(/^ws:\/\//, '').split(':')[0];
+      state.esp32CarIp = cleanIp;
+      localStorage.setItem('esp32_car_ip', cleanIp);
+      if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+        mpSocket.send(JSON.stringify({ type: 'SET_ESP32_CAR_IP', ip: cleanIp, port: 4210 }));
+      }
+      fetch(`/api/set-esp32-car-ip?ip=${encodeURIComponent(cleanIp)}`).catch(() => {});
+      if (carStatus) {
+        carStatus.textContent = `🟢 Đã nối (${cleanIp}:4210)`;
+        carStatus.style.color = '#00ff88';
+      }
+      state.lastActionLog = `🚗 Đã lưu & kết nối Mạch Lái Xe ESP32: ${cleanIp}:4210`;
+    }
+
+    btnConnectCar?.addEventListener('click', () => {
+      const ip = carInput ? carInput.value.trim() : '';
+      if (ip) applyCarIp(ip);
+    });
+
+    carInput?.addEventListener('change', () => {
+      const ip = carInput ? carInput.value.trim() : '';
+      if (ip) applyCarIp(ip);
+    });
+
+    // Đảo góc bẻ lái Servo (Invert Steering)
+    state.invertCarSteer = localStorage.getItem('invert_car_steer') === 'true';
+    if (btnInvertSteer && state.invertCarSteer) {
+      btnInvertSteer.style.background = '#ff9500';
+      btnInvertSteer.textContent = '🔄 Đảo Lái: BẬT (Ngược)';
+    }
+    btnInvertSteer?.addEventListener('click', () => {
+      state.invertCarSteer = !state.invertCarSteer;
+      localStorage.setItem('invert_car_steer', state.invertCarSteer ? 'true' : 'false');
+      btnInvertSteer.style.background = state.invertCarSteer ? '#ff9500' : '#1f3354';
+      btnInvertSteer.textContent = state.invertCarSteer ? '🔄 Đảo Lái: BẬT (Ngược)' : '🔄 Đảo Lái (Trái/Phải)';
+    });
+
+    // Nút Test Lắc Bánh Xe (Pulse Servo)
+    btnTestPulse?.addEventListener('click', () => {
+      if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
+        state.lastActionLog = '⚠️ Chưa kết nối máy chủ WebSocket!';
+        return;
+      }
+      state.lastActionLog = '⚡ Đang gửi xung Test Lắc Bánh Xe (60° -> 120° -> 90°)...';
+      mpSocket.send(JSON.stringify({ type: 'CAR_CONTROL', steer: 60, throttle: 1500 }));
+      setTimeout(() => {
+        if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+          mpSocket.send(JSON.stringify({ type: 'CAR_CONTROL', steer: 120, throttle: 1500 }));
+        }
+      }, 300);
+      setTimeout(() => {
+        if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+          mpSocket.send(JSON.stringify({ type: 'CAR_CONTROL', steer: 90, throttle: 1500 }));
+        }
+      }, 600);
+    });
+
     // Quét ngay 1 lần lúc vừa tải trang
     setTimeout(checkDiscoveredEsp32Ips, 1200);
 
-    // Tự động kích hoạt kết nối camera trước & sau dựa trên giá trị trong ô input (hoặc giá trị mặc định)
+    // Tự động kích hoạt kết nối camera trước & sau & car ip dựa trên giá trị trong ô input
     setTimeout(() => {
+      if (savedCarIp) applyCarIp(savedCarIp);
       const frontInput = document.getElementById('esp32-front-ip');
       const rearInput = document.getElementById('esp32-rear-ip');
       if (frontInput && frontInput.value && !state.esp32Connected) {
@@ -20238,9 +20328,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  // 3. GẮN VÀO KHUNG RENDER CHÍNH scene.onBeforeRender
+  // 3. GẮN VÀO KHUNG RENDER CHÍNH scene.onBeforeRender & TRUYỀN LỆNH LÁI XE ESP32
   const prevBeforeRenderV185 = scene.onBeforeRender;
   let lastV185Time = performance.now();
+  let lastCarControlSendTime = 0;
+  const carControlPacket = { type: 'CAR_CONTROL', steer: 90, throttle: 1500 };
 
   scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (typeof prevBeforeRenderV185 === 'function') {
@@ -20254,5 +20346,40 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     lastV185Time = now;
 
     resolveVehicleNpcCollisions(dt);
+
+    // Gửi lệnh điều khiển xe thật qua WebSocket tới server.js (25Hz = 40ms/lần, Zero Per-Frame Allocation)
+    if (now - lastCarControlSendTime >= 40) {
+      lastCarControlSendTime = now;
+      if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+        let steer = 90;
+        let throttle = 1500;
+
+        if (state.playerMode === 'DRIVING') {
+          // A. Tính góc bẻ lái Servo (45°..135°, 90° là thẳng)
+          let steerRatio = THREE.MathUtils.clamp(state.steeringAngleDeg / 450.0, -1.0, 1.0);
+          if (state.invertCarSteer) steerRatio = -steerRatio;
+          steer = Math.round(90 + steerRatio * 45);
+          steer = THREE.MathUtils.clamp(steer, 45, 135);
+
+          // B. Tính xung ga ESC (1000..2000us, 1500us là dừng/phanh)
+          if (!state.engineRunning || state.brakePercent > 8) {
+            throttle = 1500;
+          } else if (state.gearIndex === 1) { // Số R: Lùi (1500us -> 1000us)
+            const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
+            throttle = Math.round(1500 - (pct / 100.0) * 500);
+          } else if (state.gearIndex === 3) { // Số D: Tiến (1500us -> 2000us)
+            const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
+            throttle = Math.round(1500 + (pct / 100.0) * 500);
+          } else {
+            throttle = 1500;
+          }
+          throttle = THREE.MathUtils.clamp(throttle, 1000, 2000);
+        }
+
+        carControlPacket.steer = steer;
+        carControlPacket.throttle = throttle;
+        mpSocket.send(JSON.stringify(carControlPacket));
+      }
+    }
   };
 })();
