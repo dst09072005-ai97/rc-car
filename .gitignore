@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs & packages
+dist/
+*.apk
+*.aab
+*.zip
+
+# Prevent duplicating files between root junctions and v2 www
+v2/golden_baseline_v2_20261020/www/libs/
+v2/golden_baseline_v2_20261020/www/models/
+v2/golden_baseline_v2_20261020/www/textures/
+
+# SSL / TLS certificates & private keys
+tools/*.pem
+*.pem
+*.key
+*.crt
+
+# Operating system & Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
