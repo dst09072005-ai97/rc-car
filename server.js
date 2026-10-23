@@ -749,8 +749,8 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`[HTTP] Server đang chạy tại: http://localhost:${HTTP_PORT}`);
 });
 
-const certPath = path.resolve(__dirname, '../tools/cert.pem');
-const keyPath = path.resolve(__dirname, '../tools/key.pem');
+const certPath = fs.existsSync(path.resolve(__dirname, 'tools/cert.pem')) ? path.resolve(__dirname, 'tools/cert.pem') : path.resolve(__dirname, '../tools/cert.pem');
+const keyPath = fs.existsSync(path.resolve(__dirname, 'tools/key.pem')) ? path.resolve(__dirname, 'tools/key.pem') : path.resolve(__dirname, '../tools/key.pem');
 if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
   const httpsServer = https.createServer(
     { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
