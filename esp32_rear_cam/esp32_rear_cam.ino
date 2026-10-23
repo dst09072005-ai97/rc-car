@@ -114,8 +114,8 @@ void setup() {
   Serial.println(WIFI_SSID);
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 35) {
-    delay(350);
+  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+    delay(300);
     Serial.print(".");
     attempts++;
   }

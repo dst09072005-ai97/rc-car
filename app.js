@@ -1496,20 +1496,32 @@ function createWindowTex() {
   return tex;
 }
 const buildingTex = createWindowTex();
+// TỐI ƯU HÓA HÌNH HỌC VÀ VẬT LIỆU DÙNG CHUNG (TIẾT KIỆM >800 GEOMETRY/MATERIAL INSTANCES)
+const matBuilding = new THREE.MeshStandardMaterial({ map: buildingTex, roughness: 0.35 });
+const geoRoadPlane = new THREE.PlaneGeometry(BLOCK_SIZE, BLOCK_SIZE);
+const geoLaneYellow = new THREE.PlaneGeometry(0.3, BLOCK_SIZE);
+const geoSidewalkBox = new THREE.BoxGeometry(22, 0.24, 22);
+const geoLampPole = new THREE.CylinderGeometry(0.08, 0.12, 5.8, 8);
+const geoLampArm = new THREE.BoxGeometry(1.2, 0.08, 0.08);
+const geoLampBulb = new THREE.SphereGeometry(0.18, 10, 10);
+const matLampBulb = new THREE.MeshBasicMaterial({ color: 0xfff2bb });
+const geoLampCone = new THREE.ConeGeometry(3.2, 5.65, 20, 1, true);
+const geoTrafficPole = new THREE.CylinderGeometry(0.09, 0.12, 4.6, 8);
+const geoTrafficBox = new THREE.BoxGeometry(0.38, 1.05, 0.25);
+const geoTrafficBulb = new THREE.SphereGeometry(0.11, 8, 8);
 
 function createStreetLampWithRefraction(x, z, addRealLight = false) {
   const lampGroup = new THREE.Group();
   lampGroup.position.set(x, 0, z);
 
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 5.8, 8), matPole);
+  const pole = new THREE.Mesh(geoLampPole, matPole);
   pole.position.y = 2.9;
   const armDir = x > 0 ? -1 : 1;
-  const arm = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.08, 0.08), matPole);
+  const arm = new THREE.Mesh(geoLampArm, matPole);
   arm.position.set(armDir * 0.55, 5.75, 0);
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 10), new THREE.MeshBasicMaterial({ color: 0xfff2bb }));
+  const bulb = new THREE.Mesh(geoLampBulb, matLampBulb);
   bulb.position.set(armDir * 1.05, 5.65, 0);
-  const coneGeo = new THREE.ConeGeometry(3.2, 5.65, 20, 1, true);
-  const lightCone = new THREE.Mesh(coneGeo, streetBeamMat);
+  const lightCone = new THREE.Mesh(geoLampCone, streetBeamMat);
   lightCone.position.set(armDir * 1.05, 2.82, 0);
   lightCone.userData.isVolumetricBeam = true;
   lampGroup.add(pole, arm, bulb, lightCone);
@@ -1528,20 +1540,20 @@ function createTrafficLightPole(x, z, rotY) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 4.6, 8), matPole);
+  const pole = new THREE.Mesh(geoTrafficPole, matPole);
   pole.position.y = 2.3;
-  const box = new THREE.Mesh(new THREE.BoxGeometry(0.38, 1.05, 0.25), matPiano);
+  const box = new THREE.Mesh(geoTrafficBox, matPiano);
   box.position.set(0, 4.2, 0.15);
 
   const redMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
   const yellowMat = new THREE.MeshBasicMaterial({ color: 0x332800 });
   const greenMat = new THREE.MeshBasicMaterial({ color: 0x003311 });
 
-  const rB = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), redMat);
+  const rB = new THREE.Mesh(geoTrafficBulb, redMat);
   rB.position.set(0, 4.5, 0.26);
-  const yB = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), yellowMat);
+  const yB = new THREE.Mesh(geoTrafficBulb, yellowMat);
   yB.position.set(0, 4.2, 0.26);
-  const gB = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), greenMat);
+  const gB = new THREE.Mesh(geoTrafficBulb, greenMat);
   gB.position.set(0, 3.9, 0.26);
 
   group.add(pole, box, rB, yB, gB);
@@ -1551,10 +1563,10 @@ function createTrafficLightPole(x, z, rotY) {
 
 function createCityBlock(gx, gz) {
   const block = new THREE.Group();
-  const road = new THREE.Mesh(new THREE.PlaneGeometry(BLOCK_SIZE, BLOCK_SIZE), matAsphalt);
+  const road = new THREE.Mesh(geoRoadPlane, matAsphalt);
   road.rotation.x = -Math.PI / 2;
   road.receiveShadow = true;
-  const lineZ = new THREE.Mesh(new THREE.PlaneGeometry(0.3, BLOCK_SIZE), matLaneYellow);
+  const lineZ = new THREE.Mesh(geoLaneYellow, matLaneYellow);
   lineZ.rotation.x = -Math.PI / 2;
   lineZ.position.y = 0.02;
   block.add(road, lineZ);
@@ -1566,13 +1578,13 @@ function createCityBlock(gx, gz) {
   const isCenterArea = Math.abs(gx) <= 1 && Math.abs(gz) <= 1;
 
   corners.forEach(([cx, cz], idx) => {
-    const sw = new THREE.Mesh(new THREE.BoxGeometry(22, 0.24, 22), matSidewalk);
+    const sw = new THREE.Mesh(geoSidewalkBox, matSidewalk);
     sw.position.set(cx, 0.12, cz);
     sw.receiveShadow = true;
     const bH = 16 + ((Math.abs(gx * 17 + gz * 31 + idx) % 5) * 6);
     const bMesh = new THREE.Mesh(
       new THREE.BoxGeometry(13, bH, 13),
-      new THREE.MeshStandardMaterial({ map: buildingTex, roughness: 0.35 })
+      matBuilding
     );
     bMesh.position.set(cx, bH / 2 + 0.24, cz);
     bMesh.castShadow = true;

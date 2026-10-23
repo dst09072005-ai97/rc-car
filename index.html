@@ -749,28 +749,36 @@
   </script>
 
 <script type="module">
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-const SUPABASE_URL = 'https://wrzybugwkohwltvexmhy.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_VkC2kikQlixIcxnmDvxNZQ_xAWSQs9O';
-if (SUPABASE_URL.startsWith('https://')) {
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  const channel = supabase.channel('rolls-royce-vr-room', {
-    config: { broadcast: { self: false } }
-  });
-  channel
-    .on('broadcast', { event: 'YT_MULTISCREEN_SYNC' }, ({ payload }) => {
-      if (payload && window.playExtractedVideoUrlInFrame) {
-        window.playExtractedVideoUrlInFrame({
-          videoId: payload.videoId,
-          title: payload.title,
-          directUrl: payload.streamUrl,
-          duration: payload.durationText
-        });
-      }
-    })
-    .subscribe();
-  window.supabaseChannel = channel;
-}
+// HỖ TRỢ CHẠY 100% OFFLINE KHI KẾT NỐI WI-FI SOFTAP CỦA ESP32 (KHÔNG BỊ TREO TẢI CDN)
+(async function initOptionalSupabaseMultiScreen() {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  try {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    const SUPABASE_URL = "https://wrzybugwkohwltvexmhy.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_VkC2kikQlixIcxnmDvxNZQ_xAWSQs9O";
+    if (SUPABASE_URL.startsWith("https://")) {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const channel = supabase.channel("rolls-royce-vr-room", {
+        config: { broadcast: { self: false } }
+      });
+      channel
+        .on("broadcast", { event: "YT_MULTISCREEN_SYNC" }, ({ payload }) => {
+          if (payload && window.playExtractedVideoUrlInFrame) {
+            window.playExtractedVideoUrlInFrame({
+              videoId: payload.videoId,
+              title: payload.title,
+              directUrl: payload.streamUrl,
+              duration: payload.durationText
+            });
+          }
+        })
+        .subscribe();
+      window.supabaseChannel = channel;
+    }
+  } catch (err) {
+    console.info("[Offline Mode] Bỏ qua Supabase CDN; sử dụng WebSocket nội bộ để đồng bộ.");
+  }
+})();
 </script>
   <script type="module" src="./app.js"></script>
   <script type="module" src="./youtube-dom-extractor.js"></script>
