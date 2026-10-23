@@ -12,8 +12,12 @@ WiFiUDP udpAnnounce;
 // ============================================================================
 // 1. CẤU HÌNH THÔNG TIN WI-FI
 // ============================================================================
-const char* WIFI_SSID = "BETEA";
-const char* WIFI_PASS = "daihongbao"; // <-- Điền mật khẩu Wi-Fi của bạn
+#if __has_include("wifi_credentials.h")
+#include "wifi_credentials.h"
+#else
+const char* WIFI_SSID = "YOUR_WIFI_SSID";
+const char* WIFI_PASS = "YOUR_WIFI_PASSWORD"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc tạo file wifi_credentials.h)
+#endif
 
 // ============================================================================
 // 2. CHÂN CẮM CHUẨN MẠCH AI-THINKER ESP32-CAM

@@ -6,6 +6,41 @@ const path = require('path');
 const WebSocket = require('ws');
 
 const app = express();
+// ============================================================================
+// BẢO VỆ MÃ NGUỒN, CHỨNG CHỈ TLS & FILE CẤU HÌNH NHẠY CẢM (SECURITY GUARD)
+// ============================================================================
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  let reqPath = '';
+  try {
+    reqPath = decodeURIComponent(req.path).toLowerCase();
+  } catch (e) {
+    return res.status(400).send('Bad Request: Invalid path encoding');
+  }
+
+  const isSensitive =
+    reqPath.endsWith('.pem') ||
+    reqPath.endsWith('.key') ||
+    reqPath.endsWith('.crt') ||
+    reqPath.endsWith('.env') ||
+    reqPath.endsWith('.ino') ||
+    reqPath.endsWith('server.js') ||
+    reqPath.includes('package.json') ||
+    reqPath.includes('package-lock.json') ||
+    reqPath.includes('.git') ||
+    reqPath.includes('.agent') ||
+    reqPath.startsWith('/tools') ||
+    reqPath.startsWith('/esp32') ||
+    reqPath.startsWith('/node_modules');
+
+  if (isSensitive) {
+    return res.status(403).send('Forbidden: Access to sensitive resource is blocked.');
+  }
+  next();
+});
 const wwwPath = fs.existsSync(path.resolve(__dirname, '../www')) ? path.resolve(__dirname, '../www') : __dirname;
 app.use(express.static(wwwPath));
 app.use(express.static(__dirname));
@@ -21,17 +56,54 @@ app.get('/api/health', (req, res) => {
 // ============================================================================
 // BỘ LỌC AN NINH SSRF & GIỚI HẠN BIÊN DỮ LIỆU (PATCH V175 CHUẨN XR-DOCTOR)
 // ============================================================================
+const IPV4_REGEX = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+
 function isForbiddenSsrfIp(ipOrHost) {
   if (!ipOrHost) return true;
-  const normalized = String(ipOrHost).toLowerCase().trim();
+  let normalized = String(ipOrHost).toLowerCase().trim();
+
+  if (normalized.startsWith('[') && normalized.endsWith(']')) {
+    normalized = normalized.slice(1, -1);
+  }
+  if (!normalized.includes('::') && normalized.includes(':')) {
+    normalized = normalized.split(':')[0];
+  }
+
   // Chặn localhost, loopback IPv4/IPv6, any-address
-  if (normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1' || normalized === '0.0.0.0' || normalized === '::') {
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized === '0.0.0.0' ||
+    normalized === '0' ||
+    normalized === '::' ||
+    normalized === 'metadata.google.internal' ||
+    normalized === 'metadata' ||
+    normalized === 'instance-data'
+  ) {
     return true;
   }
-  // Chặn Cloud Metadata IP (AWS, GCP, Azure, OpenStack...)
+
+  // Chặn toàn dải Loopback (127.0.0.0/8)
+  if (normalized.startsWith('127.')) {
+    return true;
+  }
+
+  // Chặn Cloud Metadata IP (169.254.0.0/16) (AWS, GCP, Azure, OpenStack...)
   if (normalized === '169.254.169.254' || normalized.startsWith('169.254.')) {
     return true;
   }
+
+  // Chặn Loopback IPv6 & Link-Local IPv6
+  if (
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('::ffff:127.') ||
+    normalized.startsWith('::ffff:169.254.')
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -48,6 +120,12 @@ function validateProxyTargetUrl(rawUrl) {
     if (isForbiddenSsrfIp(hostname)) {
       return { valid: false, reason: 'SSRF Guard: Địa chỉ IP/Host bị chặn' };
     }
+
+    const blockedPorts = new Set(['21', '22', '23', '25', '53', '110', '135', '137', '138', '139', '445', '1433', '1521', '3306', '5432', '6379', '11211', '27017']);
+    if (parsed.port && blockedPorts.has(String(parsed.port))) {
+      return { valid: false, reason: `SSRF Guard: Cổng kết nối ${parsed.port} bị chặn do nhạy cảm` };
+    }
+
     return { valid: true, parsed };
   } catch (err) {
     return { valid: false, reason: 'Cú pháp URL không hợp lệ: ' + err.message };
@@ -171,7 +249,7 @@ function compressCarsState() {
 
 // Tìm kiếm YouTube trả về danh sách Video THẬT 100% kèm thời lượng đầy đủ (từ vài phút đến >5 tiếng, KHÔNG giới hạn 30 giây!)
 app.get('/api/yt-search', (req, res) => {
-  const query = (req.query.q || '').trim();
+  const query = String(req.query.q || '').slice(0, 100).trim();
   if (!query) return res.json({ items: [] });
 
   const ytSearchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=vi`;
@@ -228,8 +306,8 @@ const dgram = require('dgram');
 
 // 1. Bóc tách luồng MP4 trực tiếp bằng YouTube Innertube API (Giúp thẻ <video> phát MP4 thật 100% và vẽ lên màn hình 3D khi thu nhỏ)
 app.get('/api/yt-dom-stream', (req, res) => {
-  const videoId = (req.query.videoId || '').trim();
-  if (!videoId) return res.status(400).json({ error: 'Missing videoId' });
+  const videoId = String(req.query.videoId || '').trim();
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return res.status(400).json({ error: 'Invalid or missing videoId' });
 
   const postData = JSON.stringify({
     context: {
@@ -404,37 +482,46 @@ app.get('/api/esp32-telemetry', (req, res) => {
 
 // Endpoint tự động đăng ký IP cho ESP32 qua HTTP khi mạch vừa kết nối Wi-Fi mới
 app.get('/api/register-esp32', (req, res) => {
-  const role = req.query.role || req.query.cam || 'front';
-  const ip = req.query.ip || req.ip.replace('::ffff:', '');
-  const port = Number(req.query.port || (role === 'car' ? 4210 : 4213));
+  const rawRole = String(req.query.role || req.query.cam || 'front').toLowerCase().trim();
+  const role = (rawRole === 'car' || rawRole === 'rear') ? rawRole : 'front';
+  const rawIp = req.query.ip || req.ip;
+  const cleanIp = String(rawIp || '').trim().replace(/^::ffff:/, '');
+  if (!IPV4_REGEX.test(cleanIp) || isForbiddenSsrfIp(cleanIp)) {
+    return res.status(400).json({ error: 'Invalid or forbidden IP address' });
+  }
+  const defaultPort = role === 'car' ? 4210 : 4213;
+  const port = clampFinite(req.query.port, 1, 65535, defaultPort);
 
   if (role === 'car') {
-    esp32CarConfig.ip = ip;
+    esp32CarConfig.ip = cleanIp;
     esp32CarConfig.port = port;
     esp32CarConfig.lastSeen = Date.now();
-    console.log(`[HTTP REGISTRATION] ESP32 CAR CONTROLLER đã đăng ký IP mới: ${ip}:${port}`);
-    return res.json({ status: 'ok', role: 'car', ip, port });
+    console.log(`[HTTP REGISTRATION] ESP32 CAR CONTROLLER đã đăng ký IP mới: ${cleanIp}:${port}`);
+    return res.json({ status: 'ok', role: 'car', ip: cleanIp, port });
   }
 
-  const camRole = role === 'rear' ? 'rear' : 'front';
-  discoveredEsp32Cams[camRole] = { ip, port, lastSeen: Date.now() };
-  console.log(`[HTTP REGISTRATION] ESP32 ${camRole.toUpperCase()} đã đăng ký IP mới: ${ip}:${port}`);
-  res.json({ status: 'ok', role: camRole, ip, port });
+  discoveredEsp32Cams[role] = { ip: cleanIp, port, lastSeen: Date.now() };
+  console.log(`[HTTP REGISTRATION] ESP32 ${role.toUpperCase()} đã đăng ký IP mới: ${cleanIp}:${port}`);
+  res.json({ status: 'ok', role, ip: cleanIp, port });
 });
 
 // Endpoint cấu hình hoặc kiểm tra IP mạch lái xe RC (Controller)
 app.all('/api/set-esp32-car-ip', (req, res) => {
-  const ip = (req.body && req.body.ip) || req.query.ip;
-  const port = Number((req.body && req.body.port) || req.query.port || 4210);
-  if (ip) {
-    esp32CarConfig.ip = String(ip).trim().replace('::ffff:', '');
-    esp32CarConfig.port = port;
-    esp32CarConfig.lastSeen = Date.now();
-    console.log(`[CAR IP CONFIGURED] IP Mạch Lái Xe RC đã được đặt: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
-    res.json({ success: true, carIp: esp32CarConfig.ip, port: esp32CarConfig.port });
-  } else {
-    res.status(400).json({ error: 'Missing IP parameter' });
+  const rawIp = (req.body && req.body.ip) || req.query.ip;
+  const rawPort = (req.body && req.body.port) || req.query.port;
+  if (!rawIp) {
+    return res.status(400).json({ error: 'Missing IP parameter' });
   }
+  const cleanIp = String(rawIp).trim().replace(/^::ffff:/, '');
+  if (!IPV4_REGEX.test(cleanIp) || isForbiddenSsrfIp(cleanIp)) {
+    return res.status(400).json({ error: 'Invalid or forbidden IP address' });
+  }
+  const port = clampFinite(rawPort, 1, 65535, 4210);
+  esp32CarConfig.ip = cleanIp;
+  esp32CarConfig.port = port;
+  esp32CarConfig.lastSeen = Date.now();
+  console.log(`[CAR IP CONFIGURED] IP Mạch Lái Xe RC đã được đặt: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
+  res.json({ success: true, carIp: esp32CarConfig.ip, port: esp32CarConfig.port });
 });
 
 // Endpoint cho Web Client hỏi danh sách IP Camera & Mạch Lái Xe vừa phát hiện
@@ -459,8 +546,15 @@ app.get('/api/esp32-discovered', (req, res) => {
   });
 });
 
+let lastScanEsp32Time = 0;
+
 // Endpoint quét nhanh mạng LAN để tự động dò tìm IP của 2 mạch ESP32
 app.get('/api/scan-esp32', async (req, res) => {
+  const nowScan = Date.now();
+  if (nowScan - lastScanEsp32Time < 5000) {
+    return res.json({ found: [], discovered: discoveredEsp32Cams, throttled: true });
+  }
+  lastScanEsp32Time = nowScan;
   const net = require('net');
   const results = [];
   try {
@@ -704,10 +798,13 @@ function attachMultiplayerServer(serverInstance) {
           sendUdpCarCommand(data.steer, data.throttle);
         } else if (data.type === 'SET_ESP32_CAR_IP') {
           if (data.ip) {
-            esp32CarConfig.ip = String(data.ip).trim().replace('::ffff:', '');
-            if (data.port) esp32CarConfig.port = Number(data.port);
-            esp32CarConfig.lastSeen = Date.now();
-            console.log(`[WS] ESP32 CAR IP cập nhật từ client: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
+            const cleanIp = String(data.ip).trim().replace(/^::ffff:/, '');
+            if (IPV4_REGEX.test(cleanIp) && !isForbiddenSsrfIp(cleanIp)) {
+              esp32CarConfig.ip = cleanIp;
+              if (data.port) esp32CarConfig.port = clampFinite(data.port, 1, 65535, 4210);
+              esp32CarConfig.lastSeen = Date.now();
+              console.log(`[WS] ESP32 CAR IP cập nhật từ client: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
+            }
           }
         }
         broadcastWorldState(wss);

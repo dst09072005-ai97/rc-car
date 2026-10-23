@@ -1,3 +1,13 @@
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 import * as THREE from 'three';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
@@ -3925,15 +3935,15 @@ async function searchAndPlayYouTubeFromInternet(rawInput) {
 
     // Hiển thị danh sách kết quả tìm kiếm thật ngay bên cột phải của khung YouTube
     if (playlistSide) {
-      playlistSide.innerHTML = `<div style="font-size:11px;color:#00ff88;font-weight:bold;">🔍 KẾT QUẢ YOUTUBE CHO "${query.toUpperCase()}":</div>`;
+      playlistSide.innerHTML = `<div style="font-size:11px;color:#00ff88;font-weight:bold;">🔍 KẾT QUẢ YOUTUBE CHO "${escapeHtml(query.toUpperCase())}":</div>`;
       results.forEach((item, idx) => {
         const card = document.createElement('div');
         card.className = `yt-card ${idx === 0 ? 'active' : ''}`;
         card.innerHTML = `
           <div style="display:flex;gap:8px;align-items:center;">
-            <img src="${item.thumbnail}" style="width:68px;height:42px;object-fit:cover;border-radius:4px;border:1px solid #444;" />
+            <img src="${escapeHtml(item.thumbnail)}" style="width:68px;height:42px;object-fit:cover;border-radius:4px;border:1px solid #444;" />
             <div style="flex:1;overflow:hidden;">
-              <b style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${idx + 1}. ${item.title}</b>
+              <b style="font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${idx + 1}. ${escapeHtml(item.title)}</b>
               <span>Bấm để phát ngay trong khung</span>
             </div>
           </div>
