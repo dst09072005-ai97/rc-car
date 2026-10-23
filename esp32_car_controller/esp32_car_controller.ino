@@ -160,7 +160,7 @@ void loop() {
       int16_t throttle = buffer[2] | (buffer[3] << 8);
 
       steer = constrain(steer, 45, 135);        // 45° (trái) -> 90° (thẳng) -> 135° (phải)
-      throttle = constrain(throttle, 1000, 2000); // 1000us (lùi) -> 1500us (dừng) -> 2000us (tiến)
+      throttle = constrain(throttle, 1300, 1700); // Cân chỉnh an toàn: 1300us (lùi vừa) -> 1500us (dừng) -> 1700us (tiến vừa)
 
       if (steer != currentSteer) {
         steeringServo.write(steer);
@@ -180,7 +180,7 @@ void loop() {
       int sVal = 90, tVal = 1500;
       if (sscanf(str, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) == 2) {
         sVal = constrain(sVal, 45, 135);
-        tVal = constrain(tVal, 1000, 2000);
+        tVal = constrain(tVal, 1300, 1700);
         steeringServo.write(sVal);
         applyMotorThrottle(tVal);
         currentSteer = sVal;

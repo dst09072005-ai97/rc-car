@@ -309,9 +309,9 @@ const esp32CarConfig = {
 // Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
 function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
-  // Giới hạn biên an toàn tuyệt đối
+  // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
   const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-  const t = Math.max(1000, Math.min(2000, Math.round(Number(throttle) || 1500)));
+  const t = Math.max(1300, Math.min(1700, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
   buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)

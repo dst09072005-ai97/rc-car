@@ -20355,30 +20355,36 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         let throttle = 1500;
 
         if (state.playerMode === 'DRIVING') {
-          // A. Tính góc bẻ lái Servo (45°..135°, 90° là thẳng)
+          // A. Tính góc bẻ lái Servo: Đảo chiều chuẩn để đánh lái Trái -> quẹo Trái, Phải -> quẹo Phải
           let steerRatio = THREE.MathUtils.clamp(state.steeringAngleDeg / 450.0, -1.0, 1.0);
           if (state.invertCarSteer) steerRatio = -steerRatio;
-          steer = Math.round(90 + steerRatio * 45);
+          steer = Math.round(90 - steerRatio * 45); // Dấu trừ đảo chiều góc lái servo chuẩn xác
           steer = THREE.MathUtils.clamp(steer, 45, 135);
 
-          // B. Tính xung ga ESC (1000..2000us, 1500us là dừng/phanh)
+          // B. Tính xung ga ESC đã cân chỉnh: Lùi tối đa 1300us, Dừng 1500us, Tiến tối đa 1700us
           if (!state.engineRunning || state.brakePercent > 8) {
             throttle = 1500;
-          } else if (state.gearIndex === 1) { // Số R: Lùi (1500us -> 1000us)
+          } else if (state.gearIndex === 1) { // Số R: Lùi (1500us -> 1300us)
             const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
-            throttle = Math.round(1500 - (pct / 100.0) * 500);
-          } else if (state.gearIndex === 3) { // Số D: Tiến (1500us -> 2000us)
+            throttle = Math.round(1500 - (pct / 100.0) * 200); // 1500 - 200 = 1300us max
+          } else if (state.gearIndex === 3) { // Số D: Tiến (1500us -> 1700us)
             const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
-            throttle = Math.round(1500 + (pct / 100.0) * 500);
+            throttle = Math.round(1500 + (pct / 100.0) * 200); // 1500 + 200 = 1700us max
           } else {
             throttle = 1500;
           }
-          throttle = THREE.MathUtils.clamp(throttle, 1000, 2000);
+          throttle = THREE.MathUtils.clamp(throttle, 1300, 1700);
         }
 
         carControlPacket.steer = steer;
         carControlPacket.throttle = throttle;
         mpSocket.send(JSON.stringify(carControlPacket));
+
+        // Cập nhật nhãn thông số xung hiển thị trên Web HUD
+        const pulseInfoEl = document.getElementById('esp32-car-pulse-info');
+        if (pulseInfoEl) {
+          pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs`;
+        }
       }
     }
   };
