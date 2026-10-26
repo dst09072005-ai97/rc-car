@@ -1,0 +1,110 @@
+[gd_scene load_steps=12 format=3 uid="uid://m3verticalslicecity"]
+
+[ext_resource type="Script" path="res://scripts/vertical_slice_loader.gd" id="1_loader"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_m3"]
+sky_top_color = Color(0.24, 0.52, 0.85, 1)
+sky_horizon_color = Color(0.68, 0.82, 0.94, 1)
+ground_bottom_color = Color(0.18, 0.2, 0.22, 1)
+ground_horizon_color = Color(0.55, 0.62, 0.68, 1)
+
+[sub_resource type="Sky" id="Sky_m3"]
+sky_material = SubResource("ProceduralSkyMaterial_m3")
+
+[sub_resource type="Environment" id="Environment_m3"]
+background_mode = 2
+sky = SubResource("Sky_m3")
+ambient_light_source = 3
+ambient_light_color = Color(0.75, 0.82, 0.9, 1)
+ambient_light_energy = 0.85
+tonemap_mode = 2
+
+[sub_resource type="BoxShape3D" id="BoxShape_Road"]
+size = Vector3(14.0, 0.2, 30.0)
+
+[sub_resource type="BoxShape3D" id="BoxShape_Sidewalk"]
+size = Vector3(3.5, 0.15, 30.0)
+
+[sub_resource type="BoxShape3D" id="BoxShape_CafeFloor"]
+size = Vector3(7.5, 0.15, 10.0)
+
+[sub_resource type="BoxShape3D" id="BoxShape_CafeWallBack"]
+size = Vector3(0.3, 4.0, 10.0)
+
+[sub_resource type="BoxShape3D" id="BoxShape_CafeWallSide"]
+size = Vector3(7.5, 4.0, 0.3)
+
+[sub_resource type="BoxShape3D" id="BoxShape_CafeFacadeWing"]
+size = Vector3(0.35, 3.8, 4.1)
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape_Player"]
+radius = 0.35
+height = 1.72
+
+[node name="VerticalSliceCityM3" type="Node3D"]
+script = ExtResource("1_loader")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_m3")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.848048, -0.369644, 0.379928, 0, 0.716911, 0.697165, -0.529919, -0.59123, 0.607975, 12, 22, 15)
+light_energy = 1.35
+shadow_enabled = true
+directional_shadow_max_distance = 65.0
+
+[node name="StaticColliders" type="StaticBody3D" parent="."]
+
+[node name="Col_RoadBase" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+shape = SubResource("BoxShape_Road")
+
+[node name="Col_Sidewalk_West" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.25, 0.075, 0)
+shape = SubResource("BoxShape_Sidewalk")
+
+[node name="Col_Sidewalk_East" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.25, 0.075, 0)
+shape = SubResource("BoxShape_Sidewalk")
+
+[node name="Col_Cafe_Floor" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10.75, 0.075, 0)
+shape = SubResource("BoxShape_CafeFloor")
+
+[node name="Col_Cafe_WallBack" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14.36, 2.15, 0)
+shape = SubResource("BoxShape_CafeWallBack")
+
+[node name="Col_Cafe_WallNorth" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10.75, 2.15, -4.86)
+shape = SubResource("BoxShape_CafeWallSide")
+
+[node name="Col_Cafe_WallSouth" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10.75, 2.15, 4.86)
+shape = SubResource("BoxShape_CafeWallSide")
+
+[node name="Col_Cafe_FacadeNorthWing" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7.18, 2.05, -2.85)
+shape = SubResource("BoxShape_CafeFacadeWing")
+
+[node name="Col_Cafe_FacadeSouthWing" type="CollisionShape3D" parent="StaticColliders"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7.18, 2.05, 2.85)
+shape = SubResource("BoxShape_CafeFacadeWing")
+
+[node name="PlayerBody" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.8, 0.16, 10.0)
+
+[node name="PlayerCollider" type="CollisionShape3D" parent="PlayerBody"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.86, 0)
+shape = SubResource("CapsuleShape_Player")
+
+[node name="XROrigin3D" type="XROrigin3D" parent="PlayerBody"]
+
+[node name="XRCamera3D" type="XRCamera3D" parent="PlayerBody/XROrigin3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.62, 0)
+
+[node name="LeftHandController" type="XRController3D" parent="PlayerBody/XROrigin3D"]
+tracker = &"left_hand"
+
+[node name="RightHandController" type="XRController3D" parent="PlayerBody/XROrigin3D"]
+tracker = &"right_hand"

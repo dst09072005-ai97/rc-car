@@ -1,0 +1,3 @@
+asset_id,category,name,source_url,license,author,version_or_commit,source_file,engine_format,scale_status,texture_status,license_verified,import_test_status,performance_status,attribution_required,notes
+AST_M3_001,ENVIRONMENT,Vertical_Slice_City_Block_32x30m,Internal_Blender_Pipeline,MIT,Project_Team,M3_v1.0,models/vertical_slice_city_block.blend,glb,PASS,PASS,PASS,PASS,NOT_VERIFIED_ON_QUEST,NO,SHA256=5183692b561b58f8
+AST_M3_2_001,ENVIRONMENT,Vertical_Slice_City_Block_M3_2_HighFidelity,Internal_Blender_5_2_Pipeline,MIT,Project_Team,M3.2_v1.0,models/vertical_slice_city_block.blend,glb,PASS,PASS,PASS,PASS,NOT_VERIFIED_ON_QUEST,NO,SHA256=4bef67b3b0c6f3de

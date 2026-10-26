@@ -1,0 +1,332 @@
+extends Control
+
+# ========================================================================
+# 1. CẤU HÌNH MẠNG
+# ========================================================================
+@export_group("Mạng Ad-hoc (Mạch Điều Khiển)")
+@export var esp32_ip: String = "192.168.4.1"       
+@export var esp32_port: int = 4210                 
+
+@export_group("Cam Trước")
+@export var camera_ip: String = "192.168.4.101"    
+@export var video_port: int = 4211                 
+
+@export_group("Cam Lùi (Gương chiếu hậu)")
+@export var rear_camera_ip: String = "192.168.4.102"    
+@export var rear_video_port: int = 4212                 
+
+# ========================================================================
+# 2. CẤU HÌNH XE RC 
+# ========================================================================
+@export_group("Thiết lập vô lăng")
+@export var axis_steer: int = 0                  
+@export var axis_throttle: int = 2               
+@export var axis_brake: int = 3                  
+@export var deadzone: float = 0.05               
+@export var invert_steering: bool = false        
+
+@export_group("Giới hạn tốc độ ESC")
+@export var neutral_us: int = 1500               
+@export var max_forward_us: int = 1700           
+@export var max_reverse_us: int = 1300           
+@export var full_brake_us: int = 1000            
+
+@export_group("Độ mượt & Tối ưu")
+@export var throttle_accel_speed: float = 1.5    
+@export var throttle_decel_speed: float = 3.0    
+@export var wheel_physical_smooth: float = 20.0  
+@export var visual_max_angle: float = 90.0
+@export var brake_time: float = 0.25             
+@export var neutral_reset_time: float = 0.18     
+@export var udp_send_hz: float = 100.0
+
+# ========================================================================
+# 3. KHAI BÁO BIẾN
+# ========================================================================
+var udp := PacketPeerUDP.new()
+var udp_packet := PackedByteArray() 
+
+# BIẾN CHO CAM TRƯỚC
+var video_udp := PacketPeerUDP.new()
+var video_thread: Thread
+var is_streaming: bool = false
+var cam_texture: ImageTexture = null
+var frame_chunks = {}
+var expected_chunks = 0
+var current_frame_id = -1
+
+# BIẾN CHO CAM LÙI
+var rear_udp := PacketPeerUDP.new()
+var rear_thread: Thread
+var is_rear_streaming: bool = false
+var rear_texture: ImageTexture = null
+var rear_frame_chunks = {}
+var rear_expected_chunks = 0
+var rear_current_frame_id = -1
+
+var threads_running: bool = false
+var active_camera: int = 1 # 1: Đang xem Cam Trước | 2: Đang xem Cam Lùi
+
+@onready var status_label: Label = get_node_or_null("StatusPanel/StatusLabel")
+@onready var wheel_ui: TextureRect = get_node_or_null("WheelUI")
+@onready var camera_display: TextureRect = get_node_or_null("CameraView") 
+
+enum DriveState { IDLE, FORWARD, BRAKING, NEUTRAL_RESET, REVERSING }
+var drive_state: DriveState = DriveState.IDLE
+var state_timer: float = 0.0
+var was_forward_timer: float = 0.0
+var using_gamepad: bool = false 
+
+var current_steer: float = 0.0
+var current_throttle: float = 0.0
+var udp_send_interval: float = 0.01
+var udp_send_accumulator: float = 0.0
+var packet_count: int = 0
+
+func _ready() -> void:
+	udp.connect_to_host(esp32_ip, esp32_port)
+	udp_send_interval = 1.0 / max(udp_send_hz, 1.0)
+	udp_packet.resize(4)
+	
+	if wheel_ui:
+		wheel_ui.pivot_offset = wheel_ui.size / 2.0
+		wheel_ui.resized.connect(func(): wheel_ui.pivot_offset = wheel_ui.size / 2.0)
+
+	video_udp.bind(video_port)
+	rear_udp.bind(rear_video_port)
+	
+	threads_running = true
+	video_thread = Thread.new()
+	video_thread.start(_process_video_thread)
+	
+	rear_thread = Thread.new()
+	rear_thread.start(_process_rear_video_thread)
+	
+	_handshake_camera()
+
+func _exit_tree():
+	threads_running = false
+	if video_thread and video_thread.is_started(): video_thread.wait_to_finish()
+	if rear_thread and rear_thread.is_started(): rear_thread.wait_to_finish()
+
+# ========================================================================
+# 4. HỆ THỐNG GIẢI MÃ VIDEO RAW GRAYSCALE & JPEG
+# ========================================================================
+func _handshake_camera():
+	if not is_streaming:
+		video_udp.set_dest_address(camera_ip, video_port)
+		video_udp.put_packet("HELLO".to_utf8_buffer())
+	if not is_rear_streaming:
+		rear_udp.set_dest_address(rear_camera_ip, rear_video_port)
+		rear_udp.put_packet("HELLO".to_utf8_buffer())
+		
+	get_tree().create_timer(1.0).timeout.connect(_handshake_camera)
+
+# ---- THREAD CAM TRƯỚC ----
+func _process_video_thread():
+	while threads_running:
+		if video_udp.get_available_packet_count() > 0:
+			var packet = video_udp.get_packet()
+			if packet.size() < 3: continue
+			
+			var f_id = packet[0]
+			var chunk_idx = packet[1]
+			var total_chunks = packet[2]
+			var data = packet.slice(3, packet.size()) 
+			
+			if f_id != current_frame_id:
+				frame_chunks.clear()
+				current_frame_id = f_id
+				expected_chunks = total_chunks
+				
+			frame_chunks[chunk_idx] = data
+			
+			if frame_chunks.size() == expected_chunks:
+				var full_jpg = PackedByteArray()
+				var frame_corrupted = false
+				for i in range(expected_chunks):
+					if frame_chunks.has(i): full_jpg.append_array(frame_chunks[i])
+					else: frame_corrupted = true; break
+				
+				if not frame_corrupted:
+					if full_jpg.size() == 76800: # Xử lý ảnh Raw Đen trắng siêu tốc
+						var img = Image.create_from_data(320, 240, false, Image.FORMAT_L8, full_jpg)
+						if img: call_deferred("_update_camera_texture", img)
+					else: # Dự phòng xử lý ảnh JPEG màu
+						var img = Image.new()
+						if img.load_jpg_from_buffer(full_jpg) == OK:
+							call_deferred("_update_camera_texture", img)
+				frame_chunks.clear()
+		else:
+			OS.delay_msec(2)
+
+func _update_camera_texture(img: Image):
+	is_streaming = true
+	if not cam_texture or cam_texture.get_size() != Vector2(img.get_size()):
+		cam_texture = ImageTexture.create_from_image(img)
+	else:
+		cam_texture.update(img)
+		
+	if camera_display and active_camera == 1:
+		camera_display.texture = cam_texture
+
+# ---- THREAD CAM LÙI ----
+func _process_rear_video_thread():
+	while threads_running:
+		if rear_udp.get_available_packet_count() > 0:
+			var packet = rear_udp.get_packet()
+			if packet.size() < 3: continue
+			
+			var f_id = packet[0]
+			var chunk_idx = packet[1]
+			var total_chunks = packet[2]
+			var data = packet.slice(3, packet.size()) 
+			
+			if f_id != rear_current_frame_id:
+				rear_frame_chunks.clear()
+				rear_current_frame_id = f_id
+				rear_expected_chunks = total_chunks
+				
+			rear_frame_chunks[chunk_idx] = data
+			
+			if rear_frame_chunks.size() == rear_expected_chunks:
+				var full_jpg = PackedByteArray()
+				var frame_corrupted = false
+				for i in range(rear_expected_chunks):
+					if rear_frame_chunks.has(i): full_jpg.append_array(rear_frame_chunks[i])
+					else: frame_corrupted = true; break
+				
+				if not frame_corrupted:
+					if full_jpg.size() == 76800:
+						var img = Image.create_from_data(320, 240, false, Image.FORMAT_L8, full_jpg)
+						if img: call_deferred("_update_rear_texture", img)
+					else:
+						var img = Image.new()
+						if img.load_jpg_from_buffer(full_jpg) == OK:
+							call_deferred("_update_rear_texture", img)
+				rear_frame_chunks.clear()
+		else:
+			OS.delay_msec(2)
+
+func _update_rear_texture(img: Image):
+	is_rear_streaming = true
+	if not rear_texture or rear_texture.get_size() != Vector2(img.get_size()):
+		rear_texture = ImageTexture.create_from_image(img)
+	else:
+		rear_texture.update(img)
+		
+	if camera_display and active_camera == 2:
+		camera_display.texture = rear_texture
+
+# ========================================================================
+# 5. HỆ THỐNG LÁI XE & LOGIC CHUYỂN CAM TỨC THÌ
+# ========================================================================
+func _physics_process(delta: float) -> void:
+	var target_steer: float = 0.0
+	var target_throttle: float = 0.0
+	var gas_percent: float = 0.0
+	var brake_percent: float = 0.0
+	var mode_info: String = "Che do: Ban phim"
+
+	var pads = Input.get_connected_joypads()
+	using_gamepad = pads.size() > 0
+
+	if using_gamepad:
+		var device_id = pads[0]
+		mode_info = "Thiet bi: " + Input.get_joy_name(device_id)
+		var raw_steer = Input.get_joy_axis(device_id, axis_steer)
+		if abs(raw_steer) > deadzone: target_steer = raw_steer
+		
+		var raw_gas = Input.get_joy_axis(device_id, axis_throttle)
+		var raw_brake = Input.get_joy_axis(device_id, axis_brake)
+		
+		gas_percent = (raw_gas + 1.0) / 2.0 if raw_gas != 0.0 else 0.0
+		brake_percent = (raw_brake + 1.0) / 2.0 if raw_brake != 0.0 else 0.0
+		if gas_percent < deadzone: gas_percent = 0.0
+		if brake_percent < deadzone: brake_percent = 0.0
+	else:
+		var left = Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)
+		var right = Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT)
+		target_steer = (1.0 if right else 0.0) - (1.0 if left else 0.0)
+		gas_percent = 1.0 if (Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)) else 0.0
+		brake_percent = 1.0 if (Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)) else 0.0
+
+	var state_text: String = ""
+	
+	# === LẬT CAM TỨC THÌ ===
+	if gas_percent > 0.0:
+		if active_camera != 1:
+			active_camera = 1
+			if camera_display and cam_texture: camera_display.texture = cam_texture
+			
+		drive_state = DriveState.FORWARD
+		was_forward_timer = 1.5
+		target_throttle = gas_percent
+		state_text = "TIEN"
+		
+	elif brake_percent > 0.0:
+		if active_camera != 2:
+			active_camera = 2
+			if camera_display and rear_texture: camera_display.texture = rear_texture
+			
+		match drive_state:
+			DriveState.BRAKING:
+				state_timer -= delta
+				state_text = "PHANH"
+				if state_timer <= 0.0:
+					drive_state = DriveState.NEUTRAL_RESET
+					state_timer = neutral_reset_time
+			DriveState.NEUTRAL_RESET:
+				state_timer -= delta
+				state_text = "NHA GA"
+				if state_timer <= 0.0:
+					drive_state = DriveState.REVERSING
+					current_throttle = -brake_percent
+					was_forward_timer = 0.0
+			DriveState.REVERSING:
+				target_throttle = -brake_percent
+				state_text = "LUI"
+			_: 
+				if was_forward_timer > 0.0:
+					drive_state = DriveState.BRAKING
+					state_timer = brake_time
+					current_throttle = -1.0 
+					state_text = "PHANH GAP!"
+				else:
+					drive_state = DriveState.REVERSING
+					target_throttle = -brake_percent
+					state_text = "LUI"
+	else:
+		drive_state = DriveState.IDLE
+		target_throttle = 0.0
+		was_forward_timer = max(0.0, was_forward_timer - delta)
+		state_text = "DUNG YEN"
+
+	current_steer = lerp(current_steer, target_steer, delta * wheel_physical_smooth) if using_gamepad else target_steer
+
+	if drive_state == DriveState.BRAKING: current_throttle = -1.0 
+	elif drive_state == DriveState.NEUTRAL_RESET: current_throttle = 0.0
+	else:
+		var is_accel = abs(target_throttle) > abs(current_throttle)
+		current_throttle = move_toward(current_throttle, target_throttle, (throttle_accel_speed if is_accel else throttle_decel_speed) * delta)
+
+	var steer_angle: int = int(90.0 + (current_steer * 45.0)) if invert_steering else int(90.0 - (current_steer * 45.0))
+	var throttle_us: int = neutral_us
+	match drive_state:
+		DriveState.BRAKING: throttle_us = full_brake_us         
+		DriveState.NEUTRAL_RESET: throttle_us = neutral_us            
+		DriveState.REVERSING: throttle_us = int(lerp(float(neutral_us), float(max_reverse_us), clamp(abs(current_throttle), 0.0, 1.0)))
+		_: throttle_us = int(lerp(float(neutral_us), float(max_forward_us), clamp(current_throttle, 0.0, 1.0))) if current_throttle > 0.0 else neutral_us
+
+	udp_send_accumulator += delta
+	if udp_send_accumulator >= udp_send_interval:
+		udp_send_accumulator -= udp_send_interval
+		udp_packet.encode_u16(0, steer_angle)
+		udp_packet.encode_u16(2, throttle_us)
+		udp.put_packet(udp_packet)
+		packet_count += 1
+
+	if wheel_ui: wheel_ui.rotation = current_steer * deg_to_rad(visual_max_angle)
+	if status_label:
+		var active_str = "[TRUOC]" if active_camera == 1 else "[LUI]"
+		status_label.text = "%s\nTT: %s\nMan Hinh: %s\nESC: %d us\nPackets: %d" % [mode_info, state_text, active_str, throttle_us, packet_count]

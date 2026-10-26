@@ -1,0 +1,50 @@
+==============================================================================
+COPY AUDIT REPORT — ACTIVE APPLICATION SOURCE VS GUIDE EXTRACTED
+==============================================================================
+
+TARGET FILE: package.json
+  Base Block in Guide : Block 6 (### 4. Cấu hình Đóng gói File APK cho Meta Quest 3 (`package.json`, `capacitor.config.json` & `build_apk.sh`))
+  Guide Original SHA  : a7425115c83b777e0885a9328aca5c20160f05a2353c2cd6bf9cf33ec438b2be
+  Live Workspace SHA  : 86359269d1bc9b7146544add61c376b92a1068f33775b6eabf20c3e892163f98
+  Status              : MODIFIED_WITH_JUSTIFIED_FIXES
+  Justification       : Added local three dependency for offline vendoring.
+
+TARGET FILE: capacitor.config.json
+  Base Block in Guide : Block 7 (### 4. Cấu hình Đóng gói File APK cho Meta Quest 3 (`package.json`, `capacitor.config.json` & `build_apk.sh`))
+  Guide Original SHA  : 5ec42f3c8fb88cd8ac812ed094e42ee9d0ebfd7412cf9e10e5fdc25c927c243e
+  Live Workspace SHA  : 4b4f50d5f0a2ea4590bbcc404c95692f36ce381753c7e0ae980e500b59de18a0
+  Status              : MODIFIED_WITH_JUSTIFIED_FIXES
+
+TARGET FILE: build_apk.sh
+  Base Block in Guide : Block 8 (### 4. Cấu hình Đóng gói File APK cho Meta Quest 3 (`package.json`, `capacitor.config.json` & `build_apk.sh`))
+  Guide Original SHA  : ad697f683b0f53c8059b1c760ff20cfd36d8eae7893250fafa262ae0f0e9320e
+  Live Workspace SHA  : b8e5bf883f59ab4a69b04a9609b2afa44ec7615ad611bcbc9108ec6bb46692c2
+  Status              : MODIFIED_WITH_JUSTIFIED_FIXES
+
+TARGET FILE: www/index.html
+  Base Block in Guide : Block 12 (## 2. Cập Nhật Giao Diện & Nguồn Phát Media (`www/index.html`))
+  Guide Original SHA  : de8686de384450b6799e8ca65928f549e64064149eb53714a2fa4b0b0fac06ad
+  Live Workspace SHA  : 82c18d286dc8993507f4f9d68aaae46d719ae17b8de546df774101097a2ea7f5
+  Status              : MODIFIED_WITH_JUSTIFIED_FIXES
+  Justification       : Added local vendored Three.js importmap (offline ESP32 AP access) and live diagnostic monitor UI.
+
+TARGET FILE: www/app.js
+  Base Block in Guide : Block 14 (## 2. Mã Nguồn Hoàn Chỉnh `www/app.js` (Thành Thị 3D + Lái Quẹo Theo Đường + Động Cơ V12 Mượt))
+  Guide Original SHA  : b87a346cffd8ffc9bfcff267870911cb5759e45f2a27ddb3e6ab666f4b6eb916
+  Live Workspace SHA  : e8db179e510f5c9c87635d41b589d012a1313d8a49fb07a890a1840ae20d687e
+  Status              : MODIFIED_WITH_JUSTIFIED_FIXES
+  Justification       : Added GLTFLoader cabin import, live diagnostic data binding, input state machine isolation, and verified frame detection.
+
+TARGET FILE: blender_scripts/generate_rolls_royce_interior.py
+  Base Block in Guide : Block 3 (### 1. Script Python Blender tự động dựng Nội thất Rolls-Royce 1:1 (`blender_scripts/generate_rolls_royce_interior.py`))
+  Guide Original SHA  : c19b58622ca9938d4283d70925856ec1aa76e70bd27ce00b30a888f184d0dfd2
+  Live Workspace SHA  : 933bd97ce40c52553fadd459d276ffc8e806d26d85e159da80468494b5ef3688
+  Status              : MODIFIED_WITH_JUSTIFIED_FIXES
+  Justification       : Integrated Block 10 detailed steering wheel and wheel_car.png texture mapping into Block 3 full cabin.
+
+TARGET FILE: firmware/esp32_cam_ws_fast.ino
+  Base Block in Guide : Block 9 (### Mã nguồn Firmware tối ưu tốc độ cao cho ESP32-CAM (`esp32_cam_ws_fast.ino`))
+  Guide Original SHA  : 8cc3ba31350d6f493d0d2995f9560a98ce28df85b3c1ac0a5c480349e0491fa6
+  Live Workspace SHA  : 8cc3ba31350d6f493d0d2995f9560a98ce28df85b3c1ac0a5c480349e0491fa6
+  Status              : MATCHES_EXACT_GUIDE_EXTRACTED
+

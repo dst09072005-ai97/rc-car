@@ -1,8 +1,15 @@
+const path = require('path');
+if (typeof module !== 'undefined' && module.paths) {
+  module.paths.push(
+    path.join(__dirname, 'server/node_modules'),
+    path.join(__dirname, '../server/node_modules'),
+    path.join(__dirname, 'node_modules')
+  );
+}
 const express = require('express');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
-const path = require('path');
 const WebSocket = require('ws');
 
 const app = express();
@@ -794,8 +801,35 @@ function attachMultiplayerServer(serverInstance) {
             }
           }
         } else if (data.type === 'CAR_CONTROL') {
-          // Điều khiển trực tiếp Mạch Xe RC Thật qua UDP 4210 (Góc lái 45..135, Xung ga 1000..2000)
+          // Điều khiển trực tiếp Mạch Xe RC Thật qua UDP 4210 (Góc lái 45..135, Xung ga 1300..1700)
           sendUdpCarCommand(data.steer, data.throttle);
+        } else if (data.type === 'WHEEL_BRIDGE_INPUT') {
+          // Cầu nối vô lăng GOG R808: Phát trạng thái từ PC sang kính Quest 3
+          const bridgePayload = JSON.stringify({
+            type: 'WHEEL_BRIDGE_STATE',
+            connected: data.connected !== false,
+            deviceId: data.deviceId || 'GOG R808',
+            steeringNorm: data.steeringNorm || 0,
+            throttleNorm: data.throttleNorm || 0,
+            steerAngleDeg: data.steerAngleDeg || 0,
+            gasPercent: data.gasPercent || 0,
+            brakePercent: data.brakePercent || 0,
+            gear: data.gear || 'D',
+            ts: Date.now()
+          });
+          for (const client of wss.clients) {
+            if (client !== ws && client.readyState === WebSocket.OPEN) {
+              client.send(bridgePayload);
+            }
+          }
+          if (data.steer !== undefined && data.throttle !== undefined) {
+            sendUdpCarCommand(data.steer, data.throttle);
+          }
+        } else if (data.type === 'TEST_ESP32_PULSE') {
+          // Lắc nhẹ bánh xe kiểm tra kết nối Servo & ESC thực tế
+          sendUdpCarCommand(60, 1500);
+          setTimeout(() => sendUdpCarCommand(120, 1500), 250);
+          setTimeout(() => sendUdpCarCommand(90, 1500), 500);
         } else if (data.type === 'SET_ESP32_CAR_IP') {
           if (data.ip) {
             const cleanIp = String(data.ip).trim().replace(/^::ffff:/, '');
@@ -804,6 +838,16 @@ function attachMultiplayerServer(serverInstance) {
               if (data.port) esp32CarConfig.port = clampFinite(data.port, 1, 65535, 4210);
               esp32CarConfig.lastSeen = Date.now();
               console.log(`[WS] ESP32 CAR IP cập nhật từ client: ${esp32CarConfig.ip}:${esp32CarConfig.port}`);
+              // Đồng bộ ngay lập tức cho tất cả client (kể cả Meta Quest và PC)
+              const carBroadcast = JSON.stringify({
+                type: 'ESP32_CAR_STATUS',
+                ip: esp32CarConfig.ip,
+                port: esp32CarConfig.port,
+                active: true
+              });
+              for (const client of wss.clients) {
+                if (client.readyState === WebSocket.OPEN) client.send(carBroadcast);
+              }
             }
           }
         }

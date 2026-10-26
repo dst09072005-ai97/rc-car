@@ -1096,7 +1096,8 @@
     <button id="v160-mob-walk" class="mob-min-btn" style="background:#00ff88;color:#000;">🏃 Đi Tới (Giữ)</button>
     <button id="v160-mob-door" class="mob-min-btn" style="background:#00e5ff;color:#000;">🚪 Lên/Xuống</button>
     <button id="v160-mob-npc-car" class="mob-min-btn" style="background:#ffd60a;color:#000;">🚕 Đi Nhờ NPC</button>
-    <button id="v160-mob-swap" class="mob-min-btn" style="background:#4cd964;color:#000;">🔄 Đổi Lái</button>
+    <button id="v160-mob-swap" class="mob-min-btn" style="background:#4cd964;color:#000;">🔄 Đổi Lái / Ghế Phụ</button>
+    <button id="v160-mob-center" class="mob-min-btn" style="background:#00f5d4;color:#000;">🎯 Cân Bằng Tâm (R)</button>
     <button id="v160-mob-yt" class="mob-min-btn" style="background:#ff0000;color:#fff;">▶ YouTube</button>
     <button id="v160-mob-fs" class="mob-min-btn" style="background:#9b5de5;color:#fff;">⛶ Full</button>
   </div>
@@ -1139,6 +1140,9 @@
       document.getElementById('v160-mob-swap')?.addEventListener('click', () => {
         document.getElementById('btn-swap-driver')?.click();
       });
+      document.getElementById('v160-mob-center')?.addEventListener('click', () => {
+        if (typeof window.autoCenterBalancePassengerView === 'function') window.autoCenterBalancePassengerView();
+      });
       document.getElementById('v160-mob-yt')?.addEventListener('click', () => {
         document.getElementById('btn-open-yt-modal')?.click();
       });
@@ -1172,7 +1176,7 @@
         const title = document.createElement('div');
         title.className = 'section-title';
         title.style.color = '#00ff88';
-        title.innerHTML = 'Toan bi gay';
+        title.innerHTML = '🏆 GARA SIÊU XE CỦA TOÀN:';
 
         const row = document.createElement('div');
         row.id = 'v165-toan-garage-row';

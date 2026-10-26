@@ -1,0 +1,8 @@
+Asset_ID,Asset_Name,Category,Source_Type,Origin_URL,License,Attribution_Requirement,File_Path,Polygon_Count,Draw_Calls,Verification_Status,Notes
+AST-001,calibration_gate,Test Rig,Internal Project,Internal Blender 5.2 Script,MIT,None,controller_godot/models/calibration_gate.glb,3420,12,PASS,Metric 1:1 scale and coordinate axes test rig
+AST-002,graybox_city_block,City Environment,Internal Project,Internal Blender 5.2 Script,MIT,None,controller_godot/models/graybox_city_block.glb,18450,42,PASS,32m urban segment with shophouse and park
+AST-003,asphalt_street_pbr,PBR Material,External Candidate,https://ambientcg.com/view?id=Asphalt012,CC0 1.0,None,PENDING_DOWNLOAD,0,0,PENDING_VERIFICATION,High-res road surface texture candidate
+AST-004,sidewalk_paver_pbr,PBR Material,External Candidate,https://ambientcg.com/view?id=PavingStones070,CC0 1.0,None,PENDING_DOWNLOAD,0,0,PENDING_VERIFICATION,Concrete sidewalk pavers candidate
+AST-005,plaster_wall_pbr,PBR Material,External Candidate,https://polyhaven.com/a/plastered_wall,CC0 1.0,None,PENDING_DOWNLOAD,0,0,PENDING_VERIFICATION,Shophouse exterior facade plaster candidate
+AST-006,urban_street_props,3D Props,External Candidate,https://quaternius.com/packs/stylizedurban.html,CC0 1.0,None,PENDING_DOWNLOAD,0,0,PENDING_VERIFICATION,Street trash cans and barriers
+AST-007,commercial_vehicles,3D Vehicle,External Candidate,https://kenney.nl/assets/city-kit-commercial,CC0 1.0,None,PENDING_DOWNLOAD,0,0,PENDING_VERIFICATION,Low-poly urban vehicle meshes to be rescaled

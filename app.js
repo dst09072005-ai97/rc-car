@@ -2480,6 +2480,8 @@ function updateWorldSimulation(dt, elapsed) {
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
+  const fps = Math.round(1 / Math.max(dt, 0.0001));
+  window.__XR_PERF_METRICS__ = { fps, dt, ms: Math.round(dt * 1000) };
   const elapsed = clock.getElapsedTime();
 
   if (wheelDecayTimer > 0) {
@@ -3227,7 +3229,7 @@ function handleXrRaySelectOrGrabStart(pointerSourceObj) {
 function isRacingWheelDevice(gp) {
   if (!gp) return false;
   const id = (gp.id || '').toLowerCase();
-  return /wheel|steering|g29|g920|g923|thrustmaster|fanatec|t300|t150|t248|t80|t500|moza|pxn|pedal|racing|driving|force|046d-c24f|046d-c294|046d-c29b|044f|simucube|cammus/i.test(id);
+  return /r808|gog|wheel|steering|g29|g920|g923|thrustmaster|fanatec|t300|t150|t248|t80|t500|moza|pxn|pedal|racing|driving|force|046d-c24f|046d-c294|046d-c29b|044f|simucube|cammus|hori/i.test(id);
 }
 
 const prevGamepadBtns = { a: false, b: false, x: false, y: false };
@@ -3719,6 +3721,26 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           state.activeCarId = msg.ownCarId;
           state.isHostPlayer = Boolean(msg.isHost);
           state.lastActionLog = '🌐 Đã kết nối vào Thế giới 3D!';
+        } else if (msg.type === 'WHEEL_BRIDGE_STATE') {
+          // Cầu nối vô lăng GOG R808 từ Laptop sang kính Meta Quest 3
+          const wObj = window._racingWheel;
+          if (wObj && msg.connected) {
+            wObj.connected = true;
+            wObj.deviceName = msg.deviceId || 'GOG R808';
+            wObj.steerAngleDeg = msg.steerAngleDeg ?? (msg.steeringNorm * 540);
+            wObj.gasPercent = msg.gasPercent ?? Math.max(0, msg.throttleNorm * 100);
+            wObj.brakePercent = msg.brakePercent ?? 0;
+            wObj.gear = msg.gear || 'D';
+            state.steeringAngleDeg = wObj.steerAngleDeg;
+            state.throttlePercent = wObj.gasPercent;
+            state.brakePercent = wObj.brakePercent;
+            if (wObj.gasPercent > 3 || Math.abs(msg.steeringNorm || 0) > 0.04) {
+              if (state.playerMode !== 'DRIVING') {
+                state.playerMode = 'DRIVING';
+                state.engineRunning = true;
+              }
+            }
+          }
         } else if (msg.type === 'RC_HARDWARE_TELEMETRY') {
           // Đồng bộ tốc độ thực từ xe RC bên ngoài & kích hoạt tông Bà Già nếu xe RC ngoài đời đâm vật cản
           if (typeof msg.speedKmh === 'number') {
@@ -5240,7 +5262,8 @@ window.addEventListener('pointermove', (e) => {
   prevMouseX = e.clientX;
   prevMouseY = e.clientY;
   state.eyeLookYaw -= dx * 0.0045;
-  state.eyeLookPitch = THREE.MathUtils.clamp(state.eyeLookPitch - dy * 0.0035, -1.2, 1.2);
+  const maxPitch = (state.playerMode === 'DRIVING' && state.seatIndex !== 0) ? (Math.PI * 0.498) : 1.52;
+  state.eyeLookPitch = THREE.MathUtils.clamp(state.eyeLookPitch - dy * 0.0035, -maxPitch, maxPitch);
 });
 window.addEventListener('pointerup', () => {
   isMouseLooking = false;
@@ -11348,6 +11371,47 @@ const rearRightYtScreenGroup = new THREE.Group();
   });
 })();
 
+// ============================================================================
+// 19.3B. HỆ THỐNG CÂN BẰNG TÂM TỰ ĐỘNG & XOAY 360° CHO GHẾ PHỤ MỌI LOẠI XE
+// ============================================================================
+function autoCenterBalancePassengerView(smooth = false) {
+  if (smooth) {
+    state.isAutoCentering = true;
+  } else {
+    state.isAutoCentering = false;
+    state.eyeLookYaw = 0;
+    state.eyeLookPitch = 0;
+    state.passenger360Yaw = 0;
+    state.passenger360Pitch = 0;
+    if (typeof cameraRig !== 'undefined' && cameraRig) {
+      cameraRig.rotation.set(0, 0, 0);
+      if (!state.isLeaningOut) cameraRig.position.set(0, 0, 0);
+    }
+    if (typeof camera !== 'undefined' && camera) {
+      camera.rotation.set(0, 0, 0);
+    }
+  }
+  state.lastActionLog = '🎯 [Ghế Phụ 360°]: Tự động cân bằng tâm nhìn thẳng & mở khóa xoay 360°, nhìn trời/đất 90°!';
+}
+window.autoCenterBalancePassengerView = autoCenterBalancePassengerView;
+
+// Phím R để cân bằng tâm tức thì khi ngồi ghế phụ
+window.addEventListener('keydown', (e) => {
+  if (e.target && e.target.tagName === 'INPUT') return;
+  if (e.key && e.key.toLowerCase() === 'r') {
+    if (state.playerMode === 'DRIVING' && state.seatIndex !== 0) {
+      autoCenterBalancePassengerView();
+    }
+  }
+});
+
+// Chạm đúp / nhấp đúp màn hình để cân bằng tâm mượt mà
+window.addEventListener('dblclick', () => {
+  if (state.playerMode === 'DRIVING' && state.seatIndex !== 0) {
+    autoCenterBalancePassengerView(true);
+  }
+});
+
 // --- 19.3. GHẾ PHỤ THÒ ĐẦU RA NGOÀI NHÌN 360° TOÀN PHẦN (TRƯỚC/SAU/TRÁI/PHẢI/TRÊN/XUỐNG) ---
 state.passenger360Yaw = 0;
 state.passenger360Pitch = 0;
@@ -11410,24 +11474,46 @@ function updateUnifiedControllerDrivingAndNpcVehicleSync(dt) {
     ? -thumbstickY
     : (Math.abs(questWheelForward) > 0.08 ? questWheelForward : ((keys.w || holdState.gas || holdState.up ? 1 : 0) - (keys.s || holdState.down ? 1 : 0)));
 
-  // Nếu đang ngồi Ghế Phụ (seatIndex > 0) và thò đầu ra ngoài: cho phép xoay 360° toàn phần (Trái/Phải/Trước/Sau/Trên/Xuống)
-  if (state.playerMode === 'DRIVING' && state.seatIndex !== 0 && state.isLeaningOut) {
-    if (Math.abs(steerCmd) > 0.1) {
-      state.passenger360Yaw -= steerCmd * 2.8 * dt; // Không giới hạn góc -> Xoay tròn 360 độ Trước/Sau/Trái/Phải!
+  // RULE GHẾ PHỤ TỰ ĐỘNG CÂN BẰNG TÂM & XOAY 360° NHÌN TRỜI / ĐẤT 90°:
+  // Tự động kích hoạt khi ở Ghế Phụ (seatIndex !== 0) của MỌI LOẠI XE (Rolls-Royce, Siêu xe Gara, Mô-tô, Xe Bus, Cứu hỏa, Cảnh sát, Taxi, v.v.):
+  if (state.playerMode === 'DRIVING' && state.seatIndex !== 0) {
+    if (Math.abs(steerCmd) > 0.08) {
+      state.eyeLookYaw -= steerCmd * 3.2 * dt; // Xoay 360° tự do không giới hạn góc
     }
-    if (Math.abs(moveCmd) > 0.1) {
-      state.passenger360Pitch = THREE.MathUtils.clamp(
-        state.passenger360Pitch + moveCmd * 2.2 * dt,
-        -Math.PI / 2.1, // Nhìn thẳng xuống mặt đường dưới bánh xe
-        Math.PI / 2.1  // Nhìn thẳng lên bầu trời trên đỉnh đầu
+    if (Math.abs(moveCmd) > 0.08) {
+      state.eyeLookPitch = THREE.MathUtils.clamp(
+        state.eyeLookPitch + moveCmd * 2.6 * dt,
+        -Math.PI * 0.498, // -90° nhìn thẳng xuống sàn xe / chân
+        Math.PI * 0.498  // +90° nhìn thẳng lên nóc xe / bầu trời
       );
     }
+
+    // Cân bằng tâm mượt mà khi kích hoạt
+    if (state.isAutoCentering) {
+      state.eyeLookYaw = THREE.MathUtils.lerp(state.eyeLookYaw, 0, dt * 10);
+      state.eyeLookPitch = THREE.MathUtils.lerp(state.eyeLookPitch, 0, dt * 10);
+      if (Math.abs(state.eyeLookYaw) < 0.005 && Math.abs(state.eyeLookPitch) < 0.005) {
+        state.eyeLookYaw = 0;
+        state.eyeLookPitch = 0;
+        state.isAutoCentering = false;
+      }
+    }
+
+    state.passenger360Yaw = state.eyeLookYaw;
+    state.passenger360Pitch = state.eyeLookPitch;
+
+    // Giữ tâm cân bằng hoàn hảo theo mặt phẳng sàn xe (roll z = 0)
     cameraRig.rotation.order = 'YXZ';
-    cameraRig.rotation.y = state.passenger360Yaw;
-    cameraRig.rotation.x = state.passenger360Pitch;
-    camera.rotation.order = 'YXZ';
-    camera.rotation.y = state.passenger360Yaw;
-    camera.rotation.x = state.passenger360Pitch;
+    cameraRig.rotation.y = state.eyeLookYaw;
+    cameraRig.rotation.x = state.eyeLookPitch;
+    cameraRig.rotation.z = 0;
+
+    if (!renderer.xr.isPresenting) {
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = state.eyeLookYaw;
+      camera.rotation.x = state.eyeLookPitch;
+      camera.rotation.z = 0;
+    }
     return;
   }
 
@@ -13459,6 +13545,7 @@ function updateNpcStreetGreetingsJoggersAndPhotography(dt, elapsed) {
 
   // 2. Cập nhật các NPC Chạy Bộ Thể Dục (Joggers) chạy vòng quanh các ô phố
   for (const jogger of cityJoggersList) {
+    if (jogger.userData && jogger.userData.npcState === 'KNOCKED_FLYING') continue;
     const jd = jogger.userData;
     jd.phase += dt * 15.0;
     const sw = Math.sin(jd.phase) * 0.78;
@@ -13574,11 +13661,12 @@ let prevTouchLookY = 0;
     prevTouchLookY = e.clientY;
 
     const isMobileDevice = (window.__DETECTED_DEVICE_TYPE__ === 'MOBILE_PHONE');
-    const maxPitchRad = isMobileDevice ? PITCH_LIMIT_MOBILE_75_RAD : PITCH_LIMIT_VR_90_RAD;
+    const isPassenger360 = (state.playerMode === 'DRIVING' && state.seatIndex !== 0);
+    const maxPitchRad = isPassenger360 ? (Math.PI * 0.498) : (isMobileDevice ? PITCH_LIMIT_MOBILE_75_RAD : PITCH_LIMIT_VR_90_RAD);
 
     // Vuốt trái/phải: xoay 360° tự do không giới hạn
     state.eyeLookYaw -= dx * 0.0052;
-    // Vuốt lên/xuống: khóa chặt trong phạm vi ±75° (Điện thoại) hoặc ±90° (VR/PC)
+    // Vuốt lên/xuống: khóa chặt trong phạm vi ±90° (Ghế phụ) hoặc ±75° (Điện thoại lái xe)
     state.eyeLookPitch = THREE.MathUtils.clamp(state.eyeLookPitch - dy * 0.0042, -maxPitchRad, maxPitchRad);
   });
 
@@ -13614,10 +13702,12 @@ function enforceMovementButtonsAndPitchClamping(dt) {
     playerAvatarGroup.position.copy(state.avatarPos);
   }
 
-  // 2. Luôn kẹp chặt góc nhìn lên/xuống (Pitch) đúng ±75° trên Điện thoại và ±90° trên Kính VR
-  state.eyeLookPitch = THREE.MathUtils.clamp(state.eyeLookPitch || 0, -maxPitchRad, maxPitchRad);
+  // 2. Luôn kẹp chặt góc nhìn lên/xuống (Pitch): ±90° cho Ghế phụ nhìn trời/đất, ±75° khi lái xe điện thoại
+  const isPassenger360 = (state.playerMode === 'DRIVING' && state.seatIndex !== 0);
+  const currentMaxPitch = isPassenger360 ? (Math.PI * 0.498) : maxPitchRad;
+  state.eyeLookPitch = THREE.MathUtils.clamp(state.eyeLookPitch || 0, -currentMaxPitch, currentMaxPitch);
   if (state.passenger360Pitch !== undefined) {
-    state.passenger360Pitch = THREE.MathUtils.clamp(state.passenger360Pitch, -maxPitchRad, maxPitchRad);
+    state.passenger360Pitch = THREE.MathUtils.clamp(state.passenger360Pitch, -currentMaxPitch, currentMaxPitch);
   }
 
   cameraRig.rotation.order = 'YXZ';
@@ -14471,6 +14561,7 @@ function enforceSolidPlayerCarAndLampPolesCollision(dt) {
   const allMovingWalkers = [...sidewalkNpcs, ...cityJoggersList, ...crossingAnimals];
   for (const entity of allMovingWalkers) {
     if (!entity || !entity.visible) continue;
+    if (entity.userData && entity.userData.npcState === 'KNOCKED_FLYING') continue;
     repelFromLampPolesInBlock(entity.position, 0.72);
 
     const dxCar = entity.position.x - carPos.x;
@@ -15259,6 +15350,7 @@ function updateAllLivelySocialActivities7SecCycle(dt, elapsed) {
 
   // 2. Cập nhật NPC Dắt Chó Đi Dạo trên vỉa hè
   for (const dw of dogWalkerUnits) {
+    if (dw.group && dw.group.userData && dw.group.userData.npcState === 'KNOCKED_FLYING') continue;
     dw.phase += dt * 8.5;
     const sw = Math.sin(dw.phase) * 0.48;
     const od = dw.owner.userData;
@@ -15278,6 +15370,7 @@ function updateAllLivelySocialActivities7SecCycle(dt, elapsed) {
 
   // 3. Cập nhật Trẻ Em Chạy Nhảy Đuổi Bắt Cầm Bóng Bay
   for (const kid of playingChildrenUnits) {
+    if (kid.mesh && kid.mesh.userData && kid.mesh.userData.npcState === 'KNOCKED_FLYING') continue;
     kid.angle += dt * 2.2;
     kid.phase += dt * 16.0;
     kid.mesh.position.x = kid.center.x + Math.cos(kid.angle) * kid.radius;
@@ -15302,6 +15395,307 @@ function updateAllLivelySocialActivities7SecCycle(dt, elapsed) {
       lis.userData.leftArm.rotation.x = -Math.PI * 0.55 + Math.sin(elapsed * 14 + idx) * 0.3;
       lis.userData.rightArm.rotation.x = -Math.PI * 0.55 - Math.sin(elapsed * 14 + idx) * 0.3;
     });
+  }
+}
+
+// ============================================================================
+// 23.9B. HOẠT CẢNH TÊN CƯỚP BẮT CÓC TRẺ EM & CƠ CHẾ TÔNG HẤT TUNG MỌI NPC/PET
+// ============================================================================
+const kidnapperDramaUnit = {
+  robber: null,
+  child: null,
+  state: 'CHASING', // 'CHASING' | 'RESCUED'
+  dir: 1,
+  speed: 2.6,
+  rescuedTimer: 0
+};
+
+(function setupKidnapperRobberAndChildDrama() {
+  if (typeof createFullLimbedHumanNpc !== 'function') return;
+
+  // 1. Tên Cướp Bắt Cóc Trẻ Em (Áo khoác đen kín, quần đen, mặt Lego giận dữ, nón trùm)
+  const robber = createFullLimbedHumanNpc(0x1a1a1a, 0x111111, 4, false, 1.05);
+  const robberBubble = createSpeechBubbleSprite('🦹‍♂️ CƯỚP ĐÂY! Đứng lại đứa bé kia! Bắt cóc tống tiền!', '#4a0e17', '#ff4d6d');
+  robberBubble.scale.set(1.7, 0.35, 1);
+  robberBubble.position.set(0, 2.05, 0);
+  robberBubble.visible = true;
+  robber.add(robberBubble);
+  robber.userData.role = 'KIDNAPPER';
+  robber.userData.bubble = robberBubble;
+  robber.userData.headingRad = 0;
+  robber.userData.baseY = 0.24;
+  robber.position.set(13.2, 0.24, 6.0);
+  scene.add(robber);
+
+  // 2. Em Bé Bị Cướp Rượt Đuổi (Scale nhỏ 0.62, áo vàng tươi, quần xanh, mặt khóc sợ hãi, cầm bóng bay)
+  const child = createFullLimbedHumanNpc(0xffbe0b, 0x0077b6, 3, false, 0.62);
+  const childBubble = createSpeechBubbleSprite('👶 CỨU BÉ VỚI! Có kẻ bắt cóc rượt đuổi em!', '#2b0938', '#ffd60a');
+  childBubble.scale.set(1.5, 0.32, 1);
+  childBubble.position.set(0, 1.45, 0);
+  childBubble.visible = true;
+  child.add(childBubble);
+  child.userData.role = 'KIDNAPPED_CHILD';
+  child.userData.bubble = childBubble;
+  child.userData.headingRad = 0;
+  child.userData.baseY = 0.24;
+  child.position.set(13.2, 0.24, 9.2); // Chạy trước tên cướp 3.2m
+  scene.add(child);
+
+  kidnapperDramaUnit.robber = robber;
+  kidnapperDramaUnit.child = child;
+})();
+
+function updateKidnapperRobberAndChildDrama(dt, elapsed) {
+  const { robber, child } = kidnapperDramaUnit;
+  if (!robber || !child) return;
+
+  // Khi em bé được giải cứu: Đứng lại, nhảy cẫng lên ăn mừng
+  if (kidnapperDramaUnit.state === 'RESCUED') {
+    kidnapperDramaUnit.rescuedTimer -= dt;
+    child.rotation.y = Math.sin(elapsed * 4) * 0.45;
+    child.position.y = 0.24 + Math.abs(Math.sin(elapsed * 12)) * 0.24;
+    const cd = child.userData;
+    cd.leftArm.rotation.x = -Math.PI * 0.75 + Math.sin(elapsed * 10) * 0.3;
+    cd.rightArm.rotation.x = -Math.PI * 0.75 - Math.sin(elapsed * 10) * 0.3;
+    cd.leftLeg.rotation.x = 0;
+    cd.rightLeg.rotation.x = 0;
+
+    if (kidnapperDramaUnit.rescuedTimer <= 0) {
+      kidnapperDramaUnit.state = 'CHASING';
+      robber.userData.bubble.visible = true;
+      robber.position.set(13.2, 0.24, 6.0);
+      child.position.set(13.2, 0.24, 9.2);
+    }
+    return;
+  }
+
+  // Kịch bản bình thường: Tên cướp chạy đuổi theo Em bé trên vỉa hè
+  if (child.userData.npcState !== 'KNOCKED_FLYING' && robber.userData.npcState !== 'KNOCKED_FLYING') {
+    const step = kidnapperDramaUnit.speed * dt;
+    child.position.z += kidnapperDramaUnit.dir * step;
+    robber.position.z = child.position.z - kidnapperDramaUnit.dir * 2.8;
+    robber.position.x = child.position.x;
+
+    child.rotation.y = kidnapperDramaUnit.dir > 0 ? 0 : Math.PI;
+    robber.rotation.y = child.rotation.y;
+
+    const cPhase = elapsed * 18;
+    const cd = child.userData;
+    cd.leftLeg.rotation.x = Math.sin(cPhase) * 0.8;
+    cd.rightLeg.rotation.x = -Math.sin(cPhase) * 0.8;
+    cd.leftArm.rotation.x = -Math.sin(cPhase) * 0.8;
+    cd.rightArm.rotation.x = Math.sin(cPhase) * 0.8;
+
+    const rPhase = elapsed * 16;
+    const rd = robber.userData;
+    rd.leftLeg.rotation.x = Math.sin(rPhase) * 0.75;
+    rd.rightLeg.rotation.x = -Math.sin(rPhase) * 0.75;
+    rd.leftArm.rotation.x = -Math.PI * 0.4 + Math.sin(rPhase) * 0.4;
+    rd.rightArm.rotation.x = -Math.PI * 0.4 - Math.sin(rPhase) * 0.4;
+
+    if (child.position.z > 38) kidnapperDramaUnit.dir = -1;
+    else if (child.position.z < -38) kidnapperDramaUnit.dir = 1;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// CƠ CHẾ TÔNG HẤT TUNG MỌI LOẠI NPC & THÚ CƯNG (UNIVERSAL KNOCKBACK RAGDOLL FLING)
+// ----------------------------------------------------------------------------
+const _carFwdVecTemp = new THREE.Vector3();
+
+function applyUniversalCarNpcFlingCrash(entity, carPos, playerSpeedAbs, carForward, entityType) {
+  if (!entity || !entity.visible) return false;
+  const ud = entity.userData = entity.userData || {};
+  if (ud.npcState === 'KNOCKED_FLYING') return false;
+
+  const dx = entity.position.x - carPos.x;
+  const dz = entity.position.z - carPos.z;
+  const distSq = dx * dx + dz * dz;
+
+  let hitRadius = 2.25;
+  let massRatio = 1.0;
+  if (entityType === 'ANIMAL') { hitRadius = 1.95; massRatio = 1.55; }
+  else if (entityType === 'CHILD') { hitRadius = 2.05; massRatio = 1.45; }
+  else if (entityType === 'ROBBER' || entityType === 'KIDNAPPER') { hitRadius = 2.45; massRatio = 1.25; }
+  else if (entityType === 'DOG_WALKER') { hitRadius = 2.50; massRatio = 1.15; }
+
+  if (distSq > hitRadius * hitRadius) return false;
+
+  // Xảy ra va chạm tông xe!
+  initAudio();
+  playImpactSound(22);
+  state.suspensionShakeIntensity = Math.min(2.5, 1.4 + playerSpeedAbs / 22.0);
+
+  let pushX = dx;
+  let pushZ = dz;
+  const len = Math.hypot(pushX, pushZ);
+  if (len > 0.001) {
+    pushX /= len;
+    pushZ /= len;
+  } else {
+    pushX = carForward.x;
+    pushZ = carForward.z;
+  }
+
+  const carSpdMs = Math.max(playerSpeedAbs / 3.6, 2.5);
+  const launchHoriz = Math.min(30.0, carSpdMs * 1.35 * massRatio + 5.5);
+  const launchVert = Math.min(16.0, 5.8 + carSpdMs * 0.42 * massRatio);
+
+  ud.npcState = 'KNOCKED_FLYING';
+  if (!ud.knockVel) ud.knockVel = new THREE.Vector3();
+  ud.knockVel.set(pushX * launchHoriz, launchVert, pushZ * launchHoriz);
+  ud.angularVel = (Math.random() > 0.5 ? 1 : -1) * (8.0 + Math.random() * 8.0);
+  ud.angularAxis = Math.random() > 0.5 ? 'x' : 'z';
+  ud.knockTimer = 2.8;
+  ud.baseY = ud.baseY !== undefined ? ud.baseY : (entity.position.y || 0.24);
+
+  // Xử lý sự kiện đặc biệt cho từng nhóm NPC
+  if (entityType === 'KIDNAPPER' || ud.role === 'KIDNAPPER') {
+    state.crimeLog = '🚨 BẠN ĐÃ LÁI XE TÔNG HẤT TUNG TÊN CƯỚP ĐANG BẮT CÓC TRẺ EM! Giải cứu em bé thành công!';
+    state.lastActionLog = state.crimeLog;
+    if (typeof kidnapperDramaUnit !== 'undefined') {
+      kidnapperDramaUnit.state = 'RESCUED';
+      kidnapperDramaUnit.rescuedTimer = 8.0;
+    }
+  } else if (entityType === 'CHILD') {
+    state.lastActionLog = '💥 XE TÔNG TRÚNG TRẺ EM! Hiệu ứng hất tung nhào lộn kích hoạt!';
+    if (ud.helloBubble) ud.helloBubble.visible = true;
+  } else if (entityType === 'ANIMAL') {
+    playSocialOrAnimalSound(ud.species === 'DOG' ? 'DOG_BARK' : 'CAT_MEOW');
+    state.lastActionLog = '💥 XE TÔNG TRÚNG THÚ CƯNG! Chú cún bị hất tung nhào lộn trên không trung!';
+    if (ud.soundBubble) ud.soundBubble.visible = true;
+  } else if (entityType === 'JOGGER') {
+    state.lastActionLog = '💥 TÔNG TRÚNG NGƯỜI CHẠY BỘ! Hất tung nhào lộn trên không trung!';
+  } else if (entityType === 'DOG_WALKER') {
+    state.lastActionLog = '💥 TÔNG TRÚNG NGƯỜI DẮT CHÓ! Hất tung cả người lẫn cún cưng!';
+  } else {
+    state.lastActionLog = '💥 TÔNG HẤT TUNG NPC ĐI BỘ! Hiệu ứng va chạm nhào lộn kích hoạt!';
+    if (ud.helloBubble) ud.helloBubble.visible = true;
+  }
+
+  return true;
+}
+
+function updateKnockedFlyingTrajectory(entity, dt) {
+  if (!entity || !entity.visible) return;
+  const ud = entity.userData;
+  if (!ud || ud.npcState !== 'KNOCKED_FLYING') return;
+
+  entity.position.addScaledVector(ud.knockVel, dt);
+  ud.knockVel.y -= 15.0 * dt;
+
+  if (ud.angularAxis === 'x') {
+    entity.rotation.x += ud.angularVel * dt;
+    entity.rotation.z += ud.angularVel * dt * 0.4;
+  } else {
+    entity.rotation.z += ud.angularVel * dt;
+    entity.rotation.x += ud.angularVel * dt * 0.4;
+  }
+  entity.rotation.y += ud.angularVel * dt * 0.3;
+
+  const groundY = ud.baseY || 0.24;
+  if (entity.position.y <= groundY) {
+    entity.position.y = groundY;
+    if (ud.knockVel.y < -1.5) {
+      ud.knockVel.y = Math.abs(ud.knockVel.y) * 0.38;
+      ud.knockVel.x *= 0.72;
+      ud.knockVel.z *= 0.72;
+      ud.angularVel *= 0.6;
+    } else {
+      ud.knockVel.set(0, 0, 0);
+    }
+  }
+
+  ud.knockTimer -= dt;
+  if (ud.knockTimer <= 0) {
+    ud.npcState = 'WALKING';
+    entity.position.y = groundY;
+    entity.rotation.set(0, ud.headingRad || 0, 0);
+  }
+}
+
+function updateAllNpcHitAndFlingPhysics(dt, elapsed) {
+  const isDriving = (state.playerMode === 'DRIVING');
+  const carPos = vehicleRoot.position;
+  const speedAbs = Math.abs(state.speedKmh || (state.velocityMs * 3.6) || 0);
+
+  const carYaw = vehicleRoot.rotation.y || state.headingRad || 0;
+  _carFwdVecTemp.set(-Math.sin(carYaw), 0, -Math.cos(carYaw));
+
+  // 1. Kiểm tra va chạm khi xe người chơi di chuyển (speedAbs > 1.2 km/h)
+  if (isDriving && speedAbs > 1.2) {
+    if (typeof sidewalkNpcs !== 'undefined') {
+      for (let i = 0; i < sidewalkNpcs.length; i++) {
+        applyUniversalCarNpcFlingCrash(sidewalkNpcs[i], carPos, speedAbs, _carFwdVecTemp, 'PEDESTRIAN');
+      }
+    }
+    if (typeof cityJoggersList !== 'undefined') {
+      for (let i = 0; i < cityJoggersList.length; i++) {
+        applyUniversalCarNpcFlingCrash(cityJoggersList[i], carPos, speedAbs, _carFwdVecTemp, 'JOGGER');
+      }
+    }
+    if (typeof dogWalkerUnits !== 'undefined') {
+      for (let i = 0; i < dogWalkerUnits.length; i++) {
+        const dw = dogWalkerUnits[i];
+        if (dw && dw.group) {
+          applyUniversalCarNpcFlingCrash(dw.group, carPos, speedAbs, _carFwdVecTemp, 'DOG_WALKER');
+        }
+      }
+    }
+    if (typeof playingChildrenUnits !== 'undefined') {
+      for (let i = 0; i < playingChildrenUnits.length; i++) {
+        const kid = playingChildrenUnits[i];
+        if (kid && kid.mesh) {
+          applyUniversalCarNpcFlingCrash(kid.mesh, carPos, speedAbs, _carFwdVecTemp, 'CHILD');
+        }
+      }
+    }
+    if (typeof crossingAnimals !== 'undefined') {
+      for (let i = 0; i < crossingAnimals.length; i++) {
+        applyUniversalCarNpcFlingCrash(crossingAnimals[i], carPos, speedAbs, _carFwdVecTemp, 'ANIMAL');
+      }
+    }
+    if (typeof kidnapperDramaUnit !== 'undefined') {
+      if (kidnapperDramaUnit.robber) {
+        applyUniversalCarNpcFlingCrash(kidnapperDramaUnit.robber, carPos, speedAbs, _carFwdVecTemp, 'KIDNAPPER');
+      }
+      if (kidnapperDramaUnit.child) {
+        applyUniversalCarNpcFlingCrash(kidnapperDramaUnit.child, carPos, speedAbs, _carFwdVecTemp, 'CHILD');
+      }
+    }
+    if (typeof grannyObstacles !== 'undefined') {
+      for (let i = 0; i < grannyObstacles.length; i++) {
+        applyUniversalCarNpcFlingCrash(grannyObstacles[i], carPos, speedAbs, _carFwdVecTemp, 'PEDESTRIAN');
+      }
+    }
+  }
+
+  // 2. Cập nhật quỹ đạo bay trên không trung & tiếp đất nảy cho TẤT CẢ thực thể
+  if (typeof sidewalkNpcs !== 'undefined') {
+    for (let i = 0; i < sidewalkNpcs.length; i++) updateKnockedFlyingTrajectory(sidewalkNpcs[i], dt);
+  }
+  if (typeof cityJoggersList !== 'undefined') {
+    for (let i = 0; i < cityJoggersList.length; i++) updateKnockedFlyingTrajectory(cityJoggersList[i], dt);
+  }
+  if (typeof dogWalkerUnits !== 'undefined') {
+    for (let i = 0; i < dogWalkerUnits.length; i++) {
+      if (dogWalkerUnits[i] && dogWalkerUnits[i].group) updateKnockedFlyingTrajectory(dogWalkerUnits[i].group, dt);
+    }
+  }
+  if (typeof playingChildrenUnits !== 'undefined') {
+    for (let i = 0; i < playingChildrenUnits.length; i++) {
+      if (playingChildrenUnits[i] && playingChildrenUnits[i].mesh) updateKnockedFlyingTrajectory(playingChildrenUnits[i].mesh, dt);
+    }
+  }
+  if (typeof crossingAnimals !== 'undefined') {
+    for (let i = 0; i < crossingAnimals.length; i++) updateKnockedFlyingTrajectory(crossingAnimals[i], dt);
+  }
+  if (typeof kidnapperDramaUnit !== 'undefined') {
+    if (kidnapperDramaUnit.robber) updateKnockedFlyingTrajectory(kidnapperDramaUnit.robber, dt);
+    if (kidnapperDramaUnit.child) updateKnockedFlyingTrajectory(kidnapperDramaUnit.child, dt);
+  }
+  if (typeof grannyObstacles !== 'undefined') {
+    for (let i = 0; i < grannyObstacles.length; i++) updateKnockedFlyingTrajectory(grannyObstacles[i], dt);
   }
 }
 
@@ -15332,6 +15726,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   // 4. Chu kỳ hoạt cảnh 7 giây đổi địa điểm, Dắt chó đi dạo, Trẻ em chạy nhảy & Ca hát đường phố
   updateAllLivelySocialActivities7SecCycle(dt, elapsed);
+
+  // 5. Cập nhật hoạt cảnh Tên Cướp Bắt Cóc Trẻ Em & Cơ Chế Tông Hất Tung Tất Cả NPC/Pet
+  if (typeof updateKidnapperRobberAndChildDrama === 'function') updateKidnapperRobberAndChildDrama(dt, elapsed);
+  if (typeof updateAllNpcHitAndFlingPhysics === 'function') updateAllNpcHitAndFlingPhysics(dt, elapsed);
 };
 
 // ============================================================================
@@ -17557,6 +17955,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       avatarBodyMesh.visible = false;
       driverSeatMount.add(cameraRig);
       cameraRig.position.set(0, 0, 0);
+      if (typeof autoCenterBalancePassengerView === 'function') autoCenterBalancePassengerView();
       cameraRig.rotation.set(0, 0, 0);
       roofBeaconGroup.visible = false;
     }
@@ -17589,12 +17988,18 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       activeNpcChauffeurMesh.visible = true;
       activeNpcChauffeurMesh.position.copy(SEAT_POSITIONS[npcSeatIdx].pos);
 
+      if (state.seatIndex !== 0) {
+        if (typeof autoCenterBalancePassengerView === 'function') autoCenterBalancePassengerView();
+      }
       state.lastActionLog = state.seatIndex === 0
         ? `🛞 BẠN ĐANG CẦM LÁI [${state.boardedNpcVehicleRef.userData.modelName}] và chở NPC ngồi bên ghế phụ!`
-        : `💺 Bạn đã nhường lại vô-lăng cho Tài xế NPC! NPC đang tự động lái chở bạn đi tiếp!`;
+        : `💺 Bạn đã nhường lại vô-lăng cho Tài xế NPC! Đã tự động cân bằng tâm ghế phụ 360°!`;
       return;
     }
     origSwapSeat();
+    if (state.seatIndex !== 0) {
+      if (typeof autoCenterBalancePassengerView === 'function') autoCenterBalancePassengerView();
+    }
   };
 
   const btnSwapEl = document.getElementById('btn-swap-driver');
@@ -19394,10 +19799,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       tilt360State.computedYaw = THREE.MathUtils.lerp(tilt360State.computedYaw, targetYaw, dt * 8);
       tilt360State.computedPitch = THREE.MathUtils.lerp(tilt360State.computedPitch, targetPitch, dt * 8);
 
+      const isPass360 = (state.playerMode === 'DRIVING' && state.seatIndex !== 0);
+      const gyroMaxPitch = isPass360 ? (Math.PI * 0.498) : 1.2;
       camera.rotation.order = 'YXZ';
       camera.rotation.y = (state.eyeLookYaw || 0) + tilt360State.computedYaw;
-      camera.rotation.x = THREE.MathUtils.clamp((state.eyeLookPitch || 0) + tilt360State.computedPitch, -1.2, 1.2);
-      camera.rotation.z = THREE.MathUtils.lerp(camera.rotation.z, -tiltRoll * 0.18, dt * 6);
+      camera.rotation.x = THREE.MathUtils.clamp((state.eyeLookPitch || 0) + tilt360State.computedPitch, -gyroMaxPitch, gyroMaxPitch);
+      camera.rotation.z = isPass360 ? 0 : THREE.MathUtils.lerp(camera.rotation.z, -tiltRoll * 0.18, dt * 6);
 
       // Nghiêng thiết bị sang trái/phải để đánh lái nhẹ nhàng khi đang lái xe
       if (state.playerMode === 'DRIVING' && tilt360State.tiltSteerEnabled && Math.abs(tiltRoll) > 0.14) {
@@ -19680,7 +20087,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       const gp = gamepads[i];
       if (!gp || !gp.connected) continue;
       const id = (gp.id || '').toLowerCase();
-      if (/wheel|steering|g29|g920|g923|thrustmaster|fanatec|t300|t150|moza|pxn|pedal|racing|driving|force|046d-c24f|046d-c294|046d-c29b/i.test(id)) {
+      if (/r808|gog|wheel|steering|g29|g920|g923|thrustmaster|fanatec|t300|t150|moza|pxn|pedal|racing|driving|force|046d-c24f|046d-c294|046d-c29b|hori/i.test(id)) {
         activeGp = gp;
         isDedicatedWheel = true;
         break;
@@ -19800,6 +20207,31 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     racingWheel.gasPercent = gasVal * 100;
     racingWheel.brakePercent = brakeVal * 100;
+
+    // ĐỒNG BỘ TRỰC TIẾP VÀO TRẠNG THÁI XE CHÍNH CỦA APP (STATE)
+    state.steeringAngleDeg = racingWheel.steerAngleDeg;
+    state.throttlePercent = racingWheel.gasPercent;
+    state.brakePercent = racingWheel.brakePercent;
+
+    // Nếu người chơi có thao tác đạp ga / bẻ lái từ Vô lăng GOG R808:
+    // Tự động kích hoạt ngay chế độ Lái xe & Nổ máy Rolls-Royce
+    if (racingWheel.gasPercent > 3 || Math.abs(racingWheel.rawSteer) > 0.04) {
+      if (state.playerMode !== 'DRIVING') {
+        state.playerMode = 'DRIVING';
+        state.seatIndex = 0;
+        state.doorsOpen = false;
+        if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
+        if (typeof driverSeatMount !== 'undefined' && driverSeatMount) {
+          driverSeatMount.add(cameraRig);
+          cameraRig.position.set(0, 0, 0);
+          cameraRig.rotation.set(0, 0, 0);
+        }
+      }
+      if (!state.engineRunning) {
+        state.engineRunning = true;
+        state.rpm = 1200;
+      }
+    }
 
     // 3. LẪY CHUYỂN SỐ VÔ LĂNG & CÁC NÚT BẤM
     // Lẫy phải (Paddle Right - Lên số / Tiến D): buttons[4] hoặc buttons[5]
@@ -20269,6 +20701,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       for (let i = 0; i < npcList.length; i++) {
         const npc = npcList[i];
         if (!npc || !npc.visible) continue;
+        if (npc.userData && npc.userData.npcState === 'KNOCKED_FLYING') continue;
         const dx = npc.position.x - carPos.x;
         const dz = npc.position.z - carPos.z;
 
@@ -20389,6 +20822,23 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         carControlPacket.steer = steer;
         carControlPacket.throttle = throttle;
         mpSocket.send(JSON.stringify(carControlPacket));
+
+        // Nếu vô lăng GOG R808 đang cắm vào máy này, phát thêm Bridge State cho Quest 3
+        const wheel = window._racingWheel;
+        if (wheel && wheel.connected) {
+          mpSocket.send(JSON.stringify({
+            type: 'WHEEL_BRIDGE_INPUT',
+            connected: true,
+            deviceId: wheel.deviceName || 'GOG R808',
+            steeringNorm: wheel.rawSteer || 0,
+            steerAngleDeg: wheel.steerAngleDeg || 0,
+            gasPercent: wheel.gasPercent || 0,
+            brakePercent: wheel.brakePercent || 0,
+            gear: wheel.gear || 'D',
+            steer,
+            throttle
+          }));
+        }
 
         // Cập nhật nhãn thông số xung hiển thị trên Web HUD
         const pulseInfoEl = document.getElementById('esp32-car-pulse-info');

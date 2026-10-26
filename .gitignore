@@ -4,9 +4,28 @@ node_modules/
 
 # Build outputs & packages
 dist/
+build/
+backups/
+meta_quest_3/
 *.apk
 *.aab
 *.zip
+*.aar
+*.exe
+oculus-go-adb-driver-2.0/
+
+# Blender & Godot temporary/cache files
+*.blend1
+controller_godot/.godot/
+controller_godot/android/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Agent & IDE local state
+.kiln/
+.serena/
 
 # Prevent duplicating files between root junctions and v2 www
 v2/golden_baseline_v2_20261020/www/libs/

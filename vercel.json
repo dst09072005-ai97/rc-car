@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "public": true,
+  "cleanUrls": true,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Permissions-Policy", "value": "xr-spatial-tracking=(self *), gyroscope=(self *), accelerometer=(self *), magnetometer=(self *), camera=(self *), microphone=(self *)" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin-allow-popups" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/www/$1" }
+  ]
+}

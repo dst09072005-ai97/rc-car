@@ -1,0 +1,8 @@
+{
+  "videoSource": "direct_udp",
+  "cameraIp": "192.168.4.102",
+  "cameraPort": 4212,
+  "relayUrl": "ws://192.168.4.2:3000/ws",
+  "relayToken": "",
+  "note": "Copy this file to user://vr_config.json only if you later add runtime config. For source edits, change exported variables in rc_fpv_v10.gd."
+}

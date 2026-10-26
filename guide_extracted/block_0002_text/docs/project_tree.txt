@@ -1,0 +1,12 @@
+RollsRoyce_VR_Quest3_Simulator/
+├── blender_scripts/
+│   └── generate_rolls_royce_interior.py   # Script Python chạy trong Blender tạo file .GLB chuẩn 1:1
+├── www/
+│   ├── index.html                         # Giao diện chính + Nút Enter VR + Cấu hình IP ESP32
+│   ├── app.js                             # Mã nguồn 3D VR (HUD kéo thả, Kính ESP32 thu phóng, Lái bằng tay cầm)
+│   └── assets/
+│       └── rolls_royce_cabin.glb          # File xuất ra từ Blender
+├── capacitor.config.json                  # Cấu hình đóng gói APK cho Android / Meta Quest 3
+├── package.json                           # Khai báo thư viện build APK
+└── build_apk.sh                           # Script tự động đóng gói ZIP và xuất file APK
+

@@ -1,0 +1,39 @@
+==============================================================================
+EXTRACTION AUDIT REPORT — GUIDE.TXT CODE BLOCKS
+==============================================================================
+
+Source Document       : D:\XE_RC_FPV_V10\guide.txt
+Total Guide Lines     : 4729
+Total Blocks Detected : 14
+Extraction Successful : 14 (100%)
+Empty Blocks          : 0
+Errors Encountered    : 0
+Full Source Blocks    : 11
+Config/Build Blocks   : 3
+Snippet/Partial Blocks: 2
+
+HASH AUDIT SUMMARY:
+All 14 extracted files match their original guide SHA-256 (sha256_original == sha256_extracted).
+
+DUPLICATE / VARIANT TARGETS DETECTED IN GUIDE:
+- blender_scripts/generate_rolls_royce_interior.py: 2 variants found across guide sections
+- www/index.html: 2 variants found across guide sections
+- www/app.js: 4 variants found across guide sections
+
+DETAILED BLOCK INVENTORY:
+ID   | Lang       | Lines       | Type           | Status       | Target Path
+------------------------------------------------------------------------------
+1    | markdown   | L83-L132     | reference_code | partial      | N/A
+2    | text       | L142-L155     | example_doc    | reference    | docs/project_tree.txt
+3    | python     | L161-L320     | full_source    | complete     | blender_scripts/generate_rolls_royce_interior.py
+4    | html       | L326-L381     | full_source    | complete     | www/index.html
+5    | javascript | L400-L1066    | full_source    | complete     | www/app.js
+6    | json       | L1074-L1091    | config_build   | complete     | package.json
+7    | json       | L1095-L1106    | config_build   | complete     | capacitor.config.json
+8    | bash       | L1112-L1129    | config_build   | complete     | build_apk.sh
+9    | cpp        | L1226-L1320    | full_source    | complete     | firmware/esp32_cam_ws_fast.ino
+10   | python     | L1330-L1420    | snippet_update | partial_function | blender_scripts/generate_rolls_royce_interior.py
+11   | javascript | L1436-L2103    | full_source    | complete     | www/app.js
+12   | html       | L2141-L2207    | full_source    | complete     | www/index.html
+13   | javascript | L2215-L3335    | full_source    | complete     | www/app.js
+14   | javascript | L3387-L4720    | full_source    | complete     | www/app.js

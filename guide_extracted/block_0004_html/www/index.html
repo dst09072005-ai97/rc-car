@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rolls-Royce VR Simulator - Meta Quest 3</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #0b0d12; font-family: 'Segoe UI', sans-serif; color: #fff; }
+    #overlay-ui {
+      position: absolute; top: 16px; left: 16px; z-index: 10;
+      background: rgba(15, 18, 26, 0.88); border: 1px solid #d4af37;
+      padding: 14px 18px; border-radius: 10px; max-width: 380px;
+      backdrop-filter: blur(8px);
+    }
+    #overlay-ui h2 { margin: 0 0 8px 0; font-size: 16px; color: #dfcba8; }
+    .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; font-size: 13px; }
+    input {
+      flex: 1; padding: 6px 8px; border-radius: 5px; border: 1px solid #444;
+      background: #1a1e29; color: #00e5ff; font-family: monospace;
+    }
+    button {
+      padding: 6px 12px; border-radius: 5px; border: none;
+      background: #d4af37; color: #000; font-weight: bold; cursor: pointer;
+    }
+    .hint { font-size: 11px; color: #aaa; line-height: 1.4; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="overlay-ui">
+    <h2>ROLLS-ROYCE VR SIMULATOR [V17 FIXED]</h2>
+    <div class="row">
+      <label>ESP32 IP:</label>
+      <input id="esp32-ip" type="text" value="http://192.168.4.102:4213/stream" />
+      <button id="btn-connect">Kết nối</button>
+    </div>
+    <div class="hint">
+      • <b>Grip (Nút nắm hông):</b> Giữ tia vào thanh tiêu đề để kéo thả Bảng Chú Thích hoặc Kính Chắn Gió.<br/>
+      • <b>Khi đang giữ Grip + Gạt Thumbstick Dọc:</b> Kéo gần/đẩy xa & Thu nhỏ/Phóng to khung.<br/>
+      • <b>Thumbstick Ngang:</b> Xoay vô lăng (-540° đến +540°).<br/>
+      • <b>Cò Phải (Trigger):</b> Đạp Ga | <b>Cò Trái:</b> Đạp Phanh | <b>Nút A/B:</b> Chuyển số P/R/N/D.
+    </div>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+

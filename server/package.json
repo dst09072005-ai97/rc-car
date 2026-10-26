@@ -1,0 +1,19 @@
+{
+  "name": "xe-rc-fpv-v10-relay",
+  "version": "10.1.0",
+  "private": true,
+  "description": "UDP camera fragment relay + browser/WebXR viewer for XE RC FPV V10",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/test_contract.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.3"
+  }
+}

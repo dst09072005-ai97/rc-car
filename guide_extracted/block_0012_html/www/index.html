@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rolls-Royce VR Simulator - Spatial Audio, Hand Tracking & YouTube Cinema</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #0b0d12; font-family: 'Segoe UI', sans-serif; color: #fff; }
+    #overlay-ui {
+      position: absolute; top: 14px; left: 14px; z-index: 10;
+      background: rgba(12, 16, 24, 0.92); border: 1px solid #d4af37;
+      padding: 14px 18px; border-radius: 10px; max-width: 430px;
+      backdrop-filter: blur(10px); box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    }
+    #overlay-ui h2 { margin: 0 0 10px 0; font-size: 15px; color: #dfcba8; letter-spacing: 0.5px; }
+    .row { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; font-size: 12px; }
+    .row label { width: 85px; color: #ccc; font-weight: 600; }
+    input {
+      flex: 1; padding: 6px 8px; border-radius: 5px; border: 1px solid #3a4454;
+      background: #161b26; color: #00e5ff; font-family: monospace; font-size: 12px;
+    }
+    button {
+      padding: 6px 10px; border-radius: 5px; border: none;
+      background: #d4af37; color: #000; font-weight: bold; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #f3cf55; }
+    .hint { font-size: 11px; color: #a8b2c1; line-height: 1.45; margin-top: 6px; border-top: 1px solid #283242; padding-top: 8px; }
+    #vr-video-source { display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="overlay-ui">
+    <h2>ROLLS-ROYCE VR [V18: 3D AUDIO + HAND POKE + MEDIA]</h2>
+    <div class="row">
+      <label>ESP32 Stream:</label>
+      <input id="esp32-ip" type="text" value="ws://192.168.4.102:4213" />
+      <button id="btn-connect">Kết nối</button>
+    </div>
+    <div class="row">
+      <label>Link Phim/Nhạc:</label>
+      <input id="media-url" type="text" placeholder="Dán link MP4/WebM/Stream..." />
+      <button id="btn-load-media">Phát</button>
+    </div>
+    <div class="hint">
+      • <b>Hand Tracking (Tay không):</b> Đưa <b>đầu ngón trỏ</b> chạm trực tiếp vào các nút trên vô lăng hoặc dưới màn hình YouTube để bấm. <b>Chụm ngón trỏ + ngón cái (Pinch)</b> vào thanh tiêu đề để kéo thả bảng HUD/Kính chắn gió.<br/>
+      • <b>Tay cầm Quest 3:</b> Gạt Thumbstick ngang để lái, Cò phải = Ga, Cò trái = Phanh, Grip = Kéo khung.<br/>
+      • <b>Âm thanh 3D:</b> Tự động kích hoạt tiếng động cơ V12, còi kép và loa màn hình giải trí khi bấm vào không gian 3D hoặc vào chế độ VR.
+    </div>
+  </div>
+
+  <!-- Phần tử Video HTML5 cung cấp khung hình và âm thanh cho Màn hình trung tâm 14-inch -->
+  <video id="vr-video-source" crossorigin="anonymous" playsinline loop preload="auto"></video>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+
