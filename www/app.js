@@ -2257,23 +2257,96 @@ function renderAllCockpitDisplays(elapsed) {
     wsTex.needsUpdate = true;
   }
 
-  // 2. Màn hình phụ YouTube trên táp-lô (Đồng bộ hình ảnh thật từ trình phát Video YouTube!)
+  // 2. Màn hình phụ YouTube trên táp-lô & 2 màn hình sau (Đồng bộ hình ảnh thật từ YouTube)
   ytCtx.fillStyle = '#080c14';
   ytCtx.fillRect(0, 0, 640, 360);
-  if (ytHtml5Video && ytHtml5Video.readyState >= 2 && !ytHtml5Video.paused) {
-    ytCtx.drawImage(ytHtml5Video, 0, 44, 640, 260);
-  } else {
-    const grad = ytCtx.createLinearGradient(0, 44, 0, 304);
-    grad.addColorStop(0, '#10182b');
-    grad.addColorStop(1, '#2b0f30');
-    ytCtx.fillStyle = grad;
-    ytCtx.fillRect(0, 44, 640, 260);
-    for (let i = 0; i < 26; i++) {
-      const barH = 22 + Math.abs(Math.sin(elapsed * 6 + i * 0.45)) * 120;
-      ytCtx.fillStyle = i % 2 === 0 ? '#00e5ff' : '#ff2a85';
-      ytCtx.fillRect(35 + i * 22, 290 - barH, 14, barH);
+
+  let hasVideoFrame = false;
+  // A. Nếu luồng MP4 HTML5 đang phát thực tế: vẽ trực tiếp từng khung hình video chuyển động
+  if (ytHtml5Video && ytHtml5Video.readyState >= 2 && !ytHtml5Video.paused && ytHtml5Video.videoWidth > 0) {
+    try {
+      ytCtx.drawImage(ytHtml5Video, 0, 44, 640, 260);
+      hasVideoFrame = true;
+    } catch (e) {
+      hasVideoFrame = false;
     }
   }
+
+  // B. Nếu video đang phát qua IFrame hoặc đang đệm: vẽ Thumbnail HD thật của Video + Nút Play + Sóng nhạc sống động
+  if (!hasVideoFrame) {
+    let cover = window.currentYtCoverImage;
+    const vid = window.currentYtVideoId;
+    if (vid && (!cover || !cover.complete || cover.naturalWidth === 0)) {
+      if (!window._thumbCache) window._thumbCache = {};
+      if (!window._thumbCache[vid]) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+        window._thumbCache[vid] = img;
+      }
+      if (window._thumbCache[vid].complete && window._thumbCache[vid].naturalWidth > 0) {
+        cover = window._thumbCache[vid];
+      }
+    }
+    if (cover && cover.complete && cover.naturalWidth > 0) {
+      try {
+        // Vẽ ảnh bìa thumbnail thật của bài hát/video YouTube
+        ytCtx.drawImage(cover, 0, 44, 640, 260);
+
+        // Lớp phủ bóng gradient đen sang trọng kiểu màn hình xe Rolls-Royce
+        const overlayGrad = ytCtx.createLinearGradient(0, 44, 0, 304);
+        overlayGrad.addColorStop(0, 'rgba(10, 15, 28, 0.28)');
+        overlayGrad.addColorStop(0.65, 'rgba(10, 15, 28, 0.45)');
+        overlayGrad.addColorStop(1, 'rgba(10, 15, 28, 0.88)');
+        ytCtx.fillStyle = overlayGrad;
+        ytCtx.fillRect(0, 44, 640, 260);
+
+        // Biểu tượng nút Play YouTube đỏ nổi bật ở tâm
+        ytCtx.fillStyle = 'rgba(255, 0, 0, 0.92)';
+        ytCtx.beginPath();
+        ytCtx.arc(320, 174, 32, 0, Math.PI * 2);
+        ytCtx.fill();
+        ytCtx.fillStyle = '#ffffff';
+        ytCtx.beginPath();
+        ytCtx.moveTo(310, 158);
+        ytCtx.lineTo(310, 190);
+        ytCtx.lineTo(336, 174);
+        ytCtx.closePath();
+        ytCtx.fill();
+      } catch (e) {
+        const grad = ytCtx.createLinearGradient(0, 44, 0, 304);
+        grad.addColorStop(0, '#10182b');
+        grad.addColorStop(1, '#2b0f30');
+        ytCtx.fillStyle = grad;
+        ytCtx.fillRect(0, 44, 640, 260);
+      }
+    } else {
+      const grad = ytCtx.createLinearGradient(0, 44, 0, 304);
+      grad.addColorStop(0, '#10182b');
+      grad.addColorStop(1, '#2b0f30');
+      ytCtx.fillStyle = grad;
+      ytCtx.fillRect(0, 44, 640, 260);
+    }
+
+    // Sóng nhạc nhảy sống động theo nhịp bài hát
+    for (let i = 0; i < 28; i++) {
+      const barH = 10 + Math.abs(Math.sin(elapsed * 7 + i * 0.45)) * 65;
+      ytCtx.fillStyle = i % 2 === 0 ? 'rgba(0, 229, 255, 0.85)' : 'rgba(255, 42, 133, 0.85)';
+      ytCtx.fillRect(25 + i * 21, 300 - barH, 13, barH);
+    }
+
+    // Thanh thời gian phát thực tế (đồng bộ theo thời lượng)
+    const playedSec = Math.floor((performance.now() - (window.currentYtStartTime || performance.now())) / 1000);
+    const mm = String(Math.floor(playedSec / 60)).padStart(2, '0');
+    const ss = String(playedSec % 60).padStart(2, '0');
+    ytCtx.fillStyle = 'rgba(0, 0, 0, 0.82)';
+    ytCtx.fillRect(14, 52, 280, 26);
+    ytCtx.fillStyle = '#00ff88';
+    ytCtx.font = 'bold 13px monospace';
+    ytCtx.fillText(`▶ ĐANG PHÁT: ${mm}:${ss} / ${window.currentYtDurationText || 'FULL'}`, 20, 70);
+  }
+
+  // Header thanh tiêu đề YouTube
   ytCtx.fillStyle = 'rgba(0, 0, 0, 0.88)';
   ytCtx.fillRect(0, 0, 640, 44);
   ytCtx.fillStyle = '#ff0000';
@@ -2284,11 +2357,12 @@ function renderAllCockpitDisplays(elapsed) {
   ytCtx.fillStyle = '#ffd60a';
   ytCtx.fillText(activeYoutubeTitle.slice(0, 38), 122, 27);
 
+  // Footer hướng dẫn mở app
   ytCtx.fillStyle = '#141c2b';
   ytCtx.fillRect(0, 304, 640, 56);
   ytCtx.fillStyle = '#00ff88';
-  ytCtx.font = 'bold 17px Segoe UI, sans-serif';
-  ytCtx.fillText('👉 Chĩa Tia Laser bấm vào màn hình này để MỞ APP YOUTUBE chọn Phim/Nhạc!', 18, 338);
+  ytCtx.font = 'bold 16px Segoe UI, sans-serif';
+  ytCtx.fillText('👉 Bấm vào màn hình này để MỞ APP YOUTUBE chọn Phim/Nhạc!', 18, 338);
   ytTex.needsUpdate = true;
 
   // 3. Bảng HUD 3D Digital Twin trong xe (Hiển thị chính xác trạng thái RC & 2 Cam ESP32)

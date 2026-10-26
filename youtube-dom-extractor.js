@@ -39,20 +39,31 @@ function logDomInspector(msg, color = '#00ff88') {
 // Lưu ảnh Thumbnail của video đang phát để vẽ lên màn hình 3D trong xe khi thu nhỏ
 window.currentYtCoverImage = new Image();
 window.currentYtCoverImage.crossOrigin = 'Anonymous';
+window.currentYtCoverImage.onerror = () => {
+  if (window.currentYtVideoId && !window.currentYtCoverImage.src.includes('direct_fallback')) {
+    window.currentYtCoverImage.src = `https://i.ytimg.com/vi/${window.currentYtVideoId}/hqdefault.jpg?direct_fallback=1`;
+  }
+};
 window.currentYtDurationText = 'LIVE / FULL';
 window.currentYtStartTime = performance.now();
+window.currentYtVideoId = '';
 
 export async function playExtractedVideoUrlInFrame(videoItem) {
   if (!ytHtml5Video || !ytIframe || !videoItem) return;
 
   const title = videoItem.title || 'YouTube Full Video';
-  const vid = videoItem.videoId;
+  const vid = videoItem.videoId || '';
+  window.currentYtVideoId = vid;
   window.currentYtDurationText = videoItem.duration || 'FULL HD';
   window.currentYtStartTime = performance.now();
   window.dispatchEvent(new CustomEvent('yt-title-updated', { detail: title }));
 
-  if (vid) {
-    window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+  if (window.currentYtCoverImage) {
+    if (vid) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+    } else if (videoItem.thumbnail) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(videoItem.thumbnail)}`;
+    }
   }
 
   // 1. Nếu người dùng nhập link file .mp4 trực tiếp
@@ -246,11 +257,17 @@ async function playAnyDurationYouTubeWithMp4Sync(item, seatIdx = 0) {
   const vid = item.videoId || '';
   const title = item.title || 'YouTube Internet Video';
   const durText = item.duration || '05:30:00 (FULL)';
+  window.currentYtVideoId = vid;
   window.currentYtDurationText = durText;
+  window.currentYtStartTime = performance.now();
   window.dispatchEvent(new CustomEvent('yt-title-updated', { detail: title }));
 
-  if (vid) {
-    window.currentYtCoverImage.src = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+  if (window.currentYtCoverImage) {
+    if (vid) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+    } else if (item.thumbnail) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(item.thumbnail)}`;
+    }
   }
 
   let mp4StreamUrl = item.directUrl || null;
@@ -669,7 +686,18 @@ if (ytSearchInput) {
 
     const title = item?.title || 'YouTube MP4 Stream';
     const vid = item?.videoId || '';
+    window.currentYtVideoId = vid;
+    window.currentYtStartTime = performance.now();
+    window.currentYtDurationText = item?.duration || 'FULL HD';
     window.dispatchEvent(new CustomEvent('yt-title-updated', { detail: title }));
+
+    if (window.currentYtCoverImage) {
+      if (vid) {
+        window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+      } else if (item?.thumbnail) {
+        window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(item?.thumbnail)}`;
+      }
+    }
 
     // Ưu tiên lấy luồng MP4 trực tiếp qua /api/yt-mp4-direct (tự động fallback về MP4 HD nếu YouTube chặn IP LAN)
     const fallbackMp4 = item?.directUrl || pickGuaranteedMp4Url(title, idx);
@@ -853,3 +881,5 @@ if (ytSearchInput) {
     setTimeout(rebindAllYouTubeModalControls, 150);
   }
 })();
+
+window.playExtractedVideoUrlInFrame = playExtractedVideoUrlInFrame;
