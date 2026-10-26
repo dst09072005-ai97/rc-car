@@ -21226,7 +21226,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         targetSteer = Math.round(90 - steerNorm * 45);
         targetSteer = THREE.MathUtils.clamp(targetSteer, 45, 135);
 
-        // B. TÍNH TOÁN XUNG GA ĐIỀU TỐC ESC CHO XE RC (1300..1700µs)
+        // B. TÍNH TOÁN XUNG GA ĐIỀU TỐC ESC CHO XE RC (1300..1700µs - SIÊU MƯỢT EXPO + DAMPED)
         const wantGas = keys.w || keys.ArrowUp || (typeof holdState !== 'undefined' && (holdState.gas || holdState.up));
         const wantRev = keys.s || keys.ArrowDown || (typeof holdState !== 'undefined' && (holdState.brake || holdState.down));
 
@@ -21234,16 +21234,47 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         const isReversing = (state.reversePercent > 3) || (state.gearIndex === 1) || (wantRev && !wantGas);
         const isForward = (state.throttlePercent > 3 && state.gearIndex === 3) || (wantGas && !wantRev);
 
-        if (isHardBraking) {
+        // Gia tốc phím lùi (S / ArrowDown): Ramping lũy tiến êm ái từ 0 -> 100% trong ~0.4s
+        if (typeof state.rcKeyReverseRamp === 'undefined') state.rcKeyReverseRamp = 0;
+        if (wantRev && !wantGas) {
+          state.rcKeyReverseRamp = Math.min(1.0, state.rcKeyReverseRamp + dt * 2.5);
+        } else {
+          state.rcKeyReverseRamp = Math.max(0.0, state.rcKeyReverseRamp - dt * 4.5);
+        }
+
+        // Chuyển làn an toàn: Nếu đang tiến (>1530µs) mà muốn lùi, dừng êm ở 1500µs trong 100ms trước khi lùi
+        if (typeof state.rcReverseBrakeDelay === 'undefined') state.rcReverseBrakeDelay = 0;
+        if (isReversing && state.rcSmoothThrottle > 1530) {
+          state.rcReverseBrakeDelay = now + 100;
+        }
+
+        if (isHardBraking || (isReversing && now < state.rcReverseBrakeDelay)) {
           targetThrottle = 1500;
         } else if (isReversing) {
-          const revPct = (state.reversePercent > 3) ? state.reversePercent : (state.throttlePercent > 3 ? state.throttlePercent : 100);
-          const pct = THREE.MathUtils.clamp(revPct, 0, 100);
-          // Vượt ngay khoảng chết Neutral 30µs để motor có lực tức thì, không bị khựng chập chờn
-          const deadbandSkip = 30;
-          const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
-          const revDelta = deadbandSkip + (pct / 100.0) * effectiveDelta;
-          targetThrottle = Math.round(1500 - revDelta);
+          let rawRevPct = 0;
+          if (state.reversePercent > 3) {
+            rawRevPct = state.reversePercent;
+          } else if (state.gearIndex === 1 && state.throttlePercent > 3) {
+            rawRevPct = state.throttlePercent;
+          } else if (wantRev && !wantGas) {
+            rawRevPct = state.rcKeyReverseRamp * 100;
+          }
+
+          const pct = THREE.MathUtils.clamp(rawRevPct, 0, 100);
+          if (pct > 2.0) {
+            // Đường cong lũy tiến mượt mà EXPO Curve (bậc 1.35):
+            // Nhấp nhẹ (0..20%): nhích nhẹ nhàng êm ái, không giật nảy
+            // Nhấn sâu (>40%): mở rộng công suất đều đặn, lùi khỏe và đầm chắc
+            const normPct = pct / 100.0;
+            const expoPct = Math.pow(normPct, 1.35);
+
+            const deadbandSkip = 22;
+            const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
+            const revDelta = deadbandSkip + expoPct * effectiveDelta;
+            targetThrottle = Math.round(1500 - revDelta);
+          } else {
+            targetThrottle = 1500;
+          }
         } else if (isForward) {
           const fwdPct = (state.throttlePercent > 3) ? state.throttlePercent : 100;
           const pct = THREE.MathUtils.clamp(fwdPct, 0, 100);
@@ -21255,19 +21286,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           targetThrottle = 1500;
         }
 
-        // C. NỘI SUY XUNG GA CHỐNG GIẬT (NHẠY KHI LÙI, MƯỢT KHI TIẾN)
+        // C. BỘ LỌC DAMPING CHỐNG GIẬT C1-SMOOTH (EXPONENTIAL SPRING DAMPER)
         if (typeof state.rcSmoothThrottle === 'undefined') state.rcSmoothThrottle = 1500;
-        // Nếu chuyển từ Neutral sang Lùi, nhảy ngay qua deadband để ESC không bị kẹt ở chế độ Phanh
-        if (targetThrottle < 1475 && state.rcSmoothThrottle > 1475) {
-          state.rcSmoothThrottle = 1465;
-        }
-        const rampStep = (targetThrottle < 1500 ? 900 : 500) * dt;
-        if (targetThrottle > state.rcSmoothThrottle) {
-          state.rcSmoothThrottle = Math.min(targetThrottle, state.rcSmoothThrottle + rampStep);
-        } else if (targetThrottle < state.rcSmoothThrottle) {
-          state.rcSmoothThrottle = Math.max(targetThrottle, state.rcSmoothThrottle - rampStep);
-        } else {
-          state.rcSmoothThrottle = targetThrottle;
+        const dampLambda = (targetThrottle === 1500) ? 9.0 : (targetThrottle < 1500 ? 7.5 : 8.0);
+        state.rcSmoothThrottle = THREE.MathUtils.damp(state.rcSmoothThrottle, targetThrottle, dampLambda, dt);
+
+        if (Math.abs(state.rcSmoothThrottle - 1500) < 2.5 && targetThrottle === 1500) {
+          state.rcSmoothThrottle = 1500;
         }
 
         const steer = targetSteer;
