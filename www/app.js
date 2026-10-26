@@ -20432,7 +20432,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     // C. CHÂN LÙI (REVERSE PEDAL - BÀN ĐẠP THỨ 3 / CÔN RIÊNG BIỆT)
-    let reverseVal = readPedalNormalized(racingWheel.pedalConfig.reverse, 3, 1, racingWheel.invertReverse);
+    let reverseVal = readPedalNormalized(racingWheel.pedalConfig.reverse, 3, null, racingWheel.invertReverse);
     if (reverseVal === 0 && racingWheel.pedalConfig.reverse.type === 'auto') {
       if (activeGp.axes[6] !== undefined) {
         reverseVal = Math.max(reverseVal, readPedalNormalized({ type: 'axis', index: 6, rest: racingWheel.baseAxes[6] }, null, null, racingWheel.invertReverse));
@@ -20445,18 +20445,20 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
 
-    // QUÉT TỰ ĐỘNG CÁC TRỤC KHÁC NẾU CHƯA GÁN: Tự nhận diện bàn đạp còn thiếu
+    // QUÉT TỰ ĐỘNG CÁC TRỤC KHÁC NẾU CHƯA GÁN: Tự nhận diện bàn đạp còn thiếu (Chống nhiễu crosstalk trục chéo)
     if (isDedicatedWheel) {
       for (let a = 1; a < activeGp.axes.length; a++) {
         const cur = activeGp.axes[a] ?? 0;
         const base = racingWheel.baseAxes[a] ?? 0;
         const diff = Math.abs(cur - base);
-        if (diff > 0.12) {
+        // Ngưỡng 0.25 để chỉ bắt khi người lái thực sự đạp chân, không bắt nhiễu điện thế analog
+        if (diff > 0.25) {
           let pct = (base > 0.4) ? (1.0 - cur) / 2.0 : ((base < -0.4) ? (cur + 1.0) / 2.0 : diff);
           pct = THREE.MathUtils.clamp(pct, 0, 1);
-          if (pct > 0.05) {
+          if (pct > 0.08) {
             if (a === 1 && gasVal === 0) gasVal = pct;
-            else if ((a === 2 || a === 5) && brakeVal === 0) brakeVal = pct;
+            // Chỉ nhận phanh tự động nếu chân ga và chân lùi không đạp (tránh ngắt ga do trục phanh bị nhiễu)
+            else if ((a === 2 || a === 5) && brakeVal === 0 && gasVal === 0 && reverseVal === 0) brakeVal = pct;
             else if ((a === 3 || a === 4 || a === 6) && reverseVal === 0) reverseVal = pct;
           }
         }
@@ -20478,13 +20480,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       monitorEl.textContent = '🎮 ' + axSummary + ' | Nút: ' + (pressedBtns.length > 0 ? pressedBtns.join(',') : 'none');
     }
 
-    // Lọc vùng chết 3.5%
+    // Lọc vùng chết chống nhiễu potentiometer 5%
     gasVal = THREE.MathUtils.clamp(gasVal, 0, 1);
     brakeVal = THREE.MathUtils.clamp(brakeVal, 0, 1);
     reverseVal = THREE.MathUtils.clamp(reverseVal, 0, 1);
-    if (gasVal < 0.035) gasVal = 0;
-    if (brakeVal < 0.035) brakeVal = 0;
-    if (reverseVal < 0.035) reverseVal = 0;
+    if (gasVal < 0.05) gasVal = 0;
+    if (brakeVal < 0.05) brakeVal = 0;
+    if (reverseVal < 0.05) reverseVal = 0;
 
     racingWheel.gasPercent = gasVal * 100;
     racingWheel.brakePercent = brakeVal * 100;
@@ -20492,7 +20494,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // ĐỒNG BỘ TRỰC TIẾP VÀO TRẠNG THÁI XE CHÍNH CỦA APP (STATE)
     state.steeringAngleDeg = racingWheel.steerAngleDeg;
-    state.throttlePercent = (reverseVal > 0.035) ? racingWheel.reversePercent : racingWheel.gasPercent;
+    state.throttlePercent = (reverseVal > 0.05) ? racingWheel.reversePercent : racingWheel.gasPercent;
     state.brakePercent = racingWheel.brakePercent;
     state.reversePercent = racingWheel.reversePercent;
 
@@ -20676,7 +20678,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const speedFactor = 1.0;
 
     // B. BÀN ĐẠP THẮNG (PHANH DỪNG XE HÃM TỨC THÌ)
-    if (racingWheel.brakePercent > 3) {
+    // Chỉ kích hoạt phanh khi thực sự đạp chân phanh (>8%) và lực đạp phanh áp đảo ga/lùi
+    const isDeliberateBrake = (racingWheel.brakePercent > 8) && (racingWheel.brakePercent > racingWheel.gasPercent * 0.6) && (racingWheel.brakePercent > racingWheel.reversePercent * 0.6);
+    if (isDeliberateBrake) {
       state.throttlePercent = 0;
       state.reversePercent = 0;
       state.brakePercent = racingWheel.brakePercent;
@@ -20688,7 +20692,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.speedKmh = state.velocityMs * 3.6;
     }
     // C. BÀN ĐẠP LÙI (REVERSE PEDAL - TỰ ĐỘNG LÙI XE RIÊNG BIỆT)
-    else if (racingWheel.reversePercent > 3) {
+    else if (racingWheel.reversePercent > 5 && racingWheel.reversePercent > racingWheel.gasPercent) {
       if (!state.engineRunning) {
         state.engineRunning = true;
       }
@@ -20706,7 +20710,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.rpm = 850 + (racingWheel.reversePercent / 100) * 4200;
     }
     // D. BÀN ĐẠP GA (GAS PEDAL - TỰ ĐỘNG TIẾN XE RIÊNG BIỆT)
-    else if (racingWheel.gasPercent > 3) {
+    else if (racingWheel.gasPercent > 5) {
       if (!state.engineRunning) {
         state.engineRunning = true;
       }
@@ -21179,12 +21183,30 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
     if (cameraInst !== camera && !rendererInst.xr.isPresenting) return;
 
+    // Chặn hoàn toàn gửi lệnh điều khiển xe khi tab trình duyệt đang chạy ngầm / bị ẩn
+    if (typeof document !== 'undefined' && document.hidden) return;
+
     const now = performance.now();
     const dt = Math.min((now - lastV185Time) / 1000, 0.1);
     if (dt < 0.001) return;
     lastV185Time = now;
 
     resolveVehicleNpcCollisions(dt);
+
+    // Chỉ client đang ở chế độ LÁI XE (DRIVING) mới được quyền gửi CAR_CONTROL tới xe RC thật!
+    if (state.playerMode !== 'DRIVING') {
+      if (state._wasDrivingRc) {
+        state._wasDrivingRc = false;
+        // Gửi 1 lệnh dừng duy nhất khi vừa thoát chế độ lái để xe dừng hẳn, sau đó hoàn toàn im lặng
+        if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+          carControlPacket.steer = 90;
+          carControlPacket.throttle = 1500;
+          mpSocket.send(JSON.stringify(carControlPacket));
+        }
+      }
+      return;
+    }
+    state._wasDrivingRc = true;
 
     // Gửi lệnh điều khiển xe thật qua WebSocket tới server.js (25Hz = 40ms/lần, Zero Per-Frame Allocation)
     if (now - lastCarControlSendTime >= 40) {
@@ -21196,8 +21218,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         let targetSteer = 90;
         let targetThrottle = 1500;
 
-        if (state.playerMode === 'DRIVING') {
-          // A. TÍNH TOÁN GÓC BẺ LÁI SERVO CHO XE RC (45° TRÁI .. 90° THẲNG .. 135° PHẢI)
+        // A. TÍNH TOÁN GÓC BẺ LÁI SERVO CHO XE RC (45° TRÁI .. 90° THẲNG .. 135° PHẢI)
         let steerNorm = 0; // -1.0 (trái) .. 0 (thẳng) .. +1.0 (phải)
 
         // 1. Đọc từ Vô Lăng GOG R808 thật
@@ -21230,9 +21251,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         const wantGas = keys.w || keys.ArrowUp || (typeof holdState !== 'undefined' && (holdState.gas || holdState.up));
         const wantRev = keys.s || keys.ArrowDown || (typeof holdState !== 'undefined' && (holdState.brake || holdState.down));
 
-        const isHardBraking = (state.brakePercent > 35) && (state.brakePercent > state.reversePercent);
-        const isReversing = (state.reversePercent > 3) || (state.gearIndex === 1) || (wantRev && !wantGas);
-        const isForward = (state.throttlePercent > 3 && state.gearIndex === 3) || (wantGas && !wantRev);
+        const isHardBraking = (state.brakePercent > 35) && (state.brakePercent > (state.reversePercent || 0));
+        const isReversing = (state.reversePercent > 5) || (state.gearIndex === 1 && !wantGas) || (wantRev && !wantGas);
+        const isForward = (state.throttlePercent > 5 && state.gearIndex === 3) || (wantGas && !wantRev);
 
         // Gia tốc phím lùi (S / ArrowDown): Ramping lũy tiến êm ái từ 0 -> 100% trong ~0.4s
         if (typeof state.rcKeyReverseRamp === 'undefined') state.rcKeyReverseRamp = 0;
@@ -21252,9 +21273,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           targetThrottle = 1500;
         } else if (isReversing) {
           let rawRevPct = 0;
-          if (state.reversePercent > 3) {
+          if (state.reversePercent > 5) {
             rawRevPct = state.reversePercent;
-          } else if (state.gearIndex === 1 && state.throttlePercent > 3) {
+          } else if (state.gearIndex === 1 && state.throttlePercent > 5) {
             rawRevPct = state.throttlePercent;
           } else if (wantRev && !wantGas) {
             rawRevPct = state.rcKeyReverseRamp * 100;
@@ -21262,36 +21283,41 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
           const pct = THREE.MathUtils.clamp(rawRevPct, 0, 100);
           if (pct > 2.0) {
-            // Đường cong lũy tiến mượt mà EXPO Curve (bậc 1.35):
-            // Nhấp nhẹ (0..20%): nhích nhẹ nhàng êm ái, không giật nảy
-            // Nhấn sâu (>40%): mở rộng công suất đều đặn, lùi khỏe và đầm chắc
+            // Đường cong lũy tiến mượt mà C0+C1 continuous, hòa trộn êm vùng chết 20µs trong 15% hành trình đầu (Zero-Discontinuity)
             const normPct = pct / 100.0;
+            const blendIn = Math.min(1.0, normPct / 0.15);
             const expoPct = Math.pow(normPct, 1.35);
-
-            const deadbandSkip = 22;
+            const deadbandSkip = 20.0;
             const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
-            const revDelta = deadbandSkip + expoPct * effectiveDelta;
+            const revDelta = (deadbandSkip * blendIn) + (expoPct * effectiveDelta);
             targetThrottle = Math.round(1500 - revDelta);
           } else {
             targetThrottle = 1500;
           }
         } else if (isForward) {
-          const fwdPct = (state.throttlePercent > 3) ? state.throttlePercent : 100;
-          const pct = THREE.MathUtils.clamp(fwdPct, 0, 100);
-          const deadbandSkip = 20;
-          const effectiveDelta = Math.max(0, maxFwdDelta - deadbandSkip);
-          const fwdDelta = deadbandSkip + (pct / 100.0) * effectiveDelta;
-          targetThrottle = Math.round(1500 + fwdDelta);
+          const rawFwdPct = (state.throttlePercent > 5) ? state.throttlePercent : (wantGas ? 100 : 0);
+          const pct = THREE.MathUtils.clamp(rawFwdPct, 0, 100);
+          if (pct > 2.0) {
+            // Hòa trộn êm ái vùng chết 18µs trong 15% hành trình đầu, không bị khấc giật tại điểm 0
+            const normPct = pct / 100.0;
+            const blendIn = Math.min(1.0, normPct / 0.15);
+            const deadbandSkip = 18.0;
+            const effectiveDelta = Math.max(0, maxFwdDelta - deadbandSkip);
+            const fwdDelta = (deadbandSkip * blendIn) + (normPct * effectiveDelta);
+            targetThrottle = Math.round(1500 + fwdDelta);
+          } else {
+            targetThrottle = 1500;
+          }
         } else {
           targetThrottle = 1500;
         }
 
         // C. BỘ LỌC DAMPING CHỐNG GIẬT C1-SMOOTH (EXPONENTIAL SPRING DAMPER)
         if (typeof state.rcSmoothThrottle === 'undefined') state.rcSmoothThrottle = 1500;
-        const dampLambda = (targetThrottle === 1500) ? 9.0 : (targetThrottle < 1500 ? 7.5 : 8.0);
+        const dampLambda = (targetThrottle === 1500) ? 10.0 : (targetThrottle < 1500 ? 8.5 : 9.0);
         state.rcSmoothThrottle = THREE.MathUtils.damp(state.rcSmoothThrottle, targetThrottle, dampLambda, dt);
 
-        if (Math.abs(state.rcSmoothThrottle - 1500) < 2.5 && targetThrottle === 1500) {
+        if (Math.abs(state.rcSmoothThrottle - 1500) < 2.0 && targetThrottle === 1500) {
           state.rcSmoothThrottle = 1500;
         }
 
@@ -21322,9 +21348,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         // Cập nhật nhãn thông số xung hiển thị trên Web HUD
         const pulseInfoEl = document.getElementById('esp32-car-pulse-info');
         if (pulseInfoEl) {
-          const dirLabel = throttle > 1520 ? '🟢 TIẾN' : (throttle < 1480 ? '🔴 LÙI' : '⚪ DỪNG'); pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs [${dirLabel}]`;
+          const dirLabel = throttle > 1520 ? '🟢 TIẾN' : (throttle < 1480 ? '🔴 LÙI' : '⚪ DỪNG');
+          pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs [${dirLabel}]`;
         }
       }
     }
   };
-}})();
+})();

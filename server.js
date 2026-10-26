@@ -391,6 +391,10 @@ const esp32CarConfig = {
   packetsSent: 0
 };
 
+// Quản lý tài xế điều khiển độc quyền (Chống xung đột đa tab / tab phụ gửi đè xung 1500 gây giật xe)
+let activeDriverClient = null;
+let activeDriverLastActiveTime = 0;
+
 // Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
 let lastUdpCommandLog = '';
 function sendUdpCarCommand(steer, throttle) {
@@ -807,8 +811,30 @@ function attachMultiplayerServer(serverInstance) {
             }
           }
         } else if (data.type === 'CAR_CONTROL') {
-          // Điều khiển trực tiếp Mạch Xe RC Thật qua UDP 4210 (Góc lái 45..135, Xung ga 1300..1700)
-          sendUdpCarCommand(data.steer, data.throttle);
+          // BỘ TRỌNG TÀI LÁI XE DUY NHẤT (Active Driver Arbitration):
+          // Chỉ client đang chủ động cầm lái mới được quyền phát xung tới xe RC ESP32.
+          // Các tab phụ / tab nền / spectator TUYỆT ĐỐI KHÔNG thể gửi xung 1500 đè lên người đang lái gây giật xe!
+          const steer = Number(data.steer) || 90;
+          const throttle = Number(data.throttle) || 1500;
+          const isActivelyDriving = (throttle !== 1500 || steer !== 90);
+          const now = Date.now();
+
+          if (isActivelyDriving) {
+            // Client này đang đạp ga hoặc bẻ lái -> Chiếm quyền Active Driver
+            activeDriverClient = ws;
+            activeDriverLastActiveTime = now;
+            sendUdpCarCommand(steer, throttle);
+          } else {
+            // Lệnh trả về trung tính (90°, 1500µs):
+            // Chỉ chấp nhận nếu do chính Active Driver gửi, HOẶC không có ai lái trong 600ms qua
+            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 600)) {
+              if (activeDriverClient === ws) {
+                // Active driver vừa nhả ga dừng xe
+                activeDriverLastActiveTime = 0;
+              }
+              sendUdpCarCommand(steer, throttle);
+            }
+          }
         } else if (data.type === 'WHEEL_BRIDGE_INPUT') {
           // Cầu nối vô lăng GOG R808: Phát trạng thái từ PC sang kính Quest 3
           const bridgePayload = JSON.stringify({
@@ -829,9 +855,8 @@ function attachMultiplayerServer(serverInstance) {
               client.send(bridgePayload);
             }
           }
-          if (data.steer !== undefined && data.throttle !== undefined) {
-            sendUdpCarCommand(data.steer, data.throttle);
-          }
+          // Lưu ý: Không gọi sendUdpCarCommand ở đây vì client đã gửi qua CAR_CONTROL độc lập,
+          // tránh tình trạng gửi đúp 2 lần UDP trong cùng 1 frame gây giật xung!
         } else if (data.type === 'TEST_ESP32_PULSE') {
           // Lắc nhẹ bánh xe kiểm tra kết nối Servo & ESC thực tế
           sendUdpCarCommand(60, 1500);
@@ -881,6 +906,11 @@ function attachMultiplayerServer(serverInstance) {
         }
       }
       players.delete(playerId);
+      if (activeDriverClient === ws) {
+        activeDriverClient = null;
+        activeDriverLastActiveTime = 0;
+        sendUdpCarCommand(90, 1500);
+      }
       if (players.size === 0 || isFirstPlayer) {
         // Phanh dừng xe an toàn khi tài xế hoặc tất cả người chơi thoát web
         sendUdpCarCommand(90, 1500);
