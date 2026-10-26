@@ -127,7 +127,7 @@ export async function inspectAndSearchYouTubeDOM(rawQuery) {
   const query = (rawQuery || '').trim();
   if (!query) return;
 
-  logDomInspector(`🔍 Đang tìm kiếm video Full thời lượng cho: "<b>${query}</b>"...`, '#ffd60a');
+  logDomInspector(`🔍 Đang tìm kiếm video Full thời lượng cho: "<b>${escapeHtml(query)}</b>"...`, '#ffd60a');
 
   const ytMatch = query.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
   if (ytMatch) {
@@ -172,7 +172,7 @@ export async function inspectAndSearchYouTubeDOM(rawQuery) {
   }
 
   if (items.length === 0) {
-    logDomInspector(`⚠ Không tìm thấy kết quả cho "${query}". Hãy thử từ khóa khác!`, '#ff3b30');
+    logDomInspector(`⚠ Không tìm thấy kết quả cho "${escapeHtml(query)}". Hãy thử từ khóa khác!`, '#ff3b30');
     return;
   }
 

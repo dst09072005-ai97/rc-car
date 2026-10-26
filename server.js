@@ -10,6 +10,7 @@ const express = require('express');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
+const dns = require('dns');
 const WebSocket = require('ws');
 const { exec: cpExec } = require('child_process');
 const { promisify: utilPromisify } = require('util');
@@ -53,6 +54,8 @@ app.use((req, res, next) => {
     reqPath.endsWith('.crt') ||
     reqPath.endsWith('.env') ||
     reqPath.endsWith('.ino') ||
+    reqPath.endsWith('.h') ||
+    reqPath.endsWith('.log') ||
     reqPath.endsWith('server.js') ||
     reqPath.includes('package.json') ||
     reqPath.includes('package-lock.json') ||
@@ -162,6 +165,27 @@ function clampFinite(val, min, max, fallback = 0) {
   const num = Number(val);
   if (!Number.isFinite(num)) return fallback;
   return Math.min(Math.max(num, min), max);
+}
+
+
+function checkDnsSsrf(hostname) {
+  if (!hostname) return Promise.resolve(false);
+  if (IPV4_REGEX.test(hostname)) {
+    return Promise.resolve(!isForbiddenSsrfIp(hostname));
+  }
+  return new Promise((resolve) => {
+    dns.lookup(hostname, { all: true }, (err, addresses) => {
+      if (err || !addresses || addresses.length === 0) {
+        return resolve(false);
+      }
+      for (const a of addresses) {
+        if (isForbiddenSsrfIp(a.address)) {
+          return resolve(false);
+        }
+      }
+      resolve(true);
+    });
+  });
 }
 
 // Proxy lấy luồng Camera ESP32 & Thumbnail YouTube không bị chặn CORS/HTTPS (hỗ trợ Follow 301/302 Redirects)
