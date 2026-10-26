@@ -398,7 +398,7 @@ const state = {
   rcSpeedRatio: 1.0,
   rcSteerSensitivity: 1.0,
   rcMaxForwardPulse: 1585,
-  rcMaxReversePulse: 1435,
+  rcMaxReversePulse: 1350,
   rcTargetSpeedKmh: 12.0,
   rcSmoothThrottle: 1500,
   rcSmoothSteer: 90,
@@ -20928,16 +20928,27 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const valMaxThrottle = document.getElementById('val-rc-max-throttle');
     const valSpeedMode = document.getElementById('val-rc-speed-mode');
 
-    function setRcSpeedPreset(pulse, kmh, modeName, activeBtn) {
+    const sliderMaxReverse = document.getElementById('slider-rc-max-reverse');
+    const valMaxReverse = document.getElementById('val-rc-max-reverse');
+
+    function setRcSpeedPreset(pulse, kmh, modeName, activeBtn, revPulse) {
       state.rcMaxForwardPulse = pulse;
       state.rcTargetSpeedKmh = kmh;
-      state.rcMaxReversePulse = 1500 - Math.round((pulse - 1500) * 0.75);
+      if (typeof revPulse === 'number') {
+        state.rcMaxReversePulse = revPulse;
+      } else {
+        const fwdDelta = pulse - 1500;
+        state.rcMaxReversePulse = 1500 - Math.round(Math.max(110, fwdDelta * 1.75));
+      }
       localStorage.setItem('rc_max_throttle_pulse', String(pulse));
       localStorage.setItem('rc_target_speed_kmh', String(kmh));
+      localStorage.setItem('rc_max_reverse_pulse', String(state.rcMaxReversePulse));
 
       if (sliderMaxThrottle) sliderMaxThrottle.value = String(pulse);
       if (valMaxThrottle) valMaxThrottle.textContent = `${pulse}µs`;
-      if (valSpeedMode) valSpeedMode.textContent = `${modeName} (${pulse}µs - ${kmh} km/h)`;
+      if (sliderMaxReverse) sliderMaxReverse.value = String(state.rcMaxReversePulse);
+      if (valMaxReverse) valMaxReverse.textContent = `${state.rcMaxReversePulse}µs`;
+      if (valSpeedMode) valSpeedMode.textContent = `${modeName} (${pulse}µs - ${kmh} km/h | Lùi: ${state.rcMaxReversePulse}µs)`;
 
       [btnSpeedSlow, btnSpeedMedium, btnSpeedFast].forEach(b => {
         if (b) {
@@ -20951,32 +20962,47 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         activeBtn.style.color = '#000';
         activeBtn.style.fontWeight = 'bold';
       }
-      state.lastActionLog = `🎯 Đã đổi tốc độ xe RC: ${modeName} (${kmh} km/h - Max: ${pulse}µs)`;
+      state.lastActionLog = `🎯 Đã đổi tốc độ xe RC: ${modeName} (${kmh} km/h - Tiến: ${pulse}µs, Lùi: ${state.rcMaxReversePulse}µs)`;
     }
 
     btnSpeedSlow?.addEventListener('click', () => {
-      setRcSpeedPreset(1565, 8.0, '🐢 Êm Ái', btnSpeedSlow);
+      setRcSpeedPreset(1565, 8.0, '🐢 Êm Ái', btnSpeedSlow, 1380);
     });
 
     btnSpeedMedium?.addEventListener('click', () => {
-      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium);
+      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium, 1350);
     });
 
     btnSpeedFast?.addEventListener('click', () => {
-      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast);
+      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1300);
     });
 
     sliderMaxThrottle?.addEventListener('input', (e) => {
       const pulse = parseInt(e.target.value, 10) || 1585;
       const kmh = Math.round(((pulse - 1500) / 85) * 12.0 * 10) / 10;
-      setRcSpeedPreset(pulse, kmh, '⚙️ Tùy Chỉnh', null);
+      setRcSpeedPreset(pulse, kmh, '⚙️ Tùy Chỉnh', null, state.rcMaxReversePulse);
+    });
+
+    sliderMaxReverse?.addEventListener('input', (e) => {
+      const revPulse = parseInt(e.target.value, 10) || 1350;
+      state.rcMaxReversePulse = revPulse;
+      localStorage.setItem('rc_max_reverse_pulse', String(revPulse));
+      if (valMaxReverse) valMaxReverse.textContent = `${revPulse}µs`;
+      if (valSpeedMode) valSpeedMode.textContent = `⚙️ Tùy Chỉnh (Tiến: ${state.rcMaxForwardPulse || 1585}µs | Lùi: ${revPulse}µs)`;
+      state.lastActionLog = `🎯 Đã chỉnh lực ga lùi: ${revPulse}µs (Xung lùi đủ mạnh để thắng ma sát bánh xe)`;
     });
 
     const savedPulse = parseInt(localStorage.getItem('rc_max_throttle_pulse'), 10);
     const savedKmh = parseFloat(localStorage.getItem('rc_target_speed_kmh'));
+    const savedRev = parseInt(localStorage.getItem('rc_max_reverse_pulse'), 10);
+    if (savedRev && sliderMaxReverse && valMaxReverse) {
+      state.rcMaxReversePulse = savedRev;
+      sliderMaxReverse.value = String(savedRev);
+      valMaxReverse.textContent = `${savedRev}µs`;
+    }
     if (savedPulse && savedKmh) {
       const btn = savedPulse <= 1570 ? btnSpeedSlow : (savedPulse <= 1600 ? btnSpeedMedium : btnSpeedFast);
-      setRcSpeedPreset(savedPulse, savedKmh, savedPulse <= 1570 ? '🐢 Êm Ái' : (savedPulse <= 1600 ? '🚗 Vừa Phải' : '🏎️ Thể Thao'), btn);
+      setRcSpeedPreset(savedPulse, savedKmh, savedPulse <= 1570 ? '🐢 Êm Ái' : (savedPulse <= 1600 ? '🚗 Vừa Phải' : '🏎️ Thể Thao'), btn, savedRev || undefined);
     }
 
     btnTestPulse?.addEventListener('click', () => {
@@ -21135,7 +21161,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
         const maxFwdDelta = Math.max(20, Math.min(180, (state.rcMaxForwardPulse || 1585) - 1500));
-        const maxRevDelta = Math.max(20, Math.min(180, 1500 - (state.rcMaxReversePulse || 1435)));
+        const maxRevDelta = Math.max(40, Math.min(220, 1500 - (state.rcMaxReversePulse || 1350)));
 
         let targetSteer = 90;
         let targetThrottle = 1500;
@@ -21153,8 +21179,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           } else if (state.reversePercent > 3 || state.gearIndex === 1) { // Bàn đạp lùi hoặc Số R
             const revPct = state.reversePercent > 3 ? state.reversePercent : (state.throttlePercent || 0);
             const pct = THREE.MathUtils.clamp(revPct, 0, 100);
-            targetThrottle = Math.round(1500 - (pct / 100.0) * maxRevDelta);
-          } else if (state.gearIndex === 3) { // Số D: Tiến
+            if (pct > 3) {
+              // Bù khoảng chết Neutral của ESC (~25µs) để động cơ có lực xoay ngay khi bắt đầu lùi
+              const deadbandSkip = 25;
+              const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
+              const revDelta = deadbandSkip + (pct / 100.0) * effectiveDelta;
+              targetThrottle = Math.round(1500 - revDelta);
+            } else {
+              targetThrottle = 1500;
+            }
+          } else if (state.gearIndex === 3) { // Bàn đạp ga hoặc Số D
             const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
             targetThrottle = Math.round(1500 + (pct / 100.0) * maxFwdDelta);
           } else {
