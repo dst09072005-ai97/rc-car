@@ -11,8 +11,8 @@
 #if __has_include("wifi_credentials.h")
 #include "wifi_credentials.h"
 #else
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc tạo file wifi_credentials.h)
+const char* WIFI_SSID = "BETEA";
+const char* WIFI_PASS = "daihongbao"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc tạo file wifi_credentials.h)
 #endif
 
 // Cổng UDP nhận lệnh điều khiển lái & ga từ Web Simulator (Mặc định 4210)

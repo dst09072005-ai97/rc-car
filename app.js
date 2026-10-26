@@ -397,6 +397,11 @@ const state = {
   rcConnected: true,
   rcSpeedRatio: 1.0,
   rcSteerSensitivity: 1.0,
+  rcMaxForwardPulse: 1585,
+  rcMaxReversePulse: 1435,
+  rcTargetSpeedKmh: 12.0,
+  rcSmoothThrottle: 1500,
+  rcSmoothSteer: 90,
   rcCargoOpen: false,
   rcCargoAnim: 0,
 
@@ -2569,12 +2574,13 @@ renderer.setAnimationLoop(() => {
         state.steeringAngleDeg = THREE.MathUtils.lerp(state.steeringAngleDeg, 0, dt * 7.0);
       }
 
-      const speedFactor = state.esp32UdpConnected ? (state.esp32GdRefSpeed || 1.0) : (state.rcSpeedRatio || 5.0);
-      const maxForwardVel = 12.0 * speedFactor; // Tối đa ~216 km/h
-      const maxReverseVel = -7.5 * speedFactor; // Tối đa ~-135 km/h khi lùi
-      const accelRate = 18.0 * speedFactor;
-      const brakeDecel = 32.0;
-      const reverseAccelRate = 14.0 * speedFactor;
+      // ĐỒNG BỘ TỐC ĐỘ 1:1 VỚI XE RC THỰC TẾ (CHẾ ĐỘ LÁI VỪA PHẢI, DỄ ĐIỀU KHIỂN)
+      const targetMaxKmh = state.rcTargetSpeedKmh || 12.0;
+      const maxForwardVel = targetMaxKmh / 3.6; // 12 km/h = 3.33 m/s
+      const maxReverseVel = -(targetMaxKmh * 0.55) / 3.6; // Lùi ~6.6 km/h
+      const accelRate = maxForwardVel / 0.65; // Tăng tốc êm ái trong 0.65s
+      const brakeDecel = 24.0;
+      const reverseAccelRate = Math.abs(maxReverseVel) / 0.75;
 
       if ((wantGas || wantReverse || wantBrake) && !state.engineRunning) {
         state.engineRunning = true;
@@ -20639,6 +20645,65 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     // Nút Test Lắc Bánh Xe (Pulse Servo)
+    // Cân chỉnh tốc độ xe thật và đồng bộ 1:1 với app 3D (Bản vá V195)
+    const btnSpeedSlow = document.getElementById('btn-rc-speed-slow');
+    const btnSpeedMedium = document.getElementById('btn-rc-speed-medium');
+    const btnSpeedFast = document.getElementById('btn-rc-speed-fast');
+    const sliderMaxThrottle = document.getElementById('slider-rc-max-throttle');
+    const valMaxThrottle = document.getElementById('val-rc-max-throttle');
+    const valSpeedMode = document.getElementById('val-rc-speed-mode');
+
+    function setRcSpeedPreset(pulse, kmh, modeName, activeBtn) {
+      state.rcMaxForwardPulse = pulse;
+      state.rcTargetSpeedKmh = kmh;
+      state.rcMaxReversePulse = 1500 - Math.round((pulse - 1500) * 0.75);
+      localStorage.setItem('rc_max_throttle_pulse', String(pulse));
+      localStorage.setItem('rc_target_speed_kmh', String(kmh));
+
+      if (sliderMaxThrottle) sliderMaxThrottle.value = String(pulse);
+      if (valMaxThrottle) valMaxThrottle.textContent = `${pulse}µs`;
+      if (valSpeedMode) valSpeedMode.textContent = `${modeName} (${pulse}µs - ${kmh} km/h)`;
+
+      [btnSpeedSlow, btnSpeedMedium, btnSpeedFast].forEach(b => {
+        if (b) {
+          b.style.background = '#1f3354';
+          b.style.color = '#fff';
+          b.style.fontWeight = 'normal';
+        }
+      });
+      if (activeBtn) {
+        activeBtn.style.background = '#00e5ff';
+        activeBtn.style.color = '#000';
+        activeBtn.style.fontWeight = 'bold';
+      }
+      state.lastActionLog = `🎯 Đã đổi tốc độ xe RC: ${modeName} (${kmh} km/h - Max: ${pulse}µs)`;
+    }
+
+    btnSpeedSlow?.addEventListener('click', () => {
+      setRcSpeedPreset(1565, 8.0, '🐢 Êm Ái', btnSpeedSlow);
+    });
+
+    btnSpeedMedium?.addEventListener('click', () => {
+      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium);
+    });
+
+    btnSpeedFast?.addEventListener('click', () => {
+      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast);
+    });
+
+    sliderMaxThrottle?.addEventListener('input', (e) => {
+      const pulse = parseInt(e.target.value, 10) || 1585;
+      const kmh = Math.round(((pulse - 1500) / 85) * 12.0 * 10) / 10;
+      setRcSpeedPreset(pulse, kmh, '⚙️ Tùy Chỉnh', null);
+    });
+
+    const savedPulse = parseInt(localStorage.getItem('rc_max_throttle_pulse'), 10);
+    const savedKmh = parseFloat(localStorage.getItem('rc_target_speed_kmh'));
+    if (savedPulse && savedKmh) {
+      const btn = savedPulse <= 1570 ? btnSpeedSlow : (savedPulse <= 1600 ? btnSpeedMedium : btnSpeedFast);
+      setRcSpeedPreset(savedPulse, savedKmh, savedPulse <= 1570 ? '🐢 Êm Ái' : (savedPulse <= 1600 ? '🚗 Vừa Phải' : '🏎️ Thể Thao'), btn);
+    }
+
     btnTestPulse?.addEventListener('click', () => {
       if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
         state.lastActionLog = '⚠️ Chưa kết nối máy chủ WebSocket!';
@@ -20794,29 +20859,31 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (now - lastCarControlSendTime >= 40) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
-        let steer = 90;
-        let throttle = 1500;
+        const maxFwdDelta = Math.max(20, Math.min(180, (state.rcMaxForwardPulse || 1585) - 1500));
+        const maxRevDelta = Math.max(20, Math.min(180, 1500 - (state.rcMaxReversePulse || 1435)));
+
+        let targetSteer = 90;
+        let targetThrottle = 1500;
 
         if (state.playerMode === 'DRIVING') {
           // A. Tính góc bẻ lái Servo: Đảo chiều chuẩn để đánh lái Trái -> quẹo Trái, Phải -> quẹo Phải
           let steerRatio = THREE.MathUtils.clamp(state.steeringAngleDeg / 450.0, -1.0, 1.0);
           if (state.invertCarSteer) steerRatio = -steerRatio;
-          steer = Math.round(90 - steerRatio * 45); // Dấu trừ đảo chiều góc lái servo chuẩn xác
-          steer = THREE.MathUtils.clamp(steer, 45, 135);
+          targetSteer = Math.round(90 - steerRatio * 45);
+          targetSteer = THREE.MathUtils.clamp(targetSteer, 45, 135);
 
-          // B. Tính xung ga ESC đã cân chỉnh: Lùi tối đa 1300us, Dừng 1500us, Tiến tối đa 1700us
+          // B. Tính xung ga: Cân chỉnh êm ái theo mức ga tối đa đã chọn (Vừa phải, không vọt)
           if (!state.engineRunning || state.brakePercent > 8) {
-            throttle = 1500;
-          } else if (state.gearIndex === 1) { // Số R: Lùi (1500us -> 1300us)
+            targetThrottle = 1500;
+          } else if (state.gearIndex === 1) { // Số R: Lùi
             const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
-            throttle = Math.round(1500 - (pct / 100.0) * 200); // 1500 - 200 = 1300us max
-          } else if (state.gearIndex === 3) { // Số D: Tiến (1500us -> 1700us)
+            targetThrottle = Math.round(1500 - (pct / 100.0) * maxRevDelta);
+          } else if (state.gearIndex === 3) { // Số D: Tiến
             const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
-            throttle = Math.round(1500 + (pct / 100.0) * 200); // 1500 + 200 = 1700us max
+            targetThrottle = Math.round(1500 + (pct / 100.0) * maxFwdDelta);
           } else {
-            throttle = 1500;
+            targetThrottle = 1500;
           }
-          throttle = THREE.MathUtils.clamp(throttle, 1300, 1700);
         } else {
           // HỖ TRỢ LÁI XE RC TRỰC TIẾP KHI Ở NGOÀI XE (ON_FOOT): W/A/S/D & CỤM NÚT D-PAD / BÀN ĐẠP
           const wantGas = keys.w || keys.ArrowUp || (typeof holdState !== 'undefined' && (holdState.gas || holdState.up));
@@ -20824,18 +20891,32 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           const wantLeft = keys.a || keys.ArrowLeft || (typeof holdState !== 'undefined' && holdState.left);
           const wantRight = keys.d || keys.ArrowRight || (typeof holdState !== 'undefined' && holdState.right);
 
-          if (wantLeft) steer = state.invertCarSteer ? 135 : 45;
-          else if (wantRight) steer = state.invertCarSteer ? 45 : 135;
-          else steer = 90;
+          if (wantLeft) targetSteer = state.invertCarSteer ? 135 : 45;
+          else if (wantRight) targetSteer = state.invertCarSteer ? 45 : 135;
+          else targetSteer = 90;
 
           if (wantGas && !wantRev) {
-            throttle = 1700; // Tiến 1700us
+            targetThrottle = 1500 + maxFwdDelta;
           } else if (wantRev && !wantGas) {
-            throttle = 1300; // Lùi 1300us
+            targetThrottle = 1500 - maxRevDelta;
           } else {
-            throttle = 1500; // Dừng 1500us
+            targetThrottle = 1500;
           }
         }
+
+        // C. NỘI SUY XUNG GA CHỐNG GIẬT (SMOOTH RAMP CURVE)
+        if (typeof state.rcSmoothThrottle === 'undefined') state.rcSmoothThrottle = 1500;
+        const rampStep = 450 * dt; // Tăng dần êm ái trong ~0.25s
+        if (targetThrottle > state.rcSmoothThrottle) {
+          state.rcSmoothThrottle = Math.min(targetThrottle, state.rcSmoothThrottle + rampStep);
+        } else if (targetThrottle < state.rcSmoothThrottle) {
+          state.rcSmoothThrottle = Math.max(targetThrottle, state.rcSmoothThrottle - rampStep);
+        } else {
+          state.rcSmoothThrottle = targetThrottle;
+        }
+
+        const steer = targetSteer;
+        const throttle = Math.round(state.rcSmoothThrottle);
 
         carControlPacket.steer = steer;
         carControlPacket.throttle = throttle;
