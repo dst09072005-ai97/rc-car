@@ -20817,6 +20817,24 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
             throttle = 1500;
           }
           throttle = THREE.MathUtils.clamp(throttle, 1300, 1700);
+        } else {
+          // HỖ TRỢ LÁI XE RC TRỰC TIẾP KHI Ở NGOÀI XE (ON_FOOT): W/A/S/D & CỤM NÚT D-PAD / BÀN ĐẠP
+          const wantGas = keys.w || keys.ArrowUp || (typeof holdState !== 'undefined' && (holdState.gas || holdState.up));
+          const wantRev = keys.s || keys.ArrowDown || (typeof holdState !== 'undefined' && (holdState.brake || holdState.down));
+          const wantLeft = keys.a || keys.ArrowLeft || (typeof holdState !== 'undefined' && holdState.left);
+          const wantRight = keys.d || keys.ArrowRight || (typeof holdState !== 'undefined' && holdState.right);
+
+          if (wantLeft) steer = state.invertCarSteer ? 135 : 45;
+          else if (wantRight) steer = state.invertCarSteer ? 45 : 135;
+          else steer = 90;
+
+          if (wantGas && !wantRev) {
+            throttle = 1700; // Tiến 1700us
+          } else if (wantRev && !wantGas) {
+            throttle = 1300; // Lùi 1300us
+          } else {
+            throttle = 1500; // Dừng 1500us
+          }
         }
 
         carControlPacket.steer = steer;
@@ -20843,7 +20861,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         // Cập nhật nhãn thông số xung hiển thị trên Web HUD
         const pulseInfoEl = document.getElementById('esp32-car-pulse-info');
         if (pulseInfoEl) {
-          pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs`;
+          const dirLabel = throttle > 1520 ? '🟢 TIẾN' : (throttle < 1480 ? '🔴 LÙI' : '⚪ DỪNG'); pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs [${dirLabel}]`;
         }
       }
     }

@@ -392,6 +392,7 @@ const esp32CarConfig = {
 };
 
 // Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
+let lastUdpCommandLog = '';
 function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
   // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
@@ -407,6 +408,11 @@ function sendUdpCarCommand(steer, throttle) {
       if (!err) {
         esp32CarConfig.lastSentTime = Date.now();
         esp32CarConfig.packetsSent++;
+        const key = `${s}_${t}`;
+        if (key !== lastUdpCommandLog && (s !== 90 || t !== 1500)) {
+          lastUdpCommandLog = key;
+          console.log(`[RC CAR UDP 4210] -> ${esp32CarConfig.ip}: Lái ${s}°, Ga ${t}µs (${t > 1520 ? 'TIẾN' : (t < 1480 ? 'LÙI' : 'DỪNG')})`);
+        }
       }
     });
   } catch (err) {}

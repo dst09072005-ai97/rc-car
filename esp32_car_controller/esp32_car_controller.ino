@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp_wifi.h>
 #include <ESP32Servo.h>
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h" // Cài đặt trong Arduino IDE: Tools -> Manage Libraries -> tìm "ESP32Servo" của Kevin Harrington
@@ -24,6 +25,9 @@ WiFiUDP udp;
 //    - Đặt = 1 nếu dùng XE DIY DRIVER L298N / TB6612 (Servo lái + Động cơ DC IN1/IN2)
 // ============================================================================
 #define USE_L298N_MOTOR_DRIVER 0
+
+// Chân đèn LED trạng thái (GPIO 2 có sẵn trên đa số mạch ESP32)
+const int PIN_STATUS_LED = 2;
 
 // Chân điều khiển Servo bẻ lái (Trái / Phải)
 const int PIN_SERVO_STEER = 12;
@@ -81,7 +85,10 @@ void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 
   Serial.begin(115200);
-  delay(1000);
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  digitalWrite(PIN_STATUS_LED, HIGH);
+
+  delay(500);
   Serial.println("\n=======================================================");
   Serial.println("  [ESP32 XE RC DIGITAL TWIN] HỆ THỐNG ĐIỀU KHIỂN XE");
   Serial.println("=======================================================");
@@ -101,6 +108,8 @@ void setup() {
   escThrottle.attach(PIN_ESC_THROTTLE, 1000, 2000);
   escThrottle.writeMicroseconds(1500); // Mức trung tính (dừng ga)
   Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + ESC Động Cơ (GPIO 13)");
+  // Giữ xung Neutral 1500us trong 1.5s để ESC hoàn thành chu trình khởi động (Arming Beep)
+  delay(1500);
 #else
   pinMode(PIN_MOTOR_IN1, OUTPUT);
   pinMode(PIN_MOTOR_IN2, OUTPUT);
@@ -109,7 +118,7 @@ void setup() {
   Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + L298N (IN1=14, IN2=27, PWM=13)");
 #endif
 
-  // Kết nối Wi-Fi cùng mạng BETEA
+  // Kết nối Wi-Fi
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -117,13 +126,15 @@ void setup() {
   Serial.println(WIFI_SSID);
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(300);
     Serial.print(".");
+    digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
     attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    digitalWrite(PIN_STATUS_LED, HIGH);
     Serial.println("\n[WiFi] KẾT NỐI WI-FI THÀNH CÔNG!");
     Serial.print("[WiFi] IP CỦA XE LÀ: ");
     Serial.println(WiFi.localIP());
@@ -135,6 +146,9 @@ void setup() {
     Serial.print("[WiFi] IP AP của Xe: ");
     Serial.println(WiFi.softAPIP());
   }
+
+  // Tắt chế độ tiết kiệm năng lượng Wi-Fi để nhận UDP thời gian thực với độ trễ thấp nhất
+  esp_wifi_set_ps(WIFI_PS_NONE);
 
   // Khởi động cổng nhận UDP từ Server Node.js
   udp.begin(LOCAL_UDP_PORT);
@@ -151,52 +165,71 @@ void setup() {
 }
 
 void loop() {
+  // Tự động kết nối lại Wi-Fi nếu bị rớt sóng
+  if (WiFi.getMode() == WIFI_STA && WiFi.status() != WL_CONNECTED) {
+    static unsigned long lastWifiReconnect = 0;
+    if (millis() - lastWifiReconnect > 3000) {
+      lastWifiReconnect = millis();
+      Serial.println("[WiFi] Mất kết nối Wi-Fi -> Đang thử kết nối lại...");
+      WiFi.reconnect();
+    }
+  }
+
   // 1. Nhận gói tin UDP điều khiển từ Web Simulator (Cổng 4210)
   int packetSize = udp.parsePacket();
   if (packetSize > 0) {
-    uint8_t buffer[64];
+    uint8_t buffer[128];
     int len = udp.read(buffer, sizeof(buffer) - 1);
-    buffer[len] = 0;
+    if (len > 0) {
+      buffer[len] = 0;
 
-    // A. Gói tin nhị phân tốc độ cao 4 bytes: [Góc lái int16_t, Xung ga int16_t]
-    if (len >= 4) {
-      int16_t steer = buffer[0] | (buffer[1] << 8);
-      int16_t throttle = buffer[2] | (buffer[3] << 8);
-
-      steer = constrain(steer, 45, 135);        // 45° (trái) -> 90° (thẳng) -> 135° (phải)
-      throttle = constrain(throttle, 1300, 1700); // Cân chỉnh an toàn: 1300us (lùi vừa) -> 1500us (dừng) -> 1700us (tiến vừa)
-
-      if (steer != currentSteer) {
-        steeringServo.write(steer);
-        currentSteer = steer;
+      // A. Nếu là gói tin JSON: Kiểm tra và bỏ qua beacon loopback của chính mạch
+      if (buffer[0] == '{') {
+        char* str = (char*)buffer;
+        // Bỏ qua nếu là gói tin thông báo beacon của chính xe tự phát
+        if (strstr(str, "\"role\":\"car\"") || strstr(str, "ESP32_CAR")) {
+          // Bỏ qua packet loopback
+        } else {
+          int sVal = 90, tVal = 1500;
+          if (sscanf(str, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) == 2) {
+            sVal = constrain(sVal, 45, 135);
+            tVal = constrain(tVal, 1300, 1700);
+            steeringServo.write(sVal);
+            applyMotorThrottle(tVal);
+            currentSteer = sVal;
+            currentThrottle = tVal;
+            lastPacketTime = millis();
+            isFailsafeActive = false;
+            digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
+          }
+        }
       }
-      if (throttle != currentThrottle) {
-        applyMotorThrottle(throttle);
-        currentThrottle = throttle;
-      }
+      // B. Gói tin nhị phân tốc độ cao chuẩn 4 bytes: [Góc lái int16_t, Xung ga int16_t]
+      else if (len == 4) {
+        int16_t steer = (int16_t)(buffer[0] | (buffer[1] << 8));
+        int16_t throttle = (int16_t)(buffer[2] | (buffer[3] << 8));
 
-      lastPacketTime = millis();
-      isFailsafeActive = false;
-    }
-    // B. Dự phòng gói tin JSON nếu có công cụ khác gửi qua UDP
-    else if (buffer[0] == '{') {
-      char* str = (char*)buffer;
-      int sVal = 90, tVal = 1500;
-      if (sscanf(str, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) == 2) {
-        sVal = constrain(sVal, 45, 135);
-        tVal = constrain(tVal, 1300, 1700);
-        steeringServo.write(sVal);
-        applyMotorThrottle(tVal);
-        currentSteer = sVal;
-        currentThrottle = tVal;
+        steer = constrain(steer, 45, 135);          // 45° (trái) -> 90° (thẳng) -> 135° (phải)
+        throttle = constrain(throttle, 1300, 1700); // 1300us (lùi) -> 1500us (dừng) -> 1700us (tiến)
+
+        if (steer != currentSteer) {
+          steeringServo.write(steer);
+          currentSteer = steer;
+        }
+        if (throttle != currentThrottle) {
+          applyMotorThrottle(throttle);
+          currentThrottle = throttle;
+        }
+
         lastPacketTime = millis();
         isFailsafeActive = false;
+        digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
       }
     }
   }
 
   // 2. TỰ ĐỘNG DỪNG AN TOÀN (FAILSAFE):
-  // Nếu Web đóng, ngắt kết nối hoặc mạng lag quá 0.5s -> Xe lập tức dừng ga và trả thẳng lái!
+  // Nếu Web đóng, ngắt kết nối hoặc mất mạng quá 0.5s -> Xe lập tức dừng ga và trả thẳng lái!
   if (!isFailsafeActive && (millis() - lastPacketTime > FAILSAFE_TIMEOUT_MS)) {
     applyMotorThrottle(1500); // Tự động ngắt ga về 0 (Neutral)
     steeringServo.write(90);  // Trả thẳng góc lái
