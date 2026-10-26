@@ -1,3 +1,13 @@
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ============================================================================
 // FILE: youtube-dom-extractor.js (BẢN V125 - PHÁT FULL THỜI LƯỢNG ĐẾN >5 TIẾNG
 // CHO TẤT CẢ VIDEO TRONG DANH SÁCH & ĐỒNG BỘ MÀN HÌNH TÁP-LÔ 3D KHI THU NHỎ)
@@ -29,20 +39,31 @@ function logDomInspector(msg, color = '#00ff88') {
 // Lưu ảnh Thumbnail của video đang phát để vẽ lên màn hình 3D trong xe khi thu nhỏ
 window.currentYtCoverImage = new Image();
 window.currentYtCoverImage.crossOrigin = 'Anonymous';
+window.currentYtCoverImage.onerror = () => {
+  if (window.currentYtVideoId && !window.currentYtCoverImage.src.includes('direct_fallback')) {
+    window.currentYtCoverImage.src = `https://i.ytimg.com/vi/${window.currentYtVideoId}/hqdefault.jpg?direct_fallback=1`;
+  }
+};
 window.currentYtDurationText = 'LIVE / FULL';
 window.currentYtStartTime = performance.now();
+window.currentYtVideoId = '';
 
 export async function playExtractedVideoUrlInFrame(videoItem) {
   if (!ytHtml5Video || !ytIframe || !videoItem) return;
 
   const title = videoItem.title || 'YouTube Full Video';
-  const vid = videoItem.videoId;
+  const vid = videoItem.videoId || '';
+  window.currentYtVideoId = vid;
   window.currentYtDurationText = videoItem.duration || 'FULL HD';
   window.currentYtStartTime = performance.now();
   window.dispatchEvent(new CustomEvent('yt-title-updated', { detail: title }));
 
-  if (vid) {
-    window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+  if (window.currentYtCoverImage) {
+    if (vid) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+    } else if (videoItem.thumbnail) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(videoItem.thumbnail)}`;
+    }
   }
 
   // 1. Nếu người dùng nhập link file .mp4 trực tiếp
@@ -164,11 +185,11 @@ export async function inspectAndSearchYouTubeDOM(rawQuery) {
       card.innerHTML = `
         <div style="display:flex;gap:8px;align-items:center;">
           <div style="position:relative;width:72px;height:44px;flex-shrink:0;">
-            <img src="${item.thumbnail}" style="width:72px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
+            <img src="${escapeHtml(item.thumbnail)}" style="width:72px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
             <span style="position:absolute;bottom:2px;right:2px;background:rgba(0,0,0,0.85);color:#ffd60a;font-size:9px;padding:1px 3px;border-radius:3px;font-weight:bold;">${item.duration || 'FULL'}</span>
           </div>
           <div style="flex:1;overflow:hidden;">
-            <b style="font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${idx + 1}. ${item.title}</b>
+            <b style="font-size:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${idx + 1}. ${escapeHtml(item.title)}</b>
             <span style="color:#00ff88;font-size:10px;">▶ Thời lượng: ${item.duration || 'Full Video'} (Bấm để phát)</span>
           </div>
         </div>
@@ -236,11 +257,17 @@ async function playAnyDurationYouTubeWithMp4Sync(item, seatIdx = 0) {
   const vid = item.videoId || '';
   const title = item.title || 'YouTube Internet Video';
   const durText = item.duration || '05:30:00 (FULL)';
+  window.currentYtVideoId = vid;
   window.currentYtDurationText = durText;
+  window.currentYtStartTime = performance.now();
   window.dispatchEvent(new CustomEvent('yt-title-updated', { detail: title }));
 
-  if (vid) {
-    window.currentYtCoverImage.src = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
+  if (window.currentYtCoverImage) {
+    if (vid) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+    } else if (item.thumbnail) {
+      window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(item.thumbnail)}`;
+    }
   }
 
   let mp4StreamUrl = item.directUrl || null;
@@ -392,9 +419,9 @@ window.triggerUnifiedYouTubeSearch = async function(rawQuery, seatIdx = 0) {
       card.className = `yt-card ${idx === 0 ? 'active' : ''}`;
       card.innerHTML = `
         <div style="display:flex;gap:8px;align-items:center;">
-          <img src="${item.thumbnail}" style="width:72px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
+          <img src="${escapeHtml(item.thumbnail)}" style="width:72px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
           <div style="flex:1;overflow:hidden;">
-            <b style="font-size:11px;">${idx + 1}. ${item.title}</b>
+            <b style="font-size:11px;">${idx + 1}. ${escapeHtml(item.title)}</b>
             <span style="color:#00ff88;font-size:10px;">⏱ Thời lượng: ${item.duration} (Đồng bộ 3 màn hình)</span>
           </div>
         </div>
@@ -565,9 +592,9 @@ if (ytSearchInput) {
         card.className = `yt-card ${idx === 0 ? 'active' : ''}`;
         card.style.cssText = 'padding:6px;margin-bottom:6px;background:rgba(255,255,255,0.06);border-radius:6px;cursor:pointer;display:flex;gap:8px;align-items:center;border-left:3px solid #00e5ff;';
         card.innerHTML = `
-          <img src="${item.thumbnail}" style="width:68px;height:40px;object-fit:cover;border-radius:4px;border:1px solid rgba(0,229,255,0.4);" />
+          <img src="${escapeHtml(item.thumbnail)}" style="width:68px;height:40px;object-fit:cover;border-radius:4px;border:1px solid rgba(0,229,255,0.4);" />
           <div style="flex:1;overflow:hidden;">
-            <div style="font-size:11px;font-weight:bold;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${idx + 1}. ${item.title}</div>
+            <div style="font-size:11px;font-weight:bold;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${idx + 1}. ${escapeHtml(item.title)}</div>
             <div style="color:#00ff88;font-size:10px;">⏱ ${item.duration} • 100% MP4 Stream</div>
           </div>
         `;
@@ -659,7 +686,18 @@ if (ytSearchInput) {
 
     const title = item?.title || 'YouTube MP4 Stream';
     const vid = item?.videoId || '';
+    window.currentYtVideoId = vid;
+    window.currentYtStartTime = performance.now();
+    window.currentYtDurationText = item?.duration || 'FULL HD';
     window.dispatchEvent(new CustomEvent('yt-title-updated', { detail: title }));
+
+    if (window.currentYtCoverImage) {
+      if (vid) {
+        window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(`https://i.ytimg.com/vi/${vid}/hqdefault.jpg`)}`;
+      } else if (item?.thumbnail) {
+        window.currentYtCoverImage.src = `/api/esp32-proxy?url=${encodeURIComponent(item?.thumbnail)}`;
+      }
+    }
 
     // Ưu tiên lấy luồng MP4 trực tiếp qua /api/yt-mp4-direct (tự động fallback về MP4 HD nếu YouTube chặn IP LAN)
     const fallbackMp4 = item?.directUrl || pickGuaranteedMp4Url(title, idx);
@@ -761,9 +799,9 @@ if (ytSearchInput) {
         card.className = `yt-card ${idx === 0 ? 'active' : ''}`;
         card.innerHTML = `
           <div style="display:flex;gap:8px;align-items:center;">
-            <img src="${item.thumbnail}" style="width:68px;height:42px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
+            <img src="${escapeHtml(item.thumbnail)}" style="width:68px;height:42px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
             <div style="flex:1;overflow:hidden;">
-              <b style="font-size:11px;">${idx + 1}. ${item.title}</b>
+              <b style="font-size:11px;">${idx + 1}. ${escapeHtml(item.title)}</b>
               <span style="color:#00ff88;font-size:10px;">▶ Phát MP4 Trực Tiếp (${item.duration || 'FULL'})</span>
             </div>
           </div>
@@ -843,3 +881,5 @@ if (ytSearchInput) {
     setTimeout(rebindAllYouTubeModalControls, 150);
   }
 })();
+
+window.playExtractedVideoUrlInFrame = playExtractedVideoUrlInFrame;

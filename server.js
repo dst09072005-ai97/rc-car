@@ -11,6 +11,25 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const WebSocket = require('ws');
+const { exec: cpExec } = require('child_process');
+const { promisify: utilPromisify } = require('util');
+const execPromise = utilPromisify(cpExec);
+
+async function tryResolveYtDlpStream(videoId) {
+  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  try {
+    const { stdout } = await execPromise(
+      `yt-dlp -f "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/b" -g --no-warnings "https://youtube.com/watch?v=${videoId}"`,
+      { timeout: 12000 }
+    );
+    const urls = stdout.trim().split(/\r?\n/).filter(Boolean);
+    if (urls.length > 0 && urls[0].startsWith('http')) {
+      return urls[0];
+    }
+  } catch (e) {}
+  return null;
+}
+
 
 const app = express();
 // ============================================================================
@@ -145,21 +164,48 @@ function clampFinite(val, min, max, fallback = 0) {
   return Math.min(Math.max(num, min), max);
 }
 
-// Proxy lấy luồng Camera ESP32 (Kính chắn gió trước & Cam lùi sau) không bị chặn CORS/HTTPS
-app.get('/api/esp32-proxy', (req, res) => {
-  const targetUrl = req.query.url;
+// Proxy lấy luồng Camera ESP32 & Thumbnail YouTube không bị chặn CORS/HTTPS (hỗ trợ Follow 301/302 Redirects)
+app.get('/api/esp32-proxy', async (req, res) => {
+  const targetUrl = (req.query.url || '').trim();
   const check = validateProxyTargetUrl(targetUrl);
   if (!check.valid) {
     return res.status(400).send('SSRF Guard: ' + check.reason);
   }
-  const client = targetUrl.startsWith('https') ? https : http;
-  client.get(targetUrl, (proxyRes) => {
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  req.on('close', () => controller.abort());
+
+  try {
+    const upstream = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+      },
+      redirect: 'follow',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    res.status(upstream.status || 200);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'image/jpeg');
-    proxyRes.pipe(res);
-  }).on('error', (err) => {
-    res.status(502).send('ESP32 unreachable: ' + err.message);
-  });
+    const cType = upstream.headers.get('content-type');
+    res.setHeader('Content-Type', cType || 'image/jpeg');
+    const cLen = upstream.headers.get('content-length');
+    if (cLen) res.setHeader('Content-Length', cLen);
+
+    if (upstream.body) {
+      const { Readable } = require('stream');
+      Readable.fromWeb(upstream.body).pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (!res.headersSent) {
+      res.status(502).send('Proxy upstream error: ' + err.message);
+    }
+  }
 });
 
 // ============================================================================
@@ -623,25 +669,46 @@ app.get('/api/scan-esp32', async (req, res) => {
 });
 
 // Proxy truyền tải luồng video MP4 về thẻ <video> trong xe không bị lỗi CORS (SSRF Protected)
-app.get('/api/yt-stream-proxy', (req, res) => {
-  const streamUrl = req.query.url;
+app.get('/api/yt-stream-proxy', async (req, res) => {
+  const streamUrl = (req.query.url || '').trim();
   const check = validateProxyTargetUrl(streamUrl);
   if (!check.valid) {
     return res.status(400).send('SSRF Guard: ' + check.reason);
   }
-  const client = streamUrl.startsWith('https') ? https : http;
-  client.get(streamUrl, {
-    headers: { 'User-Agent': 'Mozilla/5.0', Range: req.headers.range || 'bytes=0-' }
-  }, (sRes) => {
-    res.status(sRes.statusCode || 200);
+
+  try {
+    const upstream = await fetch(streamUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com',
+        'Range': req.headers.range || 'bytes=0-',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000)
+    });
+
+    res.status(upstream.status || 200);
     res.setHeader('Access-Control-Allow-Origin', '*');
-    if (sRes.headers['content-type']) res.setHeader('Content-Type', sRes.headers['content-type']);
-    if (sRes.headers['content-length']) res.setHeader('Content-Length', sRes.headers['content-length']);
-    if (sRes.headers['content-range']) res.setHeader('Content-Range', sRes.headers['content-range']);
-    sRes.pipe(res);
-  }).on('error', (err) => {
-    res.status(502).send(err.message);
-  });
+    res.setHeader('Accept-Ranges', 'bytes');
+    const cType = upstream.headers.get('content-type');
+    if (cType) res.setHeader('Content-Type', cType);
+    const cLen = upstream.headers.get('content-length');
+    if (cLen) res.setHeader('Content-Length', cLen);
+    const cRange = upstream.headers.get('content-range');
+    if (cRange) res.setHeader('Content-Range', cRange);
+
+    if (upstream.body) {
+      const { Readable } = require('stream');
+      Readable.fromWeb(upstream.body).pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(502).send('Proxy error: ' + err.message);
+    }
+  }
 });
 
 
@@ -1137,6 +1204,13 @@ app.get('/api/yt-mp4-direct', async (req, res) => {
     return res.redirect(`/api/yt-stream-proxy?url=${encodeURIComponent(rawUrl)}`);
   }
 
+  // 1. Thử lấy URL MP4 thật bằng yt-dlp nếu server có cài đặt
+  const dlpUrl = await tryResolveYtDlpStream(videoId);
+  if (dlpUrl) {
+    return res.redirect(`/api/yt-stream-proxy?url=${encodeURIComponent(dlpUrl)}`);
+  }
+
+  // 2. Thử lấy qua Android VR Innertube
   let mp4Url = await resolveDirectMp4FromVideoId(videoId);
   if (mp4Url) {
     return res.redirect(`/api/yt-stream-proxy?url=${encodeURIComponent(mp4Url)}`);
