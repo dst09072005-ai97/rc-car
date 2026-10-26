@@ -820,6 +820,7 @@ function attachMultiplayerServer(serverInstance) {
             steerAngleDeg: data.steerAngleDeg || 0,
             gasPercent: data.gasPercent || 0,
             brakePercent: data.brakePercent || 0,
+            reversePercent: data.reversePercent || 0,
             gear: data.gear || 'D',
             ts: Date.now()
           });
