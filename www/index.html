@@ -440,41 +440,87 @@
         </div>
       </div>
 
-      <!-- Bàn đạp Ga & Bàn đạp Phanh -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
+      <!-- Bàn đạp Ga, Phanh, và Lùi (3 Bàn Đạp Độc Lập Cho Vô Lăng GOG R808) -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">
         <div>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:#ccc;">
-            <span>🟢 Chân Ga:</span>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🟢 Ga (Tiến):</span>
             <strong id="pedal-gas-txt" style="color:#00ff88;">0%</strong>
           </div>
           <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
             <div id="pedal-gas-bar" style="height:100%;width:0%;background:#00ff88;transition:width 0.04s ease-out;"></div>
           </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-gas" class="act-btn" style="background:#1f3354;color:#00ff88;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Ga để nhận diện">🎯 Gán Ga</button>
+            <button id="btn-toggle-invert-gas" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Ga">🔄</button>
+          </div>
         </div>
         <div>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:#ccc;">
-            <span>🔴 Chân Phanh:</span>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🔴 Phanh (Dừng):</span>
             <strong id="pedal-brake-txt" style="color:#ff3b30;">0%</strong>
           </div>
           <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
             <div id="pedal-brake-bar" style="height:100%;width:0%;background:#ff3b30;transition:width 0.04s ease-out;"></div>
           </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-brake" class="act-btn" style="background:#1f3354;color:#ff3b30;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Phanh để nhận diện">🎯 Gán Phanh</button>
+            <button id="btn-toggle-invert-brake" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Phanh">🔄</button>
+          </div>
         </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🟡 Lùi (Chân Côn):</span>
+            <strong id="pedal-reverse-txt" style="color:#ffd60a;">0%</strong>
+          </div>
+          <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
+            <div id="pedal-reverse-bar" style="height:100%;width:0%;background:#ffd60a;transition:width 0.04s ease-out;"></div>
+          </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-reverse" class="act-btn" style="background:#1f3354;color:#ffd60a;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Lùi (hoặc Côn) để nhận diện">🎯 Gán Lùi</button>
+            <button id="btn-toggle-invert-reverse" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Lùi">🔄</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Input Monitor: Soi trực tiếp các trục và nút của GOG R808 -->
+      <div id="wheel-live-monitor" style="background:#0c1524;border:1px dashed #204060;border-radius:4px;padding:3px 6px;margin-bottom:6px;font-family:monospace;font-size:10px;color:#79c0ff;display:flex;justify-content:space-between;align-items:center;">
+        <span id="wheel-monitor-axes">🎮 Tín hiệu: Đang dò vô lăng...</span>
+        <button id="btn-auto-detect-all-pedals" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;font-size:9px;padding:2px 5px;cursor:pointer;">⚡ Nhận Diện Lại</button>
       </div>
 
       <!-- Các nút căn chỉnh & sang số nhanh & chuyển đổi hiển thị -->
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;">
         <button id="btn-wheel-toggle-cam-road" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;font-size:11px;padding:5px 8px;width:100%;margin-bottom:3px;cursor:pointer;">🔄 Tùy Chọn: [🛣️ ĐƯỜNG 3D TRONG GAME] (Bấm đổi sang Cam 📷)</button>
-        <button id="btn-toggle-invert-gas" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Chân Ga</button>
-        <button id="btn-toggle-invert-brake" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Chân Phanh</button>
-        <button id="btn-wheel-shift-r" class="act-btn" style="background:#ff3b30;color:#fff;font-size:10px;padding:3px 6px;flex:0.6;">[R] Lùi</button>
-        <button id="btn-wheel-shift-d" class="act-btn" style="background:#00ff88;color:#000;font-size:10px;padding:3px 6px;flex:0.6;">[D] Tiến</button>
+        <button id="btn-wheel-shift-r" class="act-btn" style="background:#ff3b30;color:#fff;font-size:10px;padding:3px 6px;flex:1;">[R] Lùi</button>
+        <button id="btn-wheel-shift-d" class="act-btn" style="background:#00ff88;color:#000;font-size:10px;padding:3px 6px;flex:1;">[D] Tiến</button>
       </div>
     </div>
 
-    <div class="section-title">📷 2. Kết nối Kính Chắn Gió ESP32-CAM</div>
+    <div class="section-title">🚘 2. Kết Nối Phần Cứng Xe Thật (ESP32 Car &amp; Cam)</div>
+
+    <!-- Mạch điều khiển bánh lái Servo & động cơ ESC xe RC -->
+    <div class="row" style="background:rgba(0,229,255,0.08);padding:6px;border-radius:6px;border:1px solid rgba(0,229,255,0.3);flex-direction:column;gap:5px;margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <label style="font-weight:bold;color:#00e5ff;font-size:12px;">🎮 Mạch Lái Xe (ESP32 Controller - UDP 4210):</label>
+        <span id="esp32-car-status" style="font-size:11px;font-weight:bold;color:#ff3b30;">● Chưa kết nối</span>
+      </div>
+      <div style="display:flex;gap:5px;width:100%;">
+        <input id="esp32-car-ip" type="text" placeholder="192.168.1.xxx (IP Mạch Lái Xe)" style="flex:1;font-family:monospace;background:#111;color:#fff;border:1px solid #444;border-radius:4px;padding:4px 6px;" />
+        <button id="btn-connect-car-esp32" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;flex:0.6;">📡 Nối Mạch Xe</button>
+      </div>
+      <div style="display:flex;gap:5px;width:100%;">
+        <button id="btn-toggle-invert-steer" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Lái (Trái/Phải)</button>
+        <button id="btn-test-esp32-pulse" class="act-btn" style="background:#ff9500;color:#000;font-size:10px;font-weight:bold;padding:3px 6px;flex:1;">⚡ Test Lắc Bánh Xe (Pulse)</button>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#8ab4f8;padding:2px 2px;">
+        <span>⚡ Giới hạn ga: Lùi 1300µs | Dừng 1500µs | Tiến 1700µs</span>
+        <span id="esp32-car-pulse-info" style="color:#00ff88;font-family:monospace;font-weight:bold;">Lái: 90° | Ga: 1500µs</span>
+      </div>
+    </div>
+
     <div class="row">
-      <label>Địa chỉ ESP32-CAM:</label>
+      <label>Địa chỉ ESP32-CAM (Cam Trước):</label>
       <input id="esp32-front-ip" type="text" value="ws://192.168.1.88:4213" />
     </div>
     <div class="row">
@@ -749,28 +795,36 @@
   </script>
 
 <script type="module">
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-const SUPABASE_URL = 'https://wrzybugwkohwltvexmhy.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_VkC2kikQlixIcxnmDvxNZQ_xAWSQs9O';
-if (SUPABASE_URL.startsWith('https://')) {
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  const channel = supabase.channel('rolls-royce-vr-room', {
-    config: { broadcast: { self: false } }
-  });
-  channel
-    .on('broadcast', { event: 'YT_MULTISCREEN_SYNC' }, ({ payload }) => {
-      if (payload && window.playExtractedVideoUrlInFrame) {
-        window.playExtractedVideoUrlInFrame({
-          videoId: payload.videoId,
-          title: payload.title,
-          directUrl: payload.streamUrl,
-          duration: payload.durationText
-        });
-      }
-    })
-    .subscribe();
-  window.supabaseChannel = channel;
-}
+// HỖ TRỢ CHẠY 100% OFFLINE KHI KẾT NỐI WI-FI SOFTAP CỦA ESP32 (KHÔNG BỊ TREO TẢI CDN)
+(async function initOptionalSupabaseMultiScreen() {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  try {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    const SUPABASE_URL = "https://wrzybugwkohwltvexmhy.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_VkC2kikQlixIcxnmDvxNZQ_xAWSQs9O";
+    if (SUPABASE_URL.startsWith("https://")) {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const channel = supabase.channel("rolls-royce-vr-room", {
+        config: { broadcast: { self: false } }
+      });
+      channel
+        .on("broadcast", { event: "YT_MULTISCREEN_SYNC" }, ({ payload }) => {
+          if (payload && window.playExtractedVideoUrlInFrame) {
+            window.playExtractedVideoUrlInFrame({
+              videoId: payload.videoId,
+              title: payload.title,
+              directUrl: payload.streamUrl,
+              duration: payload.durationText
+            });
+          }
+        })
+        .subscribe();
+      window.supabaseChannel = channel;
+    }
+  } catch (err) {
+    console.info("[Offline Mode] Bỏ qua Supabase CDN; sử dụng WebSocket nội bộ để đồng bộ.");
+  }
+})();
 </script>
   <script type="module" src="./app.js"></script>
   <script type="module" src="./youtube-dom-extractor.js"></script>
@@ -1067,7 +1121,8 @@ if (SUPABASE_URL.startsWith('https://')) {
     <button id="v160-mob-walk" class="mob-min-btn" style="background:#00ff88;color:#000;">🏃 Đi Tới (Giữ)</button>
     <button id="v160-mob-door" class="mob-min-btn" style="background:#00e5ff;color:#000;">🚪 Lên/Xuống</button>
     <button id="v160-mob-npc-car" class="mob-min-btn" style="background:#ffd60a;color:#000;">🚕 Đi Nhờ NPC</button>
-    <button id="v160-mob-swap" class="mob-min-btn" style="background:#4cd964;color:#000;">🔄 Đổi Lái</button>
+    <button id="v160-mob-swap" class="mob-min-btn" style="background:#4cd964;color:#000;">🔄 Đổi Lái / Ghế Phụ</button>
+    <button id="v160-mob-center" class="mob-min-btn" style="background:#00f5d4;color:#000;">🎯 Cân Bằng Tâm (R)</button>
     <button id="v160-mob-yt" class="mob-min-btn" style="background:#ff0000;color:#fff;">▶ YouTube</button>
     <button id="v160-mob-fs" class="mob-min-btn" style="background:#9b5de5;color:#fff;">⛶ Full</button>
   </div>
@@ -1110,6 +1165,9 @@ if (SUPABASE_URL.startsWith('https://')) {
       document.getElementById('v160-mob-swap')?.addEventListener('click', () => {
         document.getElementById('btn-swap-driver')?.click();
       });
+      document.getElementById('v160-mob-center')?.addEventListener('click', () => {
+        if (typeof window.autoCenterBalancePassengerView === 'function') window.autoCenterBalancePassengerView();
+      });
       document.getElementById('v160-mob-yt')?.addEventListener('click', () => {
         document.getElementById('btn-open-yt-modal')?.click();
       });
@@ -1143,7 +1201,7 @@ if (SUPABASE_URL.startsWith('https://')) {
         const title = document.createElement('div');
         title.className = 'section-title';
         title.style.color = '#00ff88';
-        title.innerHTML = '🏆 GARA SIÊU XE CỦA TOÀN (CHỌN XE LÁI NGAY):';
+        title.innerHTML = '🏆 GARA SIÊU XE CỦA TOÀN:';
 
         const row = document.createElement('div');
         row.id = 'v165-toan-garage-row';

@@ -440,35 +440,60 @@
         </div>
       </div>
 
-      <!-- Bàn đạp Ga & Bàn đạp Phanh -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px;">
+      <!-- Bàn đạp Ga, Phanh, và Lùi (3 Bàn Đạp Độc Lập Cho Vô Lăng GOG R808) -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">
         <div>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:#ccc;">
-            <span>🟢 Chân Ga:</span>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🟢 Ga (Tiến):</span>
             <strong id="pedal-gas-txt" style="color:#00ff88;">0%</strong>
           </div>
           <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
             <div id="pedal-gas-bar" style="height:100%;width:0%;background:#00ff88;transition:width 0.04s ease-out;"></div>
           </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-gas" class="act-btn" style="background:#1f3354;color:#00ff88;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Ga để nhận diện">🎯 Gán Ga</button>
+            <button id="btn-toggle-invert-gas" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Ga">🔄</button>
+          </div>
         </div>
         <div>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:#ccc;">
-            <span>🔴 Chân Phanh:</span>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🔴 Phanh (Dừng):</span>
             <strong id="pedal-brake-txt" style="color:#ff3b30;">0%</strong>
           </div>
           <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
             <div id="pedal-brake-bar" style="height:100%;width:0%;background:#ff3b30;transition:width 0.04s ease-out;"></div>
           </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-brake" class="act-btn" style="background:#1f3354;color:#ff3b30;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Phanh để nhận diện">🎯 Gán Phanh</button>
+            <button id="btn-toggle-invert-brake" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Phanh">🔄</button>
+          </div>
         </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🟡 Lùi (Chân Côn):</span>
+            <strong id="pedal-reverse-txt" style="color:#ffd60a;">0%</strong>
+          </div>
+          <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
+            <div id="pedal-reverse-bar" style="height:100%;width:0%;background:#ffd60a;transition:width 0.04s ease-out;"></div>
+          </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-reverse" class="act-btn" style="background:#1f3354;color:#ffd60a;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Lùi (hoặc Côn) để nhận diện">🎯 Gán Lùi</button>
+            <button id="btn-toggle-invert-reverse" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Lùi">🔄</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Input Monitor: Soi trực tiếp các trục và nút của GOG R808 -->
+      <div id="wheel-live-monitor" style="background:#0c1524;border:1px dashed #204060;border-radius:4px;padding:3px 6px;margin-bottom:6px;font-family:monospace;font-size:10px;color:#79c0ff;display:flex;justify-content:space-between;align-items:center;">
+        <span id="wheel-monitor-axes">🎮 Tín hiệu: Đang dò vô lăng...</span>
+        <button id="btn-auto-detect-all-pedals" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;font-size:9px;padding:2px 5px;cursor:pointer;">⚡ Nhận Diện Lại</button>
       </div>
 
       <!-- Các nút căn chỉnh & sang số nhanh & chuyển đổi hiển thị -->
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;">
         <button id="btn-wheel-toggle-cam-road" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;font-size:11px;padding:5px 8px;width:100%;margin-bottom:3px;cursor:pointer;">🔄 Tùy Chọn: [🛣️ ĐƯỜNG 3D TRONG GAME] (Bấm đổi sang Cam 📷)</button>
-        <button id="btn-toggle-invert-gas" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Chân Ga</button>
-        <button id="btn-toggle-invert-brake" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Chân Phanh</button>
-        <button id="btn-wheel-shift-r" class="act-btn" style="background:#ff3b30;color:#fff;font-size:10px;padding:3px 6px;flex:0.6;">[R] Lùi</button>
-        <button id="btn-wheel-shift-d" class="act-btn" style="background:#00ff88;color:#000;font-size:10px;padding:3px 6px;flex:0.6;">[D] Tiến</button>
+        <button id="btn-wheel-shift-r" class="act-btn" style="background:#ff3b30;color:#fff;font-size:10px;padding:3px 6px;flex:1;">[R] Lùi</button>
+        <button id="btn-wheel-shift-d" class="act-btn" style="background:#00ff88;color:#000;font-size:10px;padding:3px 6px;flex:1;">[D] Tiến</button>
       </div>
     </div>
 

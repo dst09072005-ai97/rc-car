@@ -425,6 +425,7 @@ const state = {
   steeringAngleDeg: 0,
   throttlePercent: 0,
   brakePercent: 0,
+  reversePercent: 0,
   velocityMs: 0,
   speedKmh: 0,
   headingRad: 0,
@@ -3730,10 +3731,20 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             wObj.steerAngleDeg = msg.steerAngleDeg ?? (msg.steeringNorm * 540);
             wObj.gasPercent = msg.gasPercent ?? Math.max(0, msg.throttleNorm * 100);
             wObj.brakePercent = msg.brakePercent ?? 0;
+            wObj.reversePercent = msg.reversePercent ?? 0;
             wObj.gear = msg.gear || 'D';
             state.steeringAngleDeg = wObj.steerAngleDeg;
             state.throttlePercent = wObj.gasPercent;
             state.brakePercent = wObj.brakePercent;
+            state.reversePercent = wObj.reversePercent;
+            if (wObj.reversePercent > 3) {
+              state.gearIndex = 1;
+              wObj.gear = 'R';
+              state.throttlePercent = wObj.reversePercent;
+            } else if (wObj.gasPercent > 3) {
+              state.gearIndex = 3;
+              wObj.gear = 'D';
+            }
             if (wObj.gasPercent > 3 || Math.abs(msg.steeringNorm || 0) > 0.04) {
               if (state.playerMode !== 'DRIVING') {
                 state.playerMode = 'DRIVING';
@@ -19901,20 +19912,33 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   const racingWheel = {
     connected: false,
     deviceName: 'Chưa cắm Vô Lăng',
-    invertGas: false,    // Đảo chiều chân ga
-    invertBrake: false,  // Đảo chiều chân phanh
-    steerAngleDeg: 0,    // -540° đến +540°
-    rawSteer: 0,         // -1.0 đến +1.0
-    gasPercent: 0,       // 0 đến 100%
-    brakePercent: 0,     // 0 đến 100%
-    gear: 'D',           // 'P', 'R', 'N', 'D'
+    invertGas: false,       // Đảo chiều chân ga
+    invertBrake: false,     // Đảo chiều chân phanh
+    invertReverse: false,   // Đảo chiều chân lùi
+    steerAngleDeg: 0,       // -540° đến +540°
+    rawSteer: 0,            // -1.0 đến +1.0
+    gasPercent: 0,          // 0 đến 100%
+    brakePercent: 0,        // 0 đến 100%
+    reversePercent: 0,      // 0 đến 100% (Bàn đạp lùi độc lập)
+    gear: 'D',              // 'P', 'R', 'N', 'D'
     prevButtons: { paddleRight: false, paddleLeft: false, horn: false, park: false },
-    isVirtualHeld: false // Đang nắm vô lăng ảo bằng tay cầm VR
+    isVirtualHeld: false,   // Đang nắm vô lăng ảo bằng tay cầm VR
+    pedalConfig: {
+      gas: { type: 'auto', index: 1, invert: false },
+      brake: { type: 'auto', index: 2, invert: false },
+      reverse: { type: 'auto', index: 3, invert: false }
+    },
+    calibratingTarget: null,
+    calibratingTimer: null,
+    baseAxes: [],
+    baseButtons: [],
+    calibrated: false,
+    lastGpId: ''
   };
 
   window._racingWheel = racingWheel;
 
-  // 1. Tạo cụm 3D Bàn Đạp Ga & Phanh dưới sàn chân tài xế trong khoang xe Rolls-Royce
+  // 1. Tạo cụm 3D 3 Bàn Đạp (Ga, Phanh, Lùi/Côn) dưới sàn chân tài xế trong khoang xe Rolls-Royce
   const driverPedalsPivot = new THREE.Group();
   driverPedalsPivot.position.set(-0.42, 0.20, -0.42);
   if (typeof chassisGroup !== 'undefined') {
@@ -19924,37 +19948,52 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   const pedalChromeMat = new THREE.MeshStandardMaterial({ color: 0xdcdcdc, metalness: 0.9, roughness: 0.2 });
   const pedalRubberMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
 
-  // A. BÀN ĐẠP GA (GAS PEDAL - Bên phải)
+  // A. BÀN ĐẠP GA (GAS PEDAL - Bên phải, thon dài)
   const gasPedalArm = new THREE.Group();
   gasPedalArm.position.set(0.08, 0, 0);
-  gasPedalArm.rotation.x = -0.38; // Góc ban đầu
+  gasPedalArm.rotation.x = -0.38;
 
-  const gasPedalPad = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.12, 0.016), pedalChromeMat);
+  const gasPedalPad = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.12, 0.016), pedalChromeMat);
   gasPedalPad.position.set(0, 0.05, 0);
   for (let r = -0.035; r <= 0.035; r += 0.02) {
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.006, 0.02), pedalRubberMat);
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.006, 0.02), pedalRubberMat);
     strip.position.set(0, r, 0.001);
     gasPedalPad.add(strip);
   }
   gasPedalArm.add(gasPedalPad);
   driverPedalsPivot.add(gasPedalArm);
 
-  // B. BÀN ĐẠP THẮNG (BRAKE PEDAL - Bên trái, bản rộng)
+  // B. BÀN ĐẠP PHANH (BRAKE PEDAL - Ở giữa, bản rộng)
   const brakePedalArm = new THREE.Group();
-  brakePedalArm.position.set(-0.065, 0.02, 0);
+  brakePedalArm.position.set(0.0, 0.02, 0);
   brakePedalArm.rotation.x = -0.38;
 
-  const brakePedalPad = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.085, 0.018), pedalChromeMat);
+  const brakePedalPad = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.085, 0.018), pedalChromeMat);
   brakePedalPad.position.set(0, 0.04, 0);
   for (let r = -0.025; r <= 0.025; r += 0.018) {
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.007, 0.022), pedalRubberMat);
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.007, 0.022), pedalRubberMat);
     strip.position.set(0, r, 0.001);
     brakePedalPad.add(strip);
   }
   brakePedalArm.add(brakePedalPad);
   driverPedalsPivot.add(brakePedalArm);
 
-  // 2. Gắn sự kiện cho các nút điều khiển UI trong Bảng Vô Lăng & Chuyển đổi Cam/Đường 3D
+  // C. BÀN ĐẠP LÙI / CÔN (REVERSE / CLUTCH PEDAL - Bên trái)
+  const reversePedalArm = new THREE.Group();
+  reversePedalArm.position.set(-0.08, 0.01, 0);
+  reversePedalArm.rotation.x = -0.38;
+
+  const reversePedalPad = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.095, 0.016), pedalChromeMat);
+  reversePedalPad.position.set(0, 0.04, 0);
+  for (let r = -0.025; r <= 0.025; r += 0.018) {
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.006, 0.02), pedalRubberMat);
+    strip.position.set(0, r, 0.001);
+    reversePedalPad.add(strip);
+  }
+  reversePedalArm.add(reversePedalPad);
+  driverPedalsPivot.add(reversePedalArm);
+
+  // 2. Gán sự kiện cho các nút điều khiển UI trong Bảng Vô Lăng
   window.toggleWindshieldCamOrRoad = function(targetMode) {
     if (targetMode) {
       state.windshieldMode = targetMode;
@@ -20021,6 +20060,32 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
+  function startPedalCalibration(target) {
+    racingWheel.calibratingTarget = target;
+    const targetNames = { gas: 'CHÂN GA (TIẾN)', brake: 'CHÂN PHANH (DỪNG)', reverse: 'CHÂN LÙI (LÙI XE)' };
+    const btnId = 'btn-calib-pedal-' + target;
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.textContent = '⏳ Đạp hết chân...';
+      btn.style.background = '#ff9500';
+      btn.style.color = '#000';
+    }
+    state.lastActionLog = '🎯 [Căn Chỉnh]: Hãy đạp kịch ' + (targetNames[target] || target) + ' trên bộ bàn đạp GOG R808 để nhận diện...';
+
+    clearTimeout(racingWheel.calibratingTimer);
+    racingWheel.calibratingTimer = setTimeout(() => {
+      if (racingWheel.calibratingTarget === target) {
+        racingWheel.calibratingTarget = null;
+        if (btn) {
+          btn.textContent = target === 'gas' ? '🎯 Gán Ga' : (target === 'brake' ? '🎯 Gán Phanh' : '🎯 Gán Lùi');
+          btn.style.background = '#1f3354';
+          btn.style.color = target === 'gas' ? '#00ff88' : (target === 'brake' ? '#ff3b30' : '#ffd60a');
+        }
+        state.lastActionLog = '⏱️ Đã hủy chế độ chờ nhận diện bàn đạp do quá thời gian.';
+      }
+    }, 10000);
+  }
+
   function initWheelUiListeners() {
     document.getElementById('btn-toggle-cam-road')?.addEventListener('click', () => {
       window.toggleWindshieldCamOrRoad();
@@ -20029,22 +20094,55 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       window.toggleWindshieldCamOrRoad();
     });
 
-    document.getElementById('btn-toggle-invert-gas')?.addEventListener('click', (e) => {
-      racingWheel.invertGas = !racingWheel.invertGas;
-      e.target.textContent = racingWheel.invertGas ? '🔄 Chân Ga: ĐÃ ĐẢO' : '🔄 Đảo Chân Ga';
-      e.target.style.background = racingWheel.invertGas ? '#ff9500' : '#1f3354';
-      state.lastActionLog = racingWheel.invertGas
-        ? '⚙️ Đã đảo chiều trục Chân Ga (Dành cho pedal Logitech/Thrustmaster)'
-        : '⚙️ Đã đặt Chân Ga về chiều mặc định';
+    // Căn chỉnh / Gán từng chân đạp
+    document.getElementById('btn-calib-pedal-gas')?.addEventListener('click', () => {
+      startPedalCalibration('gas');
+    });
+    document.getElementById('btn-calib-pedal-brake')?.addEventListener('click', () => {
+      startPedalCalibration('brake');
+    });
+    document.getElementById('btn-calib-pedal-reverse')?.addEventListener('click', () => {
+      startPedalCalibration('reverse');
     });
 
+    // Đảo chiều từng chân đạp
+    document.getElementById('btn-toggle-invert-gas')?.addEventListener('click', (e) => {
+      racingWheel.invertGas = !racingWheel.invertGas;
+      e.target.style.background = racingWheel.invertGas ? '#ff9500' : '#1f3354';
+      state.lastActionLog = racingWheel.invertGas ? '🔄 Đã đảo chiều Chân Ga' : '🔄 Chân Ga chiều chuẩn';
+      savePedalConfig();
+    });
     document.getElementById('btn-toggle-invert-brake')?.addEventListener('click', (e) => {
       racingWheel.invertBrake = !racingWheel.invertBrake;
-      e.target.textContent = racingWheel.invertBrake ? '🔄 Chân Phanh: ĐÃ ĐẢO' : '🔄 Đảo Chân Phanh';
       e.target.style.background = racingWheel.invertBrake ? '#ff9500' : '#1f3354';
-      state.lastActionLog = racingWheel.invertBrake
-        ? '⚙️ Đã đảo chiều trục Chân Phanh (Dành cho pedal Logitech/Thrustmaster)'
-        : '⚙️ Đã đặt Chân Phanh về chiều mặc định';
+      state.lastActionLog = racingWheel.invertBrake ? '🔄 Đã đảo chiều Chân Phanh' : '🔄 Chân Phanh chiều chuẩn';
+      savePedalConfig();
+    });
+    document.getElementById('btn-toggle-invert-reverse')?.addEventListener('click', (e) => {
+      racingWheel.invertReverse = !racingWheel.invertReverse;
+      e.target.style.background = racingWheel.invertReverse ? '#ff9500' : '#1f3354';
+      state.lastActionLog = racingWheel.invertReverse ? '🔄 Đã đảo chiều Chân Lùi' : '🔄 Chân Lùi chiều chuẩn';
+      savePedalConfig();
+    });
+
+    // Nút nhận diện lại mặc định
+    document.getElementById('btn-auto-detect-all-pedals')?.addEventListener('click', () => {
+      racingWheel.calibrated = false;
+      racingWheel.pedalConfig = {
+        gas: { type: 'auto', index: 1, invert: false },
+        brake: { type: 'auto', index: 2, invert: false },
+        reverse: { type: 'auto', index: 3, invert: false }
+      };
+      try { localStorage.removeItem('gog_r808_pedal_config'); } catch (e) {}
+      ['gas', 'brake', 'reverse'].forEach(t => {
+        const btn = document.getElementById('btn-calib-pedal-' + t);
+        if (btn) {
+          btn.textContent = t === 'gas' ? '🎯 Gán Ga' : (t === 'brake' ? '🎯 Gán Phanh' : '🎯 Gán Lùi');
+          btn.style.background = '#1f3354';
+          btn.style.color = t === 'gas' ? '#00ff88' : (t === 'brake' ? '#ff3b30' : '#ffd60a');
+        }
+      });
+      state.lastActionLog = '⚡ Đã đặt lại cấu hình 3 bàn đạp mặc định: Vui lòng thả lỏng chân để nhận diện!';
     });
 
     document.getElementById('btn-wheel-shift-r')?.addEventListener('click', () => {
@@ -20063,16 +20161,29 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     updateCamRoadUiButtons();
   }
 
+  function savePedalConfig() {
+    try {
+      localStorage.setItem('gog_r808_pedal_config', JSON.stringify({
+        gas: racingWheel.pedalConfig.gas,
+        brake: racingWheel.pedalConfig.brake,
+        reverse: racingWheel.pedalConfig.reverse,
+        invertGas: racingWheel.invertGas,
+        invertBrake: racingWheel.invertBrake,
+        invertReverse: racingWheel.invertReverse
+      }));
+    } catch (e) {}
+  }
+
   function updateWheelGearDisplay() {
     const gearBadge = document.getElementById('wheel-gear-badge');
     if (gearBadge) {
-      gearBadge.textContent = `SỐ: ${racingWheel.gear}`;
+      gearBadge.textContent = 'SỐ: ' + racingWheel.gear;
       gearBadge.style.background = racingWheel.gear === 'R' ? '#ff3b30' : (racingWheel.gear === 'P' ? '#ffcc00' : '#00ff88');
       gearBadge.style.color = racingWheel.gear === 'D' ? '#000' : '#fff';
     }
   }
 
-  // 3. Đọc dữ liệu từ Gamepad API của trình duyệt
+  // 3. Đọc dữ liệu từ Gamepad API của trình duyệt & Hỗ trợ chuẩn xác 3 Bàn Đạp
   let lastUiUpdate = 0;
   function pollGamepadRacingWheel(dt) {
     if (!navigator.getGamepads) return;
@@ -20094,7 +20205,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
 
-    // B. Chỉ nhận Gamepad thường làm vô lăng khi người dùng CHỦ ĐỘNG chọn 'wheel' trong menu (Không nhận bừa khi 'both')
+    // B. Chỉ nhận Gamepad thường làm vô lăng khi người dùng CHỦ ĐỘNG chọn 'wheel' trong menu
     if (!activeGp && state.inputMode === 'wheel') {
       for (let i = 0; i < gamepads.length; i++) {
         const gp = gamepads[i];
@@ -20118,7 +20229,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       racingWheel.connected = true;
       racingWheel.deviceName = activeGp.id.replace(/\(.*?\)/g, '').trim() || 'USB Racing Wheel';
       updateConnectedBadge(true, racingWheel.deviceName);
-      state.lastActionLog = `🏎️ Đã nhận diện Thiết bị Lái: ${racingWheel.deviceName}!`;
+      state.lastActionLog = '🏎️ Đã nhận diện Thiết bị Lái: ' + racingWheel.deviceName + '!';
 
       // Tự động chuyển ngay người chơi vào Ghế Lái xe Rolls-Royce (1st-Person POV)
       if (state.playerMode !== 'DRIVING') {
@@ -20143,7 +20254,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     let steerAxis = activeGp.axes[0] !== undefined ? activeGp.axes[0] : 0;
     if (Math.abs(steerAxis) < 0.02) steerAxis = 0; // Vùng chết tâm
     racingWheel.rawSteer = steerAxis;
-    // Góc đánh lái thực tế: tối đa 540° (vô lăng 1.5 vòng mỗi bên)
     racingWheel.steerAngleDeg = THREE.MathUtils.clamp(steerAxis * 540, -540, 540);
 
     // Đồng bộ trực tiếp 1:1 góc vô lăng và bánh trước lên xe Rolls-Royce
@@ -20152,70 +20262,206 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       steeringWheelPivot.rotation.z = THREE.MathUtils.degToRad(-state.steeringAngleDeg);
     }
 
-    // 2. ĐỌC BÀN ĐẠP GA & BÀN ĐẠP THẮNG (PEDALS VỚI CƠ CHẾ AUTO-CALIBRATION CHỐNG TỰ CHẠY)
-    let gasVal = 0;
-    let brakeVal = 0;
+    // 2. LƯU LẠI GIÁ TRỊ BAN ĐẦU (TRẠNG THÁI NGHỈ CỦA CÁC TRỤC & NÚT)
+    if (!racingWheel.calibrated || racingWheel.lastGpId !== activeGp.id) {
+      racingWheel.calibrated = true;
+      racingWheel.lastGpId = activeGp.id;
+      racingWheel.baseAxes = activeGp.axes.map(v => (v !== undefined ? v : 0));
+      racingWheel.baseButtons = activeGp.buttons.map(b => (b ? (b.value !== undefined ? b.value : (b.pressed ? 1 : 0)) : 0));
+      try {
+        const saved = localStorage.getItem('gog_r808_pedal_config');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.gas) racingWheel.pedalConfig.gas = parsed.gas;
+            if (parsed.brake) racingWheel.pedalConfig.brake = parsed.brake;
+            if (parsed.reverse) racingWheel.pedalConfig.reverse = parsed.reverse;
+            if (typeof parsed.invertGas === 'boolean') racingWheel.invertGas = parsed.invertGas;
+            if (typeof parsed.invertBrake === 'boolean') racingWheel.invertBrake = parsed.invertBrake;
+            if (typeof parsed.invertReverse === 'boolean') racingWheel.invertReverse = parsed.invertReverse;
+          }
+        }
+      } catch (e) {}
+    }
 
-    if (isDedicatedWheel) {
-      // Lưu lại giá trị ban đầu (trạng thái nghỉ) của tất cả các trục khi mới cắm vô lăng
-      if (!racingWheel.calibrated || racingWheel.lastGpId !== activeGp.id) {
-        racingWheel.calibrated = true;
-        racingWheel.lastGpId = activeGp.id;
-        racingWheel.baseAxes = activeGp.axes.map(v => (v !== undefined ? v : 0));
+    // 3. XỬ LÝ CHẾ ĐỘ GÁN / AUTO-LEARN NẾU ĐANG CHỜ NGƯỜI DÙNG ĐẠP CHÂN
+    if (racingWheel.calibratingTarget) {
+      const target = racingWheel.calibratingTarget;
+      let detected = null;
+
+      for (let a = 1; a < activeGp.axes.length; a++) {
+        const cur = activeGp.axes[a] ?? 0;
+        const base = racingWheel.baseAxes[a] ?? 0;
+        if (Math.abs(cur - base) > 0.22) {
+          detected = { type: 'axis', index: a, rest: base };
+          break;
+        }
       }
 
-      // Quét các trục pedal (axes[1], [2], [3], [5]...): Chỉ tính khi trục lệch khỏi vị trí nghỉ > 0.08
-      for (let a = 1; a < activeGp.axes.length; a++) {
-        const base = racingWheel.baseAxes[a] ?? 0;
-        const cur = activeGp.axes[a] ?? 0;
-        const diff = cur - base;
-        if (Math.abs(diff) > 0.08) {
-          let pct = 0;
-          if (base > 0.45) {
-            // Chuẩn Logitech (nghỉ = +1.0, đạp kịch = -1.0)
-            pct = THREE.MathUtils.clamp((1.0 - cur) / 2.0, 0, 1);
-          } else if (base < -0.45) {
-            // Chuẩn Thrustmaster (nghỉ = -1.0, đạp kịch = +1.0)
-            pct = THREE.MathUtils.clamp((cur + 1.0) / 2.0, 0, 1);
-          } else {
-            // Nghỉ = 0.0
-            pct = THREE.MathUtils.clamp(Math.abs(diff), 0, 1);
-          }
-
-          if (a === 1 || (a === 2 && activeGp.axes.length <= 3 && gasVal === 0)) {
-            gasVal = Math.max(gasVal, pct);
-          } else if (a === 2 || a === 3 || a === 5) {
-            brakeVal = Math.max(brakeVal, pct);
+      if (!detected && activeGp.buttons) {
+        for (let b = 0; b < activeGp.buttons.length; b++) {
+          const btn = activeGp.buttons[b];
+          const curVal = btn ? (btn.value !== undefined ? btn.value : (btn.pressed ? 1 : 0)) : 0;
+          const baseVal = racingWheel.baseButtons[b] ?? 0;
+          if (Math.abs(curVal - baseVal) > 0.35) {
+            detected = { type: 'button', index: b, rest: baseVal };
+            break;
           }
         }
       }
-    } else {
-      // GAMEPAD TIÊU CHUẨN (Cò R2/RT = Ga, Cò L2/LT = Phanh):
-      if (activeGp.buttons[7]) {
-        gasVal = activeGp.buttons[7].value !== undefined ? activeGp.buttons[7].value : (activeGp.buttons[7].pressed ? 1 : 0);
-      }
-      if (activeGp.buttons[6]) {
-        brakeVal = activeGp.buttons[6].value !== undefined ? activeGp.buttons[6].value : (activeGp.buttons[6].pressed ? 1 : 0);
+
+      if (detected) {
+        clearTimeout(racingWheel.calibratingTimer);
+        racingWheel.calibratingTarget = null;
+        racingWheel.pedalConfig[target] = detected;
+        savePedalConfig();
+
+        const btnId = 'btn-calib-pedal-' + target;
+        const btn = document.getElementById(btnId);
+        if (btn) {
+          const label = detected.type === 'axis' ? 'Trục ' + detected.index : 'Nút ' + detected.index;
+          btn.textContent = '✅ ' + label;
+          btn.style.background = '#00ff88';
+          btn.style.color = '#000';
+          setTimeout(() => {
+            btn.textContent = target === 'gas' ? '🎯 Ga (' + label + ')' : (target === 'brake' ? '🎯 Phanh (' + label + ')' : '🎯 Lùi (' + label + ')');
+            btn.style.background = '#1f3354';
+            btn.style.color = target === 'gas' ? '#00ff88' : (target === 'brake' ? '#ff3b30' : '#ffd60a');
+          }, 2500);
+        }
+        state.lastActionLog = '✅ [Thành Công]: Đã gán ' + target.toUpperCase() + ' vào ' + (detected.type === 'axis' ? 'Trục ' + detected.index : 'Nút ' + detected.index) + '!';
       }
     }
 
-    // Lọc vùng chết 3%
+    // 4. HÀM CHUYỂN ĐỔI GIÁ TRỊ TRỤC/NÚT PEDAL VỀ 0.0 -> 1.0 (CHUẨN HÓA MỌI DÒNG VÔ LĂNG & GOG R808)
+    function readPedalNormalized(cfg, defaultAxis, defaultBtn, isInverted) {
+      if (!cfg || cfg.type === 'auto') {
+        let maxVal = 0;
+        if (defaultAxis !== null && defaultAxis !== undefined && activeGp.axes[defaultAxis] !== undefined) {
+          const cur = activeGp.axes[defaultAxis] ?? 0;
+          const base = racingWheel.baseAxes[defaultAxis] ?? 0;
+          let val = 0;
+          if (base > 0.4) {
+            val = (1.0 - cur) / 2.0;
+          } else if (base < -0.4) {
+            val = (cur + 1.0) / 2.0;
+          } else {
+            val = Math.abs(cur - base);
+          }
+          maxVal = Math.max(maxVal, THREE.MathUtils.clamp(val, 0, 1));
+        }
+        if (defaultBtn !== null && defaultBtn !== undefined && activeGp.buttons && activeGp.buttons[defaultBtn]) {
+          const btn = activeGp.buttons[defaultBtn];
+          const btnVal = btn ? (btn.value !== undefined && btn.value !== 0 ? btn.value : (btn.pressed ? 1 : 0)) : 0;
+          maxVal = Math.max(maxVal, THREE.MathUtils.clamp(btnVal, 0, 1));
+        }
+        if (isInverted) maxVal = 1.0 - maxVal;
+        return maxVal < 0.035 ? 0 : maxVal;
+      }
+
+      if (cfg.type === 'axis') {
+        const cur = activeGp.axes[cfg.index] ?? 0;
+        const base = cfg.rest ?? (racingWheel.baseAxes[cfg.index] ?? 0);
+        let val = 0;
+        if (base > 0.4) {
+          val = (1.0 - cur) / 2.0;
+        } else if (base < -0.4) {
+          val = (cur + 1.0) / 2.0;
+        } else {
+          val = Math.abs(cur - base);
+        }
+        val = THREE.MathUtils.clamp(val, 0, 1);
+        if (cfg.invert || isInverted) val = 1.0 - val;
+        return val < 0.035 ? 0 : val;
+      }
+
+      if (cfg.type === 'button' && activeGp.buttons) {
+        const btn = activeGp.buttons[cfg.index];
+        let val = btn ? (btn.value !== undefined && btn.value !== 0 ? btn.value : (btn.pressed ? 1 : 0)) : 0;
+        val = THREE.MathUtils.clamp(val, 0, 1);
+        if (cfg.invert || isInverted) val = 1.0 - val;
+        return val < 0.035 ? 0 : val;
+      }
+
+      return 0;
+    }
+
+    // A. CHÂN GA (GAS PEDAL)
+    let gasVal = readPedalNormalized(racingWheel.pedalConfig.gas, 1, 7, racingWheel.invertGas);
+
+    // B. CHÂN PHANH (BRAKE PEDAL)
+    let brakeVal = readPedalNormalized(racingWheel.pedalConfig.brake, 2, 6, racingWheel.invertBrake);
+    if (brakeVal === 0 && racingWheel.pedalConfig.brake.type === 'auto' && activeGp.axes[5] !== undefined) {
+      brakeVal = readPedalNormalized({ type: 'axis', index: 5, rest: racingWheel.baseAxes[5] }, null, null, racingWheel.invertBrake);
+    }
+
+    // C. CHÂN LÙI (REVERSE PEDAL - BÀN ĐẠP THỨ 3 / CÔN RIÊNG BIỆT)
+    let reverseVal = readPedalNormalized(racingWheel.pedalConfig.reverse, 3, 1, racingWheel.invertReverse);
+    if (reverseVal === 0 && racingWheel.pedalConfig.reverse.type === 'auto') {
+      if (activeGp.axes[6] !== undefined) {
+        reverseVal = Math.max(reverseVal, readPedalNormalized({ type: 'axis', index: 6, rest: racingWheel.baseAxes[6] }, null, null, racingWheel.invertReverse));
+      }
+      if (reverseVal === 0 && activeGp.axes[4] !== undefined) {
+        reverseVal = Math.max(reverseVal, readPedalNormalized({ type: 'axis', index: 4, rest: racingWheel.baseAxes[4] }, null, null, racingWheel.invertReverse));
+      }
+      if (reverseVal === 0 && activeGp.buttons && activeGp.buttons[2] && activeGp.buttons[2].pressed) {
+        reverseVal = 1.0;
+      }
+    }
+
+    // QUÉT TỰ ĐỘNG CÁC TRỤC KHÁC NẾU CHƯA GÁN: Tự nhận diện bàn đạp còn thiếu
+    if (isDedicatedWheel) {
+      for (let a = 1; a < activeGp.axes.length; a++) {
+        const cur = activeGp.axes[a] ?? 0;
+        const base = racingWheel.baseAxes[a] ?? 0;
+        const diff = Math.abs(cur - base);
+        if (diff > 0.12) {
+          let pct = (base > 0.4) ? (1.0 - cur) / 2.0 : ((base < -0.4) ? (cur + 1.0) / 2.0 : diff);
+          pct = THREE.MathUtils.clamp(pct, 0, 1);
+          if (pct > 0.05) {
+            if (a === 1 && gasVal === 0) gasVal = pct;
+            else if ((a === 2 || a === 5) && brakeVal === 0) brakeVal = pct;
+            else if ((a === 3 || a === 4 || a === 6) && reverseVal === 0) reverseVal = pct;
+          }
+        }
+      }
+    }
+
+    // CẬP NHẬT TRÌNH GIÁM SÁT TÍN HIỆU LIVE TRỰC QUAN TRÊN HUD
+    const monitorEl = document.getElementById('wheel-monitor-axes');
+    if (monitorEl && Math.random() < 0.12) {
+      const axSummary = activeGp.axes.slice(0, 6).map((v, i) => 'A' + i + ':' + (v !== undefined ? v.toFixed(2) : '0')).join(' ');
+      const pressedBtns = [];
+      if (activeGp.buttons) {
+        for (let b = 0; b < Math.min(activeGp.buttons.length, 16); b++) {
+          if (activeGp.buttons[b] && (activeGp.buttons[b].pressed || (activeGp.buttons[b].value || 0) > 0.1)) {
+            pressedBtns.push('B' + b);
+          }
+        }
+      }
+      monitorEl.textContent = '🎮 ' + axSummary + ' | Nút: ' + (pressedBtns.length > 0 ? pressedBtns.join(',') : 'none');
+    }
+
+    // Lọc vùng chết 3.5%
     gasVal = THREE.MathUtils.clamp(gasVal, 0, 1);
     brakeVal = THREE.MathUtils.clamp(brakeVal, 0, 1);
+    reverseVal = THREE.MathUtils.clamp(reverseVal, 0, 1);
     if (gasVal < 0.035) gasVal = 0;
     if (brakeVal < 0.035) brakeVal = 0;
+    if (reverseVal < 0.035) reverseVal = 0;
 
     racingWheel.gasPercent = gasVal * 100;
     racingWheel.brakePercent = brakeVal * 100;
+    racingWheel.reversePercent = reverseVal * 100;
 
     // ĐỒNG BỘ TRỰC TIẾP VÀO TRẠNG THÁI XE CHÍNH CỦA APP (STATE)
     state.steeringAngleDeg = racingWheel.steerAngleDeg;
-    state.throttlePercent = racingWheel.gasPercent;
+    state.throttlePercent = (reverseVal > 0.035) ? racingWheel.reversePercent : racingWheel.gasPercent;
     state.brakePercent = racingWheel.brakePercent;
+    state.reversePercent = racingWheel.reversePercent;
 
-    // Nếu người chơi có thao tác đạp ga / bẻ lái từ Vô lăng GOG R808:
-    // Tự động kích hoạt ngay chế độ Lái xe & Nổ máy Rolls-Royce
-    if (racingWheel.gasPercent > 3 || Math.abs(racingWheel.rawSteer) > 0.04) {
+    // Nếu người chơi đạp ga, lùi hoặc bẻ lái: Tự động kích hoạt ngay chế độ Lái xe & Nổ máy Rolls-Royce
+    if (racingWheel.gasPercent > 3 || racingWheel.reversePercent > 3 || Math.abs(racingWheel.rawSteer) > 0.04) {
       if (state.playerMode !== 'DRIVING') {
         state.playerMode = 'DRIVING';
         state.seatIndex = 0;
@@ -20233,57 +20479,58 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
 
-    // 3. LẪY CHUYỂN SỐ VÔ LĂNG & CÁC NÚT BẤM
-    // Lẫy phải (Paddle Right - Lên số / Tiến D): buttons[4] hoặc buttons[5]
-    const pRight = !!activeGp.buttons[4]?.pressed;
-    const pLeft = !!activeGp.buttons[5]?.pressed;
-    const btnHorn = !!(activeGp.buttons[0]?.pressed || activeGp.buttons[11]?.pressed || activeGp.buttons[23]?.pressed);
-    const btnPark = !!(activeGp.buttons[1]?.pressed || activeGp.buttons[2]?.pressed);
-    const btnCamToggle = !!(activeGp.buttons[3]?.pressed || activeGp.buttons[8]?.pressed || activeGp.buttons[9]?.pressed);
+    // 5. LẪY CHUYỂN SỐ VÔ LĂNG & CÁC NÚT BẤM
+    if (activeGp.buttons) {
+      const pRight = !!activeGp.buttons[4]?.pressed;
+      const pLeft = !!activeGp.buttons[5]?.pressed;
+      const btnHorn = !!(activeGp.buttons[0]?.pressed || activeGp.buttons[11]?.pressed || activeGp.buttons[23]?.pressed);
+      const btnPark = !!(activeGp.buttons[1]?.pressed || activeGp.buttons[2]?.pressed);
+      const btnCamToggle = !!(activeGp.buttons[3]?.pressed || activeGp.buttons[8]?.pressed || activeGp.buttons[9]?.pressed);
 
-    if (pRight && !racingWheel.prevButtons.paddleRight) {
-      racingWheel.gear = 'D';
-      state.gearIndex = 3;
-      updateWheelGearDisplay();
-      state.lastActionLog = '⚙️ [Lẫy vô lăng]: Đã vào số D (Tiến)!';
-    }
-    if (pLeft && !racingWheel.prevButtons.paddleLeft) {
-      racingWheel.gear = 'R';
-      state.gearIndex = 1;
-      updateWheelGearDisplay();
-      state.lastActionLog = '⚙️ [Lẫy vô lăng]: Đã vào số R (Lùi)!';
-    }
-    if (btnHorn && !racingWheel.prevButtons.horn) {
-      initAudio();
-      playSmartVehicleHornSound('CAR');
-      state.hornActive = true;
-    } else if (!btnHorn && racingWheel.prevButtons.horn) {
-      state.hornActive = false;
-    }
-    if (btnPark && !racingWheel.prevButtons.park) {
-      racingWheel.gear = 'P';
-      state.gearIndex = 0;
-      updateWheelGearDisplay();
-      state.velocityMs = 0;
-      state.speedKmh = 0;
-      state.lastActionLog = '🅿️ [Nút vô lăng]: Đã gạt sang Số P (Đỗ dừng hẳn)!';
-    }
-    if (btnCamToggle && !racingWheel.prevButtons.camToggle) {
-      window.toggleWindshieldCamOrRoad();
-    }
+      if (pRight && !racingWheel.prevButtons.paddleRight) {
+        racingWheel.gear = 'D';
+        state.gearIndex = 3;
+        updateWheelGearDisplay();
+        state.lastActionLog = '⚙️ [Lẫy vô lăng]: Đã vào số D (Tiến)!';
+      }
+      if (pLeft && !racingWheel.prevButtons.paddleLeft) {
+        racingWheel.gear = 'R';
+        state.gearIndex = 1;
+        updateWheelGearDisplay();
+        state.lastActionLog = '⚙️ [Lẫy vô lăng]: Đã vào số R (Lùi)!';
+      }
+      if (btnHorn && !racingWheel.prevButtons.horn) {
+        initAudio();
+        playSmartVehicleHornSound('CAR');
+        state.hornActive = true;
+      } else if (!btnHorn && racingWheel.prevButtons.horn) {
+        state.hornActive = false;
+      }
+      if (btnPark && !racingWheel.prevButtons.park) {
+        racingWheel.gear = 'P';
+        state.gearIndex = 0;
+        updateWheelGearDisplay();
+        state.velocityMs = 0;
+        state.speedKmh = 0;
+        state.lastActionLog = '🅿️ [Nút vô lăng]: Đã gạt sang Số P (Đỗ dừng hẳn)!';
+      }
+      if (btnCamToggle && !racingWheel.prevButtons.camToggle) {
+        window.toggleWindshieldCamOrRoad();
+      }
 
-    racingWheel.prevButtons.paddleRight = pRight;
-    racingWheel.prevButtons.paddleLeft = pLeft;
-    racingWheel.prevButtons.horn = btnHorn;
-    racingWheel.prevButtons.park = btnPark;
-    racingWheel.prevButtons.camToggle = btnCamToggle;
+      racingWheel.prevButtons.paddleRight = pRight;
+      racingWheel.prevButtons.paddleLeft = pLeft;
+      racingWheel.prevButtons.horn = btnHorn;
+      racingWheel.prevButtons.park = btnPark;
+      racingWheel.prevButtons.camToggle = btnCamToggle;
+    }
   }
 
   function updateConnectedBadge(connected, name) {
     const badge = document.getElementById('wheel-connected-badge');
     if (!badge) return;
     if (connected) {
-      badge.textContent = `🟢 ${name || 'Vô Lăng Đã Kết Nối'}`;
+      badge.textContent = '🟢 ' + (name || 'Vô Lăng Đã Kết Nối');
       badge.style.background = '#00ff88';
       badge.style.color = '#000';
     } else {
@@ -20293,7 +20540,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  // 4. CẬP NHẬT GIAO DIỆN METER TRỰC QUAN (VÔ LĂNG & BÀN ĐẠP)
+  // 4. CẬP NHẬT GIAO DIỆN METER TRỰC QUAN (VÔ LĂNG & 3 BÀN ĐẠP)
   function updateUiMeters() {
     const angleTxt = document.getElementById('wheel-angle-txt');
     const steerBar = document.getElementById('wheel-steer-bar');
@@ -20301,25 +20548,30 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const gasBar = document.getElementById('pedal-gas-bar');
     const brakeTxt = document.getElementById('pedal-brake-txt');
     const brakeBar = document.getElementById('pedal-brake-bar');
+    const revTxt = document.getElementById('pedal-reverse-txt');
+    const revBar = document.getElementById('pedal-reverse-bar');
 
     const angle = Math.round(state.steeringAngleDeg || 0);
-    if (angleTxt) angleTxt.textContent = `${angle > 0 ? '+' : ''}${angle}°`;
+    if (angleTxt) angleTxt.textContent = (angle > 0 ? '+' : '') + angle + '°';
     if (steerBar) {
-      const pct = (angle / 540) * 50; // -50% đến +50% từ tâm
+      const pct = (angle / 540) * 50;
       if (pct >= 0) {
         steerBar.style.left = '50%';
-        steerBar.style.width = `${Math.min(50, pct)}%`;
+        steerBar.style.width = Math.min(50, pct) + '%';
       } else {
-        steerBar.style.left = `${50 + pct}%`;
-        steerBar.style.width = `${Math.min(50, -pct)}%`;
+        steerBar.style.left = (50 + pct) + '%';
+        steerBar.style.width = Math.min(50, -pct) + '%';
       }
     }
 
-    if (gasTxt) gasTxt.textContent = `${Math.round(state.throttlePercent || 0)}%`;
-    if (gasBar) gasBar.style.width = `${Math.min(100, Math.round(state.throttlePercent || 0))}%`;
+    if (gasTxt) gasTxt.textContent = Math.round(racingWheel.gasPercent || 0) + '%';
+    if (gasBar) gasBar.style.width = Math.min(100, Math.round(racingWheel.gasPercent || 0)) + '%';
 
-    if (brakeTxt) brakeTxt.textContent = `${Math.round(state.brakePercent || 0)}%`;
-    if (brakeBar) brakeBar.style.width = `${Math.min(100, Math.round(state.brakePercent || 0))}%`;
+    if (brakeTxt) brakeTxt.textContent = Math.round(racingWheel.brakePercent || 0) + '%';
+    if (brakeBar) brakeBar.style.width = Math.min(100, Math.round(racingWheel.brakePercent || 0)) + '%';
+
+    if (revTxt) revTxt.textContent = Math.round(racingWheel.reversePercent || 0) + '%';
+    if (revBar) revBar.style.width = Math.min(100, Math.round(racingWheel.reversePercent || 0)) + '%';
   }
 
   // 5. NẮM VÔ LĂNG ẢO TRONG KÍNH VR META QUEST 3
@@ -20363,7 +20615,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  // 6. ÁP DỤNG VẬT LÝ LÁI XE TỪ VÔ LĂNG & BÀN ĐẠP
+  // 6. ÁP DỤNG VẬT LÝ LÁI XE TỪ VÔ LĂNG & 3 BÀN ĐẠP ĐỘC LẬP
   function applyRacingWheelDrivingPhysics(dt) {
     if (!racingWheel.connected || state.playerMode !== 'DRIVING' || state.hijackActive) return;
 
@@ -20382,43 +20634,60 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
 
-    // B. BÀN ĐẠP THẮNG (PHANH)
+    const speedFactor = state.esp32UdpConnected ? (state.esp32GdRefSpeed || 1.0) : (state.rcSpeedRatio || 5.0);
+    const maxVelocity = 12.0 * speedFactor;
+
+    // B. BÀN ĐẠP THẮNG (PHANH DỪNG XE HÃM TỨC THÌ)
     if (racingWheel.brakePercent > 3) {
       state.throttlePercent = 0;
+      state.reversePercent = 0;
       state.brakePercent = racingWheel.brakePercent;
-      const brakeDecel = (racingWheel.brakePercent / 100) * 32.0;
+      const brakeDecel = (racingWheel.brakePercent / 100) * 35.0;
       state.velocityMs = THREE.MathUtils.lerp(state.velocityMs, 0, dt * brakeDecel);
-      if (Math.abs(state.velocityMs) < 0.12 && racingWheel.brakePercent > 20) {
+      if (Math.abs(state.velocityMs) < 0.12 && racingWheel.brakePercent > 18) {
         state.velocityMs = 0;
       }
       state.speedKmh = state.velocityMs * 3.6;
     }
-    // C. BÀN ĐẠP GA (TIẾN / LÙI THEO HỘP SỐ)
+    // C. BÀN ĐẠP LÙI (REVERSE PEDAL - TỰ ĐỘNG LÙI XE RIÊNG BIỆT)
+    else if (racingWheel.reversePercent > 3) {
+      if (!state.engineRunning) {
+        state.engineRunning = true;
+      }
+      racingWheel.gear = 'R';
+      state.gearIndex = 1;
+      updateWheelGearDisplay();
+
+      state.reversePercent = racingWheel.reversePercent;
+      state.throttlePercent = racingWheel.reversePercent;
+      state.brakePercent = 0;
+
+      const accelRate = (racingWheel.reversePercent / 100) * 14.0 * speedFactor;
+      state.velocityMs = THREE.MathUtils.clamp(state.velocityMs - accelRate * 0.75 * dt, -maxVelocity * 0.5, 0);
+      state.speedKmh = state.velocityMs * 3.6;
+      state.rpm = 850 + (racingWheel.reversePercent / 100) * 4200;
+    }
+    // D. BÀN ĐẠP GA (GAS PEDAL - TỰ ĐỘNG TIẾN XE RIÊNG BIỆT)
     else if (racingWheel.gasPercent > 3) {
       if (!state.engineRunning) {
         state.engineRunning = true;
       }
+      racingWheel.gear = 'D';
+      state.gearIndex = 3;
+      updateWheelGearDisplay();
+
       state.throttlePercent = racingWheel.gasPercent;
+      state.reversePercent = 0;
       state.brakePercent = 0;
 
-      const speedFactor = state.esp32UdpConnected ? (state.esp32GdRefSpeed || 1.0) : (state.rcSpeedRatio || 5.0);
-      const maxVelocity = 12.0 * speedFactor;
       const accelRate = (racingWheel.gasPercent / 100) * 18.0 * speedFactor;
-
-      if (racingWheel.gear === 'D') {
-        state.gearIndex = 3;
-        state.velocityMs = THREE.MathUtils.clamp(state.velocityMs + accelRate * dt, 0, maxVelocity);
-      } else if (racingWheel.gear === 'R') {
-        state.gearIndex = 1;
-        state.velocityMs = THREE.MathUtils.clamp(state.velocityMs - accelRate * 0.75 * dt, -maxVelocity * 0.5, 0);
-      } else {
-        state.velocityMs = THREE.MathUtils.lerp(state.velocityMs, 0, dt * 10.0);
-      }
+      state.velocityMs = THREE.MathUtils.clamp(state.velocityMs + accelRate * dt, 0, maxVelocity);
       state.speedKmh = state.velocityMs * 3.6;
       state.rpm = 850 + (racingWheel.gasPercent / 100) * 4800;
     } else {
-      // Thả cả 2 chân pedal: xe tự giảm tốc êm về 0
+      // Thả cả 3 chân: xe tự trôi êm về 0
       state.throttlePercent = 0;
+      state.reversePercent = 0;
       state.brakePercent = 0;
       state.velocityMs = THREE.MathUtils.lerp(state.velocityMs, 0, dt * 4.0);
       if (Math.abs(state.velocityMs) < 0.1) state.velocityMs = 0;
@@ -20426,7 +20695,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.rpm = THREE.MathUtils.lerp(state.rpm, 800, dt * 6.0);
     }
 
-    // D. XOAY HƯỚNG XE THEO GÓC ĐÁNH LÁI VÔ LĂNG THẬT (NHẠY BÉN, ĐÁNH LÁI TỐT KHI XE DI CHUYỂN)
+    // D. XOAY HƯỚNG XE THEO GÓC ĐÁNH LÁI VÔ LĂNG THẬT
     if (Math.abs(state.velocityMs) > 0.05) {
       const effectiveSpeed = Math.max(Math.abs(state.velocityMs), 3.2) * Math.sign(state.velocityMs);
       const turnRate = (effectiveSpeed / (state.wheelbaseM || 3.2)) * Math.tan(steerRad) * 1.6;
@@ -20438,7 +20707,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
     }
 
-    // E. HOẠT CẢNH 3D BÀN ĐẠP GA & PHANH DƯỚI SÀN XE (DẬP XUỐNG KHI ĐẠP)
+    // E. HOẠT CẢNH 3D 3 BÀN ĐẠP DƯỚI SÀN XE (DẬP XUỐNG KHI ĐẠP)
     if (typeof gasPedalArm !== 'undefined' && gasPedalArm) {
       const targetGasRot = -0.38 - (state.throttlePercent / 100) * 0.32;
       gasPedalArm.rotation.x = THREE.MathUtils.lerp(gasPedalArm.rotation.x, targetGasRot, dt * 20);
@@ -20446,6 +20715,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (typeof brakePedalArm !== 'undefined' && brakePedalArm) {
       const targetBrakeRot = -0.38 - (state.brakePercent / 100) * 0.26;
       brakePedalArm.rotation.x = THREE.MathUtils.lerp(brakePedalArm.rotation.x, targetBrakeRot, dt * 20);
+    }
+    if (typeof reversePedalArm !== 'undefined' && reversePedalArm) {
+      const targetReverseRot = -0.38 - (state.reversePercent / 100) * 0.32;
+      reversePedalArm.rotation.x = THREE.MathUtils.lerp(reversePedalArm.rotation.x, targetReverseRot, dt * 20);
     }
   }
 
@@ -20807,10 +21080,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           // B. Tính xung ga ESC đã cân chỉnh: Lùi tối đa 1300us, Dừng 1500us, Tiến tối đa 1700us
           if (!state.engineRunning || state.brakePercent > 8) {
             throttle = 1500;
-          } else if (state.gearIndex === 1) { // Số R: Lùi (1500us -> 1300us)
-            const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
+          } else if (state.reversePercent > 3 || state.gearIndex === 1) { // Bàn đạp lùi hoặc Số R (1500us -> 1300us)
+            const revPct = state.reversePercent > 3 ? state.reversePercent : (state.throttlePercent || 0);
+            const pct = THREE.MathUtils.clamp(revPct, 0, 100);
             throttle = Math.round(1500 - (pct / 100.0) * 200); // 1500 - 200 = 1300us max
-          } else if (state.gearIndex === 3) { // Số D: Tiến (1500us -> 1700us)
+          } else if (state.gearIndex === 3) { // Bàn đạp ga hoặc Số D (1500us -> 1700us)
             const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
             throttle = Math.round(1500 + (pct / 100.0) * 200); // 1500 + 200 = 1700us max
           } else {
@@ -20834,6 +21108,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
             steerAngleDeg: wheel.steerAngleDeg || 0,
             gasPercent: wheel.gasPercent || 0,
             brakePercent: wheel.brakePercent || 0,
+            reversePercent: wheel.reversePercent || 0,
             gear: wheel.gear || 'D',
             steer,
             throttle
