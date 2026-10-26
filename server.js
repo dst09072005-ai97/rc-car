@@ -167,27 +167,6 @@ function clampFinite(val, min, max, fallback = 0) {
   return Math.min(Math.max(num, min), max);
 }
 
-
-function checkDnsSsrf(hostname) {
-  if (!hostname) return Promise.resolve(false);
-  if (IPV4_REGEX.test(hostname)) {
-    return Promise.resolve(!isForbiddenSsrfIp(hostname));
-  }
-  return new Promise((resolve) => {
-    dns.lookup(hostname, { all: true }, (err, addresses) => {
-      if (err || !addresses || addresses.length === 0) {
-        return resolve(false);
-      }
-      for (const a of addresses) {
-        if (isForbiddenSsrfIp(a.address)) {
-          return resolve(false);
-        }
-      }
-      resolve(true);
-    });
-  });
-}
-
 // Proxy lấy luồng Camera ESP32 & Thumbnail YouTube không bị chặn CORS/HTTPS (hỗ trợ Follow 301/302 Redirects)
 app.get('/api/esp32-proxy', async (req, res) => {
   const targetUrl = (req.query.url || '').trim();
@@ -382,21 +361,33 @@ app.get('/api/yt-search', (req, res) => {
 const dgram = require('dgram');
 
 // 1. Bóc tách luồng MP4 trực tiếp bằng YouTube Innertube API (Giúp thẻ <video> phát MP4 thật 100% và vẽ lên màn hình 3D khi thu nhỏ)
-app.get('/api/yt-dom-stream', (req, res) => {
+app.get('/api/yt-dom-stream', async (req, res) => {
   const videoId = String(req.query.videoId || '').trim();
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return res.status(400).json({ error: 'Invalid or missing videoId' });
+
+  // 1. Thử qua yt-dlp nếu khả dụng
+  try {
+    const dlpUrl = await tryResolveYtDlpStream(videoId);
+    if (dlpUrl) {
+      return res.json({ videoId, streamUrl: dlpUrl });
+    }
+  } catch (e) {}
+
+  // 2. Dự phòng bằng Android VR Innertube
 
   const postData = JSON.stringify({
     context: {
       client: {
-        clientName: 'ANDROID',
-        clientVersion: '19.09.37',
-        androidSdkVersion: 30,
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.56.21',
+        androidSdkVersion: 32,
         hl: 'vi',
         gl: 'VN'
       }
     },
-    videoId
+    videoId,
+    contentCheckOk: true,
+    racyCheckOk: true
   });
 
   const options = {
@@ -406,7 +397,7 @@ app.get('/api/yt-dom-stream', (req, res) => {
     headers: {
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(postData),
-      'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
+      'User-Agent': 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip'
     }
   };
 
@@ -417,8 +408,8 @@ app.get('/api/yt-dom-stream', (req, res) => {
       try {
         const data = JSON.parse(raw);
         const formats = (data.streamingData && data.streamingData.formats) || [];
-        // Ưu tiên itag 18 (MP4 360p/720p có cả tiếng + hình)
-        const mp4 = formats.find((f) => f.url && f.itag === 18) ||
+        // Ưu tiên itag 18 / 22 (MP4 có cả tiếng + hình)
+        const mp4 = formats.find((f) => f.url && (f.itag === 18 || f.itag === 22)) ||
                     formats.find((f) => f.url && f.mimeType && f.mimeType.includes('video/mp4')) ||
                     formats[0];
         if (mp4 && mp4.url) {
@@ -461,12 +452,7 @@ const esp32CarConfig = {
   packetsSent: 0
 };
 
-// Quản lý tài xế điều khiển độc quyền (Chống xung đột đa tab / tab phụ gửi đè xung 1500 gây giật xe)
-let activeDriverClient = null;
-let activeDriverLastActiveTime = 0;
-
 // Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
-let lastUdpCommandLog = '';
 function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
   // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
@@ -694,43 +680,51 @@ app.get('/api/scan-esp32', async (req, res) => {
 
 // Proxy truyền tải luồng video MP4 về thẻ <video> trong xe không bị lỗi CORS (SSRF Protected)
 app.get('/api/yt-stream-proxy', async (req, res) => {
-  const streamUrl = (req.query.url || '').trim();
+  const streamUrl = req.query.url;
   const check = validateProxyTargetUrl(streamUrl);
-  if (!check.valid) {
-    return res.status(400).send('SSRF Guard: ' + check.reason);
-  }
+  if (!check.valid) return res.status(400).send('SSRF Guard: ' + check.reason);
+
+  // Chọn UA khớp với client đã ký URL
+  const ua = 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip';
 
   try {
     const upstream = await fetch(streamUrl, {
+      method: 'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': ua,
         'Referer': 'https://www.youtube.com/',
         'Origin': 'https://www.youtube.com',
         'Range': req.headers.range || 'bytes=0-',
+        'Accept-Encoding': 'identity',
       },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(20000)
+      redirect: 'follow',                 // ← follow 302 tới CDN thật
+      signal: AbortSignal.timeout(30000)
     });
 
-    res.status(upstream.status || 200);
+    // QUAN TRỌNG: luôn set CORS header kể cả khi lỗi
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Range');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
     res.setHeader('Accept-Ranges', 'bytes');
-    const cType = upstream.headers.get('content-type');
-    if (cType) res.setHeader('Content-Type', cType);
-    const cLen = upstream.headers.get('content-length');
-    if (cLen) res.setHeader('Content-Length', cLen);
-    const cRange = upstream.headers.get('content-range');
-    if (cRange) res.setHeader('Content-Range', cRange);
 
-    if (upstream.body) {
-      const { Readable } = require('stream');
-      Readable.fromWeb(upstream.body).pipe(res);
-    } else {
-      res.end();
+    if (!upstream.ok) {
+      return res.status(upstream.status).end();
     }
+
+    res.status(upstream.status);
+    if (upstream.headers.get('content-type'))
+      res.setHeader('Content-Type', upstream.headers.get('content-type'));
+    if (upstream.headers.get('content-length'))
+      res.setHeader('Content-Length', upstream.headers.get('content-length'));
+    if (upstream.headers.get('content-range'))
+      res.setHeader('Content-Range', upstream.headers.get('content-range'));
+
+    const { Readable } = require('stream');
+    Readable.fromWeb(upstream.body).pipe(res);
   } catch (err) {
     if (!res.headersSent) {
-      res.status(502).send('Proxy error: ' + err.message);
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.status(502).send('Proxy: ' + err.message);
     }
   }
 });
@@ -929,19 +923,18 @@ function attachMultiplayerServer(serverInstance) {
         } else if (data.type === 'WHEEL_BRIDGE_INPUT') {
           // Cầu nối vô lăng GOG R808: Phát trạng thái từ PC sang kính Quest 3
           const bridgePayload = JSON.stringify({
-            type: 'WHEEL_BRIDGE_STATE',
-            connected: data.connected !== false,
-            deviceId: data.deviceId || 'GOG R808',
-            steeringNorm: data.steeringNorm || 0,
-            throttleNorm: data.throttleNorm || 0,
-            steerAngleDeg: data.steerAngleDeg || 0,
-            gasPercent: data.gasPercent || 0,
-            brakePercent: data.brakePercent || 0,
-            reversePercent: data.reversePercent || 0,
-            gear: data.gear || 'D',
-            ts: Date.now()
+            type: 'WHEEL_BRIDGE_INPUT',
+            steeringAngle: data.steeringAngle,
+            throttle: data.throttle,
+            brake: data.brake,
+            reverse: data.reverse,
+            clutch: data.clutch,
+            gear: data.gear,
+            buttons: data.buttons || [],
+            axes: data.axes || [],
+            sourcePlayer: playerId
           });
-          for (const client of wss.clients) {
+          for (const client of players.values()) {
             if (client !== ws && client.readyState === WebSocket.OPEN) {
               client.send(bridgePayload);
             }
@@ -1046,9 +1039,9 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
 // PATCH V130 CHO SERVER.JS: TÌM KIẾM YOUTUBE > 5 TIẾNG & ĐỒNG BỘ MULTI-SCREEN MP4
 // ============================================================================
 let sharedYoutubeRoomState = {
-  videoId: 'jfKfPfyJRdk',
+  videoId: '0sfDth4lMLc',
   title: 'Lofi Hip Hop Radio - 24/7 Chill Stream',
-  streamUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+  streamUrl: 'https://vjs.zencdn.net/v/oceans.mp4',
   durationText: '05:30:00',
   durationSeconds: 19800,
   currentTime: 0,
@@ -1155,67 +1148,82 @@ app.get('/api/yt-long-stream', (req, res) => {
 // PATCH V135 CHO SERVER.JS: TÌM KIẾM TIẾNG VIỆT KHÔNG DẤU & TRÍCH XUẤT MP4 100%
 // ============================================================================
 const VERIFIED_MP4_FALLBACK_POOL = [
-  { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', duration: '05:45:00' },
-  { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4', duration: '06:12:00' },
-  { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4', duration: '05:30:00' },
-  { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', duration: '06:00:00' },
-  { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', duration: '05:20:00' },
-  { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4', duration: '05:50:00' }
+  { url: 'https://vjs.zencdn.net/v/oceans.mp4', duration: '05:45:00' },
+  { url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4', duration: '06:12:00' },
+  { url: 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/friday.mp4', duration: '05:30:00' },
+  { url: 'https://vjs.zencdn.net/v/oceans.mp4', duration: '06:00:00' }
 ];
 
-// Hàm lấy luồng MP4 trực tiếp từ videoId qua nhiều nguồn (Innertube + Piped API)
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execP = promisify(exec);
+
 function resolveDirectMp4FromVideoId(videoId) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     if (!videoId) return resolve(null);
+    try {
+      const { stdout } = await execP(
+        `yt-dlp -f "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/b" -g --no-warnings "https://youtube.com/watch?v=${videoId}"`,
+        { timeout: 15000, maxBuffer: 1024 * 1024 }
+      );
+      const urls = stdout.trim().split('\n').filter(Boolean);
+      if (urls[0] && urls[0].startsWith('http')) {
+        return resolve(urls[0]);
+      }
+    } catch (e) {}
 
-    const postData = JSON.stringify({
-      context: {
-        client: {
-          clientName: 'ANDROID_VR',
-          clientVersion: '1.56.21',
-          androidSdkVersion: 32,
-          hl: 'vi',
-          gl: 'VN'
-        }
-      },
-      videoId,
-      contentCheckOk: true,
-      racyCheckOk: true
-    });
-
-    const req = https.request({
-      hostname: 'www.youtube.com',
-      path: '/youtubei/v1/player?prettyPrint=false',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData),
-        'User-Agent': 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip'
-      },
-      timeout: 4500
-    }, (res) => {
-      let body = '';
-      res.on('data', (c) => { body += c; });
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(body);
-          const formats = (json.streamingData && json.streamingData.formats) || [];
-          const mp4Fmt =
-            formats.find((f) => f.url && f.itag === 18) ||
-            formats.find((f) => f.url && f.itag === 22) ||
-            formats.find((f) => f.url && f.mimeType && f.mimeType.includes('video/mp4'));
-          if (mp4Fmt && mp4Fmt.url) {
-            return resolve(mp4Fmt.url);
+    // Dự phòng qua Android VR Innertube API nếu máy chủ chưa cài yt-dlp
+    try {
+      const postData = JSON.stringify({
+        context: {
+          client: {
+            clientName: 'ANDROID_VR',
+            clientVersion: '1.56.21',
+            androidSdkVersion: 32,
+            hl: 'vi',
+            gl: 'VN'
           }
-        } catch (e) {}
-        resolve(null);
+        },
+        videoId,
+        contentCheckOk: true,
+        racyCheckOk: true
       });
-    });
 
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.write(postData);
-    req.end();
+      const options = {
+        hostname: 'www.youtube.com',
+        path: '/youtubei/v1/player?prettyPrint=false',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData),
+          'User-Agent': 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip'
+        },
+        timeout: 6000
+      };
+
+      const req = https.request(options, (res) => {
+        let raw = '';
+        res.on('data', (c) => { raw += c; });
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(raw);
+            const formats = (json.streamingData && json.streamingData.formats) || [];
+            const mp4 = formats.find((f) => f.url && (f.itag === 18 || f.itag === 22)) ||
+                        formats.find((f) => f.url && f.mimeType && f.mimeType.includes('video/mp4')) ||
+                        formats[0];
+            if (mp4 && mp4.url) return resolve(mp4.url);
+          } catch (e) {}
+          resolve(null);
+        });
+      });
+
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.write(postData);
+      req.end();
+    } catch (err) {
+      resolve(null);
+    }
   });
 }
 

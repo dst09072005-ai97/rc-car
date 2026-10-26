@@ -204,52 +204,70 @@ function resetYouTubeWindowToDefaultPosition() {
 }
 
 function playYouTubeEmbedByIdOrQuery(inputStr, titleText) {
+  if (!inputStr) return;
+
+  // Nếu module thống nhất youtube-dom-extractor đã sẵn sàng, ủy quyền phát trực tiếp
+  if (typeof window !== 'undefined' && (window.playMediaItem || window.triggerUnifiedYouTubeSearch)) {
+    const ytMatch = inputStr.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
+    if (ytMatch) {
+      if (window.playMediaItem) {
+        window.playMediaItem({ videoId: ytMatch[1], title: titleText || `YouTube (${ytMatch[1]})` });
+      }
+      return;
+    }
+    if (/^[a-zA-Z0-9_-]{11}$/.test(inputStr)) {
+      if (window.playMediaItem) {
+        window.playMediaItem({ videoId: inputStr, title: titleText || `YouTube (${inputStr})` });
+      }
+      return;
+    }
+    if (inputStr.startsWith('http://') || inputStr.startsWith('https://')) {
+      if (window.playMediaItem) {
+        window.playMediaItem({ directUrl: inputStr, title: titleText || 'Direct Video' });
+      }
+      return;
+    }
+    if (window.triggerUnifiedYouTubeSearch) {
+      window.triggerUnifiedYouTubeSearch(inputStr);
+      return;
+    }
+  }
+
+  // Tuyến dự phòng khi youtube-dom-extractor chưa nạp xong
   if (!ytIframe || !ytHtml5Video) return;
   ytHtml5Video.pause();
   ytHtml5Video.classList.add('panel-hidden');
   ytIframe.classList.remove('panel-hidden');
 
-  // Kiểm tra xem là ID/URL YouTube hay từ khóa tìm kiếm trên Internet
   const ytMatch = inputStr.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
-  if (ytMatch) {
-    const videoId = ytMatch[1];
-    ytIframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&playsinline=1&fs=0&rel=0&modestbranding=1`;
-    activeYoutubeTitle = titleText || `YouTube (${videoId})`;
-  } else if (/^[a-zA-Z0-9_-]{11}$/.test(inputStr)) {
-    ytIframe.src = `https://www.youtube.com/embed/${inputStr}?autoplay=1&playsinline=1&fs=0&rel=0&modestbranding=1`;
-    activeYoutubeTitle = titleText || `YouTube (${inputStr})`;
-  } else if (inputStr.startsWith('http://') || inputStr.startsWith('https://')) {
-    if (inputStr.endsWith('.mp4') || inputStr.endsWith('.webm')) {
-      ytIframe.src = '';
-      ytIframe.classList.add('panel-hidden');
-      ytHtml5Video.classList.remove('panel-hidden');
-      ytHtml5Video.src = inputStr;
-      ytHtml5Video.muted = false;
-      ytHtml5Video.play().catch(() => {});
-      activeYoutubeTitle = titleText || 'Direct Internet Video';
-    } else {
-      ytIframe.src = inputStr;
-      activeYoutubeTitle = titleText || 'YouTube Web';
-    }
-  } else {
-    // Mở trực tiếp danh sách phát tìm kiếm YouTube bằng Internet theo từ khóa người dùng nhập
-    const q = encodeURIComponent(inputStr);
-    ytIframe.src = `https://www.youtube.com/embed?listType=search&list=${q}&autoplay=1&playsinline=1&fs=0`;
-    activeYoutubeTitle = `YouTube Search: ${inputStr}`;
+  const videoId = ytMatch ? ytMatch[1] : (/^[a-zA-Z0-9_-]{11}$/.test(inputStr) ? inputStr : null);
+  if (!videoId) {
+    state.lastActionLog = `⚠ Không tìm thấy video hợp lệ cho: ${inputStr}`;
+    return;
   }
+  const originParam = (typeof window !== 'undefined' && window.location.origin && (window.location.origin.startsWith('http://') || window.location.origin.startsWith('https://'))) ? `&origin=${encodeURIComponent(window.location.origin)}` : '';
+  ytIframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0&enablejsapi=1${originParam}`;
+  activeYoutubeTitle = titleText || `YouTube (${videoId})`;
   state.mediaPlaying = true;
-  state.lastActionLog = `📺 Đang phát YouTube qua Internet: ${activeYoutubeTitle}`;
+  state.lastActionLog = `📺 Đang phát YouTube: ${activeYoutubeTitle}`;
 }
 
 function openRealYouTubeApp() {
   initAudio();
-  // Khi mở lại sau khi ẩn, luôn spawn ra vị trí cố định lúc đầu
   resetYouTubeWindowToDefaultPosition();
   ytModal?.classList.remove('panel-hidden');
   if (yt3DFloatingGroupRef) yt3DFloatingGroupRef.visible = true;
 
   if (ytIframe && !ytIframe.src && (!ytHtml5Video || !ytHtml5Video.src)) {
-    playYouTubeEmbedByIdOrQuery('jfKfPfyJRdk', 'Lofi Hip Hop Radio - YouTube Live');
+    if (typeof window !== 'undefined' && window.playMediaItem) {
+      window.playMediaItem({
+        title: 'Phim Đại Dương Hoang Dã (Oceans 4K)',
+        directUrl: 'https://vjs.zencdn.net/v/oceans.mp4',
+        duration: 'Full HD'
+      });
+    } else {
+      playYouTubeEmbedByIdOrQuery('https://vjs.zencdn.net/v/oceans.mp4', 'Phim Đại Dương Hoang Dã (Oceans 4K)');
+    }
   }
   state.mediaPlaying = true;
   state.lastActionLog = '📺 Đã mở YouTube tại vị trí cố định! Nhập từ khóa bất kỳ hoặc chọn video để xem qua Internet.';
@@ -267,7 +285,6 @@ document.getElementById('btn-open-yt-modal')?.addEventListener('click', () => {
 });
 document.getElementById('btn-close-yt-modal')?.addEventListener('click', closeYouTubeAppToDashboard);
 
-// Nút Phóng to chỉ nằm gọn trong phạm vi khung YouTube đã fit cứng (không tràn ra ngoài)
 document.getElementById('btn-yt-inframe-full')?.addEventListener('click', (e) => {
   if (!ytModal) return;
   ytModal.classList.toggle('yt-inframe-full');
@@ -275,36 +292,11 @@ document.getElementById('btn-yt-inframe-full')?.addEventListener('click', (e) =>
   e.target.textContent = isFullInFrame ? '🗗 Hiện Danh Sách' : '⛶ Full Trong Khung';
 });
 
-// Nút mở trang chủ/tìm kiếm YouTube trực tuyến ngay trong khung
 document.getElementById('btn-yt-open-home')?.addEventListener('click', () => {
-  playYouTubeEmbedByIdOrQuery('Rolls Royce Ghost Night POV Drive 4K', 'YouTube Home - Rolls-Royce 4K');
-});
-
-document.querySelectorAll('.yt-card').forEach((card) => {
-  card.addEventListener('click', () => {
-    document.querySelectorAll('.yt-card').forEach((c) => c.classList.remove('active'));
-    card.classList.add('active');
-    const type = card.getAttribute('data-type');
-    const src = card.getAttribute('data-src') || '';
-    const title = card.getAttribute('data-title') || 'YouTube Media';
-    if (type === 'iframe') {
-      const cleanSrc = src.includes('fs=0') ? src : `${src}${src.includes('?') ? '&' : '?'}playsinline=1&fs=0`;
-      playYouTubeEmbedByIdOrQuery(cleanSrc, title);
-    } else {
-      playYouTubeEmbedByIdOrQuery(src, title);
-    }
-  });
-});
-
-document.getElementById('btn-yt-load-url')?.addEventListener('click', () => {
-  const raw = document.getElementById('yt-custom-input')?.value.trim() || '';
-  if (!raw) return;
-  playYouTubeEmbedByIdOrQuery(raw, raw);
-});
-document.getElementById('yt-custom-input')?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const raw = e.target.value.trim();
-    if (raw) playYouTubeEmbedByIdOrQuery(raw, raw);
+  if (typeof window !== 'undefined' && window.triggerUnifiedYouTubeSearch) {
+    window.triggerUnifiedYouTubeSearch('Rolls Royce Ghost Night POV Drive 4K');
+  } else {
+    playYouTubeEmbedByIdOrQuery('0sfDth4lMLc', 'YouTube Home - Rolls-Royce 4K');
   }
 });
 
@@ -3972,6 +3964,9 @@ requestAnimationFrame(supplementaryFrameUpdate);
 async function searchAndPlayYouTubeFromInternet(rawInput) {
   const query = (rawInput || '').trim();
   if (!query) return;
+  if (typeof window !== 'undefined' && window.triggerUnifiedYouTubeSearch) {
+    return window.triggerUnifiedYouTubeSearch(query);
+  }
 
   // Nếu là link YouTube hoặc ID 11 ký tự thì phát trực tiếp
   const ytMatch = query.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/);
@@ -4079,34 +4074,12 @@ async function searchAndPlayYouTubeFromInternet(rawInput) {
       });
     }
   } else {
-    state.lastActionLog = `⚠ Không tìm thấy kết quả cho "${query}", đang phát kênh YouTube trực tuyến dự phòng.`;
-    if (ytIframe) {
-      ytIframe.classList.remove('panel-hidden');
-      ytIframe.src = 'https://www.youtube-nocookie.com/embed/jfKfPfyJRdk?autoplay=1&playsinline=1';
-    }
+    state.lastActionLog = `⚠ Không tìm thấy kết quả tìm kiếm cho: "${query}". Hãy thử từ khóa khác.`;
   }
 }
 
-// Gắn lại sự kiện nút Tìm kiếm YouTube để dùng bộ tìm kiếm thật trên Internet
-const btnYtSearch = document.getElementById('btn-yt-load-url');
-if (btnYtSearch) {
-  const newBtn = btnYtSearch.cloneNode(true);
-  btnYtSearch.parentNode.replaceChild(newBtn, btnYtSearch);
-  newBtn.addEventListener('click', () => {
-    const val = document.getElementById('yt-custom-input')?.value.trim() || '';
-    if (val) searchAndPlayYouTubeFromInternet(val);
-  });
-}
-const inputYtSearch = document.getElementById('yt-custom-input');
-if (inputYtSearch) {
-  const newInp = inputYtSearch.cloneNode(true);
-  inputYtSearch.parentNode.replaceChild(newInp, inputYtSearch);
-  newInp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && newInp.value.trim()) {
-      searchAndPlayYouTubeFromInternet(newInp.value.trim());
-    }
-  });
-}
+// [UNIFIED] YouTube event listeners managed by youtube-dom-extractor.js
+
 
 // --- 13.2. GƯƠNG HẬU TRUNG TÂM CAO RÕ & MÀN HÌNH CAM LÙI GHẾ PHỤ (NHẤN VÀO HIỆN KHUNG MODAL NHƯ YOUTUBE) ---
 const rearCamModal = document.getElementById('rear-cam-app-modal');
