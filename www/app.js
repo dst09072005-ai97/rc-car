@@ -19929,6 +19929,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     gear: 'D',              // 'P', 'R', 'N', 'D'
     prevButtons: { paddleRight: false, paddleLeft: false, horn: false, park: false },
     isVirtualHeld: false,   // Đang nắm vô lăng ảo bằng tay cầm VR
+    invertSteer: false,
+    steerConfig: { type: 'auto', index: 0, invert: false },
     pedalConfig: {
       gas: { type: 'auto', index: 1, invert: false },
       brake: { type: 'auto', index: 2, invert: false },
@@ -20068,7 +20070,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   function startPedalCalibration(target) {
     racingWheel.calibratingTarget = target;
-    const targetNames = { gas: 'CHÂN GA (TIẾN)', brake: 'CHÂN PHANH (DỪNG)', reverse: 'CHÂN LÙI (LÙI XE)' };
+    const targetNames = { steer: 'VÔ LĂNG (ĐÁNH LÁI TRÁI/PHẢI)', gas: 'CHÂN GA (TIẾN)', brake: 'CHÂN PHANH (DỪNG)', reverse: 'CHÂN LÙI (LÙI XE)' };
     const btnId = 'btn-calib-pedal-' + target;
     const btn = document.getElementById(btnId);
     if (btn) {
@@ -20101,6 +20103,15 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     // Căn chỉnh / Gán từng chân đạp
+    document.getElementById('btn-calib-steer')?.addEventListener('click', () => {
+      startPedalCalibration('steer');
+    });
+    document.getElementById('btn-toggle-wheel-invert-steer')?.addEventListener('click', (e) => {
+      racingWheel.invertSteer = !racingWheel.invertSteer;
+      e.target.style.background = racingWheel.invertSteer ? '#ff9500' : '#1f3354';
+      state.lastActionLog = racingWheel.invertSteer ? '🔄 Đã đảo chiều Vô Lăng' : '🔄 Vô Lăng chiều chuẩn';
+      savePedalConfig();
+    });
     document.getElementById('btn-calib-pedal-gas')?.addEventListener('click', () => {
       startPedalCalibration('gas');
     });
@@ -20256,9 +20267,28 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
 
-    // 1. ĐỌC GÓC VÔ LĂNG (AXIS 0)
-    let steerAxis = activeGp.axes[0] !== undefined ? activeGp.axes[0] : 0;
-    if (Math.abs(steerAxis) < 0.02) steerAxis = 0; // Vùng chết tâm
+    // 1. ĐỌC GÓC VÔ LĂNG (HỖ TRỢ MỌI TRỤC & GÁN TỰ DO)
+    let steerAxis = 0;
+    const sIdx = racingWheel.steerConfig?.index ?? 0;
+    if (activeGp.axes[sIdx] !== undefined) {
+      const cur = activeGp.axes[sIdx];
+      const base = racingWheel.baseAxes[sIdx] ?? 0;
+      steerAxis = cur - (Math.abs(base) < 0.3 ? base : 0);
+    }
+    // Nếu trục sIdx không nhúc nhích mà trục khác xoay mạnh: tự bắt trục lái
+    if (Math.abs(steerAxis) < 0.05) {
+      for (let ax = 0; ax < Math.min(activeGp.axes.length, 4); ax++) {
+        if (ax !== (racingWheel.pedalConfig.gas?.index ?? 1) && ax !== (racingWheel.pedalConfig.brake?.index ?? 2) && ax !== (racingWheel.pedalConfig.reverse?.index ?? 3)) {
+          const diff = (activeGp.axes[ax] ?? 0) - (racingWheel.baseAxes[ax] ?? 0);
+          if (Math.abs(diff) > 0.15) {
+            steerAxis = diff;
+            break;
+          }
+        }
+      }
+    }
+    if (racingWheel.steerConfig?.invert || racingWheel.invertSteer) steerAxis = -steerAxis;
+    if (Math.abs(steerAxis) < 0.02) steerAxis = 0;
     racingWheel.rawSteer = steerAxis;
     racingWheel.steerAngleDeg = THREE.MathUtils.clamp(steerAxis * 540, -540, 540);
 
@@ -21167,56 +21197,71 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         let targetThrottle = 1500;
 
         if (state.playerMode === 'DRIVING') {
-          // A. Tính góc bẻ lái Servo: Đảo chiều chuẩn để đánh lái Trái -> quẹo Trái, Phải -> quẹo Phải
-          let steerRatio = THREE.MathUtils.clamp(state.steeringAngleDeg / 450.0, -1.0, 1.0);
-          if (state.invertCarSteer) steerRatio = -steerRatio;
-          targetSteer = Math.round(90 - steerRatio * 45);
-          targetSteer = THREE.MathUtils.clamp(targetSteer, 45, 135);
+          // A. TÍNH TOÁN GÓC BẺ LÁI SERVO CHO XE RC (45° TRÁI .. 90° THẲNG .. 135° PHẢI)
+        let steerNorm = 0; // -1.0 (trái) .. 0 (thẳng) .. +1.0 (phải)
 
-          // B. Tính xung ga: Cân chỉnh êm ái theo mức ga tối đa đã chọn (Vừa phải, không vọt)
-          if (!state.engineRunning || state.brakePercent > 8) {
-            targetThrottle = 1500;
-          } else if (state.reversePercent > 3 || state.gearIndex === 1) { // Bàn đạp lùi hoặc Số R
-            const revPct = state.reversePercent > 3 ? state.reversePercent : (state.throttlePercent || 0);
-            const pct = THREE.MathUtils.clamp(revPct, 0, 100);
-            if (pct > 3) {
-              // Bù khoảng chết Neutral của ESC (~25µs) để động cơ có lực xoay ngay khi bắt đầu lùi
-              const deadbandSkip = 25;
-              const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
-              const revDelta = deadbandSkip + (pct / 100.0) * effectiveDelta;
-              targetThrottle = Math.round(1500 - revDelta);
-            } else {
-              targetThrottle = 1500;
-            }
-          } else if (state.gearIndex === 3) { // Bàn đạp ga hoặc Số D
-            const pct = THREE.MathUtils.clamp(state.throttlePercent || 0, 0, 100);
-            targetThrottle = Math.round(1500 + (pct / 100.0) * maxFwdDelta);
-          } else {
-            targetThrottle = 1500;
-          }
-        } else {
-          // HỖ TRỢ LÁI XE RC TRỰC TIẾP KHI Ở NGOÀI XE (ON_FOOT): W/A/S/D & CỤM NÚT D-PAD / BÀN ĐẠP
-          const wantGas = keys.w || keys.ArrowUp || (typeof holdState !== 'undefined' && (holdState.gas || holdState.up));
-          const wantRev = keys.s || keys.ArrowDown || (typeof holdState !== 'undefined' && (holdState.brake || holdState.down));
-          const wantLeft = keys.a || keys.ArrowLeft || (typeof holdState !== 'undefined' && holdState.left);
-          const wantRight = keys.d || keys.ArrowRight || (typeof holdState !== 'undefined' && holdState.right);
-
-          if (wantLeft) targetSteer = state.invertCarSteer ? 135 : 45;
-          else if (wantRight) targetSteer = state.invertCarSteer ? 45 : 135;
-          else targetSteer = 90;
-
-          if (wantGas && !wantRev) {
-            targetThrottle = 1500 + maxFwdDelta;
-          } else if (wantRev && !wantGas) {
-            targetThrottle = 1500 - maxRevDelta;
-          } else {
-            targetThrottle = 1500;
-          }
+        // 1. Đọc từ Vô Lăng GOG R808 thật
+        const wheel = window._racingWheel;
+        if (wheel && wheel.connected && Math.abs(wheel.rawSteer || 0) > 0.02) {
+          steerNorm = THREE.MathUtils.clamp(wheel.rawSteer, -1.0, 1.0);
+        } else if (Math.abs(state.steeringAngleDeg || 0) > 1.0) {
+          steerNorm = THREE.MathUtils.clamp(state.steeringAngleDeg / 450.0, -1.0, 1.0);
         }
 
-        // C. NỘI SUY XUNG GA CHỐNG GIẬT (SMOOTH RAMP CURVE)
+        // 2. Nhận từ Bàn phím A/D hoặc Cụm nút cảm ứng D-Pad (Ưu tiên cao nhất khi người dùng ấn phím)
+        const wantLeft = keys.a || keys.ArrowLeft || (typeof holdState !== 'undefined' && holdState.left);
+        const wantRight = keys.d || keys.ArrowRight || (typeof holdState !== 'undefined' && holdState.right);
+        if (wantLeft && !wantRight) {
+          steerNorm = -1.0;
+          state.steeringAngleDeg = -450;
+        } else if (wantRight && !wantLeft) {
+          steerNorm = 1.0;
+          state.steeringAngleDeg = 450;
+        }
+
+        if (state.invertCarSteer) {
+          steerNorm = -steerNorm;
+        }
+
+        targetSteer = Math.round(90 - steerNorm * 45);
+        targetSteer = THREE.MathUtils.clamp(targetSteer, 45, 135);
+
+        // B. TÍNH TOÁN XUNG GA ĐIỀU TỐC ESC CHO XE RC (1300..1700µs)
+        const wantGas = keys.w || keys.ArrowUp || (typeof holdState !== 'undefined' && (holdState.gas || holdState.up));
+        const wantRev = keys.s || keys.ArrowDown || (typeof holdState !== 'undefined' && (holdState.brake || holdState.down));
+
+        const isHardBraking = (state.brakePercent > 35) && (state.brakePercent > state.reversePercent);
+        const isReversing = (state.reversePercent > 3) || (state.gearIndex === 1) || (wantRev && !wantGas);
+        const isForward = (state.throttlePercent > 3 && state.gearIndex === 3) || (wantGas && !wantRev);
+
+        if (isHardBraking) {
+          targetThrottle = 1500;
+        } else if (isReversing) {
+          const revPct = (state.reversePercent > 3) ? state.reversePercent : (state.throttlePercent > 3 ? state.throttlePercent : 100);
+          const pct = THREE.MathUtils.clamp(revPct, 0, 100);
+          // Vượt ngay khoảng chết Neutral 30µs để motor có lực tức thì, không bị khựng chập chờn
+          const deadbandSkip = 30;
+          const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
+          const revDelta = deadbandSkip + (pct / 100.0) * effectiveDelta;
+          targetThrottle = Math.round(1500 - revDelta);
+        } else if (isForward) {
+          const fwdPct = (state.throttlePercent > 3) ? state.throttlePercent : 100;
+          const pct = THREE.MathUtils.clamp(fwdPct, 0, 100);
+          const deadbandSkip = 20;
+          const effectiveDelta = Math.max(0, maxFwdDelta - deadbandSkip);
+          const fwdDelta = deadbandSkip + (pct / 100.0) * effectiveDelta;
+          targetThrottle = Math.round(1500 + fwdDelta);
+        } else {
+          targetThrottle = 1500;
+        }
+
+        // C. NỘI SUY XUNG GA CHỐNG GIẬT (NHẠY KHI LÙI, MƯỢT KHI TIẾN)
         if (typeof state.rcSmoothThrottle === 'undefined') state.rcSmoothThrottle = 1500;
-        const rampStep = 450 * dt; // Tăng dần êm ái trong ~0.25s
+        // Nếu chuyển từ Neutral sang Lùi, nhảy ngay qua deadband để ESC không bị kẹt ở chế độ Phanh
+        if (targetThrottle < 1475 && state.rcSmoothThrottle > 1475) {
+          state.rcSmoothThrottle = 1465;
+        }
+        const rampStep = (targetThrottle < 1500 ? 900 : 500) * dt;
         if (targetThrottle > state.rcSmoothThrottle) {
           state.rcSmoothThrottle = Math.min(targetThrottle, state.rcSmoothThrottle + rampStep);
         } else if (targetThrottle < state.rcSmoothThrottle) {
@@ -21233,7 +21278,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         mpSocket.send(JSON.stringify(carControlPacket));
 
         // Nếu vô lăng GOG R808 đang cắm vào máy này, phát thêm Bridge State cho Quest 3
-        const wheel = window._racingWheel;
         if (wheel && wheel.connected) {
           mpSocket.send(JSON.stringify({
             type: 'WHEEL_BRIDGE_INPUT',
@@ -21258,4 +21302,4 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
   };
-})();
+}})();
