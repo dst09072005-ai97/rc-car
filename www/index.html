@@ -170,6 +170,18 @@
     .yt-card b { color: #fff; display: block; margin-bottom: 3px; }
     .yt-card span { color: #aaa; font-size: 10.5px; }
 
+    /* Giữ phát âm thanh liên tục khi Thu Nhỏ (ẩn khỏi tầm nhìn thay vì display:none làm tắt iframe/audio) */
+    #youtube-app-modal.panel-hidden {
+      display: flex !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      position: fixed !important;
+      top: -9999px !important;
+      left: -9999px !important;
+      transform: none !important;
+      visibility: visible !important;
+    }
+
     /* Khóa cứng khung YouTube, phóng to chỉ nằm gọn trong khung đã fit */
     #youtube-app-modal {
       resize: none;
@@ -1276,6 +1288,43 @@
         dock.appendChild(doorBtn);
       }
     });
+  </script>
+  <!-- [SURGICAL UI FIX] PHÂN LOẠI ĐÚNG 3 THIẾT BỊ (VR / MOBILE / PC) & GIỮ CUỘN DANH SÁCH NHẠC -->
+  <style>
+    /* Chỉ khóa gesture cuộn trang trên vùng vẽ 3D canvas, giữ nguyên khả năng cuộn cho danh sách nhạc và bảng điều khiển */
+    html, body {
+      touch-action: manipulation !important;
+    }
+    canvas {
+      touch-action: none !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+    #yt-results-list, .yt-playlist-side, .floating-panel {
+      touch-action: pan-y !important;
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+  </style>
+  <script>
+    (function fixThreeWayDeviceClassification() {
+      const ua = navigator.userAgent || '';
+      const isQuestVR = /Quest|OculusBrowser|Pacific|VR|Headset/i.test(ua);
+      const isTouchMobile = !isQuestVR && (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.maxTouchPoints > 1 && window.innerWidth <= 1024));
+
+      document.body.classList.remove('device-vr-quest', 'device-mobile-phone', 'device-pc-desktop');
+
+      if (isQuestVR) {
+        window.__DETECTED_DEVICE_TYPE__ = 'VR_QUEST_3';
+        document.body.classList.add('device-vr-quest');
+      } else if (isTouchMobile) {
+        window.__DETECTED_DEVICE_TYPE__ = 'MOBILE_PHONE';
+        document.body.classList.add('device-mobile-phone');
+      } else {
+        window.__DETECTED_DEVICE_TYPE__ = 'PC_DESKTOP';
+        document.body.classList.add('device-pc-desktop');
+      }
+    })();
   </script>
 </body>
 </html>

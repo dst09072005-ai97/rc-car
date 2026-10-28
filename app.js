@@ -2325,12 +2325,7 @@ function renderAllCockpitDisplays(elapsed) {
       ytCtx.fillRect(0, 44, 640, 260);
     }
 
-    // Sóng nhạc nhảy sống động theo nhịp bài hát
-    for (let i = 0; i < 28; i++) {
-      const barH = 10 + Math.abs(Math.sin(elapsed * 7 + i * 0.45)) * 65;
-      ytCtx.fillStyle = i % 2 === 0 ? 'rgba(0, 229, 255, 0.85)' : 'rgba(255, 42, 133, 0.85)';
-      ytCtx.fillRect(25 + i * 21, 300 - barH, 13, barH);
-    }
+    // Sóng nhạc đã được tắt theo yêu cầu: táp-lô hiển thị trọn vẹn thumbnail HD của video
 
     // Thanh thời gian phát thực tế (đồng bộ theo thời lượng)
     const playedSec = Math.floor((performance.now() - (window.currentYtStartTime || performance.now())) / 1000);
@@ -10537,12 +10532,7 @@ window.renderAllCockpitDisplays = function(elapsed) {
     ytCtx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     ytCtx.fillRect(0, 44, 640, 260);
 
-    // Sóng nhạc 3D nhảy theo nhạc ở cạnh dưới màn hình táp-lô
-    for (let i = 0; i < 28; i++) {
-      const barH = 12 + Math.abs(Math.sin(elapsed * 7 + i * 0.5)) * 55;
-      ytCtx.fillStyle = i % 2 === 0 ? 'rgba(0, 229, 255, 0.85)' : 'rgba(255, 42, 133, 0.85)';
-      ytCtx.fillRect(25 + i * 21, 300 - barH, 13, barH);
-    }
+    // Sóng nhạc đã được tắt theo yêu cầu: táp-lô hiển thị trọn vẹn thumbnail HD của video
 
     // Hiển thị bộ đếm thời gian phát thực tế & tổng thời lượng
     const playedSec = Math.floor((performance.now() - (window.currentYtStartTime || 0)) / 1000);
@@ -21398,6 +21388,117 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           const dirLabel = throttle > 1520 ? '🟢 TIẾN' : (throttle < 1480 ? '🔴 LÙI' : '⚪ DỪNG');
           pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs [${dirLabel}]`;
         }
+      }
+    }
+  };
+})();
+
+
+// ============================================================================
+// [SURGICAL PATCH - APP.JS] BẢO TOÀN CHUỖI RENDER, CHUẨN HÓA MPSOCKET (CAR_CONTROL),
+// CHỐNG PHANH THÀNH LÙI & HIỂN THỊ THUMBNAIL YOUTUBE SẮC NÉT TRÊN TÁP-LÔ 3D
+// ============================================================================
+(function applySurgicalControlAndDashboardPatch() {
+  // 1. TỐI ƯU HÓA TRỰC TIẾP PIPELINE CAMERA HIỆN HỮU (wsCtx & wsTex)
+  if (typeof decodePendingFrontFrame === 'function' && typeof wsCtx !== 'undefined' && typeof wsTex !== 'undefined') {
+    let frontBusy = false;
+    window.decodePendingFrontFrame = function() {
+      if (frontBusy || !pendingFrontBlob || typeof createImageBitmap !== 'function') return;
+      const blobToDecode = pendingFrontBlob;
+      pendingFrontBlob = null; // Chỉ giữ frame mới nhất, hủy ngay frame trễ
+      frontBusy = true;
+
+      createImageBitmap(blobToDecode)
+        .then((bmp) => {
+          wsCtx.drawImage(bmp, 0, 0, wsCanvas.width, wsCanvas.height);
+          bmp.close(); // Giải phóng ngay bộ nhớ GPU/RAM
+          wsTex.needsUpdate = true;
+          state.esp32Connected = true;
+          frontBusy = false;
+          if (pendingFrontBlob) window.decodePendingFrontFrame();
+        })
+        .catch(() => {
+          frontBusy = false;
+        });
+    };
+  }
+
+  // 2. BỘ LẬP LỊCH GỬI LỆNH ĐIỀU KHIỂN XE THẬT 25HZ (40MS) ĐỘC LẬP VỚI VÒNG RENDER
+  // Sử dụng đúng biến mpSocket trong scope của app.js và đúng cấu trúc CAR_CONTROL
+  let smoothSteerDeg = 90;
+  let lastForwardMotionTime = 0;
+
+  setInterval(() => {
+    if (typeof mpSocket === 'undefined' || !mpSocket || mpSocket.readyState !== 1) return;
+    if (typeof state === 'undefined' || !state) return;
+
+    // Chỉ gửi lệnh điều khiển khi người chơi đang ở chế độ lái xe của mình
+    if (state.playerMode !== 'DRIVING') return;
+
+    // Quy đổi góc vô lăng [-540..540] sang góc servo [45..135] và giá trị chuẩn hóa [-1..1]
+    const steerNorm = THREE.MathUtils.clamp((state.steeringAngleDeg || 0) / 540, -1, 1);
+    const targetSteerDeg = 90 + steerNorm * 45;
+    smoothSteerDeg = THREE.MathUtils.lerp(smoothSteerDeg, targetSteerDeg, 0.45);
+
+    // Đọc từ bàn đạp ga / phanh / cần số thực tế của người chơi (KHÔNG lấy state.velocityMs)
+    const rawGas = THREE.MathUtils.clamp((state.throttlePercent || 0) / 100, 0, 1);
+    const rawBrake = THREE.MathUtils.clamp((state.brakePercent || 0) / 100, 0, 1);
+    const currentGear = state.gear || (state.velocityMs < -0.2 ? 'R' : 'D');
+
+    let targetEscUs = 1500;
+    let netThrottleNorm = 0;
+
+    if (rawBrake > 0.05) {
+      // Đạp phanh -> Cắt ga đưa về trung tính 1500 µs (Tuyệt đối không biến phanh thành lùi!)
+      targetEscUs = 1500;
+      netThrottleNorm = 0;
+    } else if (rawGas > 0.02) {
+      if (currentGear === 'R') {
+        // Chỉ lùi khi đang ở số R và đã qua thời gian khóa an toàn 350ms sau khi tiến
+        if (Date.now() - lastForwardMotionTime > 350) {
+          targetEscUs = Math.round(1500 - rawGas * 200); // [1500..1300 µs]
+          netThrottleNorm = -rawGas;
+        } else {
+          targetEscUs = 1500;
+        }
+      } else if (currentGear === 'D' || currentGear === 'S') {
+        lastForwardMotionTime = Date.now();
+        targetEscUs = Math.round(1500 + rawGas * 200);   // [1500..1700 µs]
+        netThrottleNorm = rawGas;
+      }
+    }
+
+    // Gửi gói CAR_CONTROL tương thích đầy đủ với cả relay hiện tại lẫn bộ lọc an toàn mới
+    mpSocket.send(JSON.stringify({
+      type: 'CAR_CONTROL',
+      steer: Math.round(smoothSteerDeg),
+      throttle: targetEscUs,
+      steeringDeg: Math.round(smoothSteerDeg),
+      escPulseUs: targetEscUs,
+      steeringNorm: Number(steerNorm.toFixed(4)),
+      throttleNorm: Number(netThrottleNorm.toFixed(4)),
+      brakeNorm: Number(rawBrake.toFixed(4)),
+      gear: currentGear,
+      timestamp: Date.now()
+    }));
+  }, 40);
+
+  // 3. BỌC NỐI TIẾP (CHAINING) VÀO SCENE.ONBEFORERENDER — BẢO TOÀN 100% CALLBACK HIỆN CÓ
+  const prevOnBeforeRender = scene.onBeforeRender;
+
+  scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
+    // Gọi đầy đủ chuỗi callback cũ trước tiên để không mất bất kỳ chức năng nào
+    if (typeof prevOnBeforeRender === 'function') {
+      prevOnBeforeRender.call(this, rendererInst, sceneInst, cameraInst);
+    }
+
+    // Khóa an toàn biên độ góc nhìn dọc (Pitch): +/-75° cho Điện thoại, +/-89° cho VR/PC
+    if (typeof state !== 'undefined' && state) {
+      const maxPitch = (typeof window !== 'undefined' && window.__DETECTED_DEVICE_TYPE__ === 'MOBILE_PHONE')
+        ? THREE.MathUtils.degToRad(75)
+        : THREE.MathUtils.degToRad(89);
+      if (Number.isFinite(state.eyeLookPitch)) {
+        state.eyeLookPitch = THREE.MathUtils.clamp(state.eyeLookPitch, -maxPitch, maxPitch);
       }
     }
   };

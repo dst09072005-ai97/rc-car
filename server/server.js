@@ -1135,88 +1135,99 @@ app.get('/api/yt-mp4-direct', async (req, res) => {
 
 
 
-  function processIncomingControl(msg) {
+  const clampNum = typeof clampNumber === 'function' ? clampNumber : function(val, min, max, fallback) {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+  const rcControlState = (typeof rcState !== 'undefined') ? rcState : { steeringDeg: 90, escPulseUs: 1500, lastCmdAt: 0, lastSource: 'ws' };
+  function sendRcUdpPacket(steer, esc) {
+    if (typeof transmitToEsp32 === 'function') {
+      transmitToEsp32(steer, esc);
+    } else if (typeof sendUdpCarCommand === 'function') {
+      sendUdpCarCommand(steer, esc);
+    }
+  }
 
+  // Trạng thái interlock chống vọt lùi khi đạp phanh
+  let lastMovingForwardAt = 0;
+
+  function computeSafeEscPulseUs(msg) {
+    const rawBrake = clampNum(msg.brakeNorm ?? msg.brake ?? 0, 0, 1, 0);
+    const gear = String(msg.gear || 'D').toUpperCase();
+
+    // 1. Nếu có lệnh phanh chủ động -> cắt ga đưa về trung tính 1500 µs ngay lập tức (không bao giờ lùi)
+    if (rawBrake > 0.05) {
+      return 1500;
+    }
+
+    // 2. Nếu client gửi trực tiếp xung micro-giây (ví dụ CAR_CONTROL: { steer: 90, throttle: 1500 })
+    if (msg.escPulseUs !== undefined || (msg.throttle !== undefined && Math.abs(Number(msg.throttle)) >= 500)) {
+      const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1300, 1700, 1500);
+      if (rawUs > 1520) {
+        lastMovingForwardAt = Date.now();
+        return Math.round(rawUs);
+      }
+      if (rawUs < 1480) {
+        // Interlock: Nếu vừa mới chạy tiến trong vòng 350ms và chưa sang số R, khóa ở 1500 µs để tránh biến phanh thành lùi
+        if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
+          return 1500;
+        }
+        return Math.round(rawUs);
+      }
+      return 1500;
+    }
+
+    // 3. Nếu client gửi giá trị chuẩn hóa [-1..1] (throttleNorm / steerNorm / steeringNorm)
+    const normDrive = clampNum(msg.throttleNorm ?? msg.throttle ?? 0, -1, 1, 0);
+    if (normDrive > 0.02) {
+      if (gear === 'R') {
+        // Đang cài số R và đạp ga -> Lùi trong dải an toàn [1500..1300 µs]
+        return Math.round(1500 - normDrive * 200);
+      }
+      lastMovingForwardAt = Date.now();
+      // Đang ở số D và đạp ga -> Tiến trong dải an toàn [1500..1700 µs]
+      return Math.round(1500 + normDrive * 200);
+    }
+
+    if (normDrive < -0.02) {
+      // Nếu giá trị âm được gửi khi chưa gạt số R và xe vừa tiến -> coi là phanh dừng (1500 µs)
+      if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
+        return 1500;
+      }
+      return Math.round(1500 + normDrive * 200); // normDrive âm -> [1500..1300 µs]
+    }
+
+    return 1500;
+  }
+
+  function processIncomingControl(msg, sourceTag) {
     if (!msg || typeof msg !== 'object') return false;
 
-
-
     // Hỗ trợ lệnh dừng khẩn cấp / disarm
-
     if (msg.type === 'RC_DISARM' || msg.type === 'RC_EMERGENCY_STOP' || msg.armed === false) {
-
-      forceNeutralFailsafe(msg.type || 'CLIENT_DISARM');
-
+      if (typeof forceNeutralFailsafe === 'function') forceNeutralFailsafe(msg.type || 'CLIENT_DISARM');
       return true;
-
     }
 
-
-
-    // Chấp nhận gói điều khiển từ RC_CONTROL_CMD, WHEEL_BRIDGE_INPUT, hoặc CAR_SYNC có cờ điều khiển
-
-    const isControlMsg =
-
-      msg.type === 'RC_CONTROL_CMD' ||
-
-      msg.type === 'WHEEL_BRIDGE_INPUT' ||
-
-      msg.type === 'CONTROL' ||
-
-      (msg.type === 'CAR_SYNC' && (msg.steering !== undefined || msg.throttle !== undefined || msg.steer !== undefined));
-
-
-
-    if (!isControlMsg) return false;
-
-
-
-    const rawSteerNorm = msg.steeringNorm ?? msg.steering ?? msg.steer ?? 0;
-
-    const rawThrottleNorm = msg.throttleNorm ?? msg.throttle ?? 0;
-
-    const steerNorm = clampNumber(rawSteerNorm, -1, 1, 0);
-
-    const throttleNorm = clampNumber(rawThrottleNorm, -1, 1, 0);
-
-
-
-    const steerDeg = msg.steeringDeg !== undefined
-
-      ? clampNumber(msg.steeringDeg, RC_CFG.steerMin, RC_CFG.steerMax, RC_CFG.steerNeutral)
-
-      : Math.round(RC_CFG.steerNeutral + steerNorm * 45);
-
-
-
-    const escUs = msg.escPulseUs !== undefined
-
-      ? clampNumber(msg.escPulseUs, RC_CFG.escMin, RC_CFG.escMax, RC_CFG.escNeutral)
-
-      : Math.round(RC_CFG.escNeutral + throttleNorm * 500);
-
-
-
-    rcState.armed = msg.armed !== undefined ? Boolean(msg.armed) : true;
-
-    rcState.lastCmdTs = Date.now();
-
-    rcState.lastSource = msg.source || msg.type;
-
-
-
-    if (rcState.armed) {
-
-      transmitToEsp32(steerDeg, escUs, steerNorm, throttleNorm);
-
-    } else {
-
-      transmitToEsp32(RC_CFG.steerNeutral, RC_CFG.escNeutral, 0, 0);
-
+    let steerDeg = 90;
+    if (msg.steeringDeg !== undefined || (msg.steer !== undefined && Math.abs(Number(msg.steer)) > 1.5)) {
+      steerDeg = clampNum(msg.steeringDeg ?? msg.steer, 45, 135, 90);
+    } else if (msg.steeringNorm !== undefined || msg.steerNorm !== undefined || msg.steer !== undefined) {
+      const sNorm = clampNum(msg.steeringNorm ?? msg.steerNorm ?? msg.steer, -1, 1, 0);
+      steerDeg = Math.round(90 + sNorm * 45);
     }
 
+    const escUs = computeSafeEscPulseUs(msg);
+
+    rcControlState.steeringDeg = Math.round(steerDeg);
+    rcControlState.escPulseUs = Math.round(escUs);
+    rcControlState.lastCmdAt = Date.now();
+    rcControlState.lastCmdTs = Date.now();
+    rcControlState.lastSource = sourceTag || msg.source || msg.type || 'ws';
+
+    sendRcUdpPacket(rcControlState.steeringDeg, rcControlState.escPulseUs);
     return true;
-
   }
 
 
@@ -1554,5 +1565,139 @@ app.get('/api/yt-mp4-direct', async (req, res) => {
   }
 
 })();
+
+
+
+// ============================================================================
+// [SOUNDCLOUD DASHBOARD API] TÌM KIẾM NHẠC SOUNDCLOUD + PROXY THUMBNAIL TÁP-LÔ
+// ============================================================================
+let cachedScClientId = process.env.SOUNDCLOUD_CLIENT_ID || '';
+
+function fetchUrlText(targetUrl, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const lib = targetUrl.startsWith('https') ? https : http;
+    const req = lib.get(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        ...headers
+      }
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return fetchUrlText(res.headers.location, headers).then(resolve).catch(reject);
+      }
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => resolve(data));
+    });
+    req.on('error', reject);
+    req.setTimeout(7000, () => { req.destroy(new Error('Timeout')); });
+  });
+}
+
+async function resolveSoundCloudClientId() {
+  if (cachedScClientId) return cachedScClientId;
+  try {
+    const html = await fetchUrlText('https://soundcloud.com/discover');
+    const scriptUrls = [...html.matchAll(/<script[^>]+src="([^"]+a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)].map(m => m[1]);
+    for (let i = scriptUrls.length - 1; i >= Math.max(0, scriptUrls.length - 4); i--) {
+      const jsBody = await fetchUrlText(scriptUrls[i]);
+      const cidMatch = jsBody.match(/client_id\s*:\s*"([a-zA-Z0-9]{32})"/);
+      if (cidMatch && cidMatch[1]) {
+        cachedScClientId = cidMatch[1];
+        return cachedScClientId;
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+// Proxy ảnh Thumbnail cho Táp-lô 3D (có CORS header đầy đủ để THREE.CanvasTexture không bị lỗi Tainted Canvas)
+app.get('/api/sc-thumb', (req, res) => {
+  const imgUrl = String(req.query.url || '').trim();
+  if (!imgUrl || !/^https?:\/\//i.test(imgUrl)) {
+    return res.status(400).end();
+  }
+  const lib = imgUrl.startsWith('https') ? https : http;
+  lib.get(imgUrl, {
+    headers: { 'User-Agent': 'Mozilla/5.0' }
+  }, (upRes) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Content-Type', upRes.headers['content-type'] || 'image/jpeg');
+    upRes.pipe(res);
+  }).on('error', () => res.status(502).end());
+});
+
+// API Tìm kiếm SoundCloud trả về Thumbnail + Track URL cho SoundCloud Widget & Stream
+async function handleSoundCloudSearch(req, res) {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ items: [], results: [] });
+
+  try {
+    const cid = await resolveSoundCloudClientId();
+    if (cid) {
+      const apiUrl = `https://api-v2.soundcloud.com/search/tracks?q=${encodeURIComponent(q)}&client_id=${cid}&limit=12`;
+      const rawJson = await fetchUrlText(apiUrl);
+      const data = JSON.parse(rawJson);
+      if (data && Array.isArray(data.collection) && data.collection.length > 0) {
+        const items = data.collection
+          .filter(t => t && t.permalink_url && t.title)
+          .map((t) => {
+            const rawArt = (t.artwork_url || (t.user && t.user.avatar_url) || '').replace('-large.jpg', '-t500x500.jpg');
+            const totalSec = Math.round((t.duration || 0) / 1000);
+            const hrs = Math.floor(totalSec / 3600);
+            const mins = Math.floor((totalSec % 3600) / 60);
+            const secs = totalSec % 60;
+            const durText = hrs > 0
+              ? `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+              : `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+            return {
+              id: String(t.id),
+              videoId: `sc_${t.id}`,
+              title: t.title,
+              author: (t.user && t.user.username) || 'SoundCloud Artist',
+              durationText: durText,
+              durationSeconds: totalSec,
+              soundcloudUrl: t.permalink_url,
+              widgetUrl: `https://w.soundcloud.com/player/?url=${encodeURIComponent(t.permalink_url)}&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=false`,
+              thumbnail: rawArt ? `/api/sc-thumb?url=${encodeURIComponent(rawArt)}` : '',
+              rawThumbnail: rawArt,
+              source: 'soundcloud'
+            };
+          });
+        return res.json({ items, results: items });
+      }
+    }
+  } catch (err) {}
+
+  // Fallback an toàn: Tìm kiếm qua SoundCloud HTML / iTunes Audio CDN nếu mạng chặn api-v2
+  try {
+    const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=10`;
+    const rawItunes = await fetchUrlText(itunesUrl);
+    const itunesData = JSON.parse(rawItunes);
+    const items = (itunesData.results || []).map((item) => {
+      const art = (item.artworkUrl100 || '').replace('100x100bb', '600x600bb');
+      return {
+        id: String(item.trackId || Date.now()),
+        videoId: `sc_fallback_${item.trackId}`,
+        title: `${item.trackName || q} - ${item.artistName || ''}`,
+        author: item.artistName || 'Audio Stream',
+        durationText: '03:30',
+        durationSeconds: Math.round((item.trackTimeMillis || 210000) / 1000),
+        soundcloudUrl: null,
+        streamUrl: item.previewUrl || null,
+        thumbnail: art ? `/api/sc-thumb?url=${encodeURIComponent(art)}` : '',
+        rawThumbnail: art,
+        source: 'audio_cdn'
+      };
+    });
+    return res.json({ items, results: items });
+  } catch (e) {
+    return res.json({ items: [], results: [] });
+  }
+}
+
+app.get('/api/sc-search', handleSoundCloudSearch);
 
 /* === END BASELINE V3 PATCH === */

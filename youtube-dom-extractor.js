@@ -535,6 +535,8 @@ export async function playExtractedVideoUrlInFrame(videoItem) {
 }
 
 window.playExtractedVideoUrlInFrame = playExtractedVideoUrlInFrame;
+window.playMediaItem = playMediaItem;
+window.searchYouTube = searchYouTube;
 window.triggerUnifiedYouTubeSearch = searchYouTube;
 window.playGuaranteedMp4OnHtml5Player = playMediaItem;
 window.searchYouTubeMp4Universal = searchYouTube;
