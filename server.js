@@ -443,11 +443,12 @@ const discoveredEsp32Cams = {
   rear: { ip: null, port: 4213, lastSeen: 0 }
 };
 
+let lastUdpCommandLog = '';
 // Cấu hình mạch điều khiển xe RC thật (ESP32 Car Controller - GPIO 12/13 qua UDP 4210)
 const esp32CarConfig = {
-  ip: null,
+  ip: '192.168.1.238',
   port: 4210,
-  lastSeen: 0,
+  lastSeen: Date.now(),
   lastSentTime: 0,
   packetsSent: 0
 };
@@ -457,7 +458,7 @@ function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
   // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
   const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-  const t = Math.max(1300, Math.min(1700, Math.round(Number(throttle) || 1500)));
+  const t = Math.max(1150, Math.min(1850, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
   buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)
@@ -742,9 +743,9 @@ cars.set('car_host', {
   carId: 'car_host',
   ownerName: 'Xe Chủ Phòng (Có ESP32)',
   hasEsp32Capability: true,
-  x: 2.4,
-  z: 0,
-  heading: 0,
+  x: -21.0,
+  z: -25.0,
+  heading: -Math.PI / 2,
   speedKmh: 0,
   steerDeg: 0,
   doorsOpen: false,
@@ -772,10 +773,69 @@ function broadcastWorldState(wss) {
   }
 }
 
+function proxyEsp32WebSocket(clientWs, targetIp, targetPort, roleName) {
+  if (!targetIp) {
+    try { clientWs.close(1011, `ESP32 ${roleName} IP not discovered yet`); } catch (e) {}
+    return;
+  }
+  const targetWsUrl = `ws://${targetIp}:${targetPort || 4213}`;
+  let upstreamWs;
+  try {
+    upstreamWs = new WebSocket(targetWsUrl);
+  } catch (err) {
+    try { clientWs.close(1011, `Cannot connect to ${roleName}: ${err.message}`); } catch (e) {}
+    return;
+  }
+
+  upstreamWs.on('message', (data, isBinary) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(data, { binary: isBinary });
+    }
+  });
+
+  upstreamWs.on('error', (err) => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      try { clientWs.close(1011, `Upstream error: ${err.message}`); } catch (e) {}
+    }
+  });
+
+  upstreamWs.on('close', () => {
+    if (clientWs.readyState === WebSocket.OPEN) {
+      try { clientWs.close(); } catch (e) {}
+    }
+  });
+
+  clientWs.on('message', (data, isBinary) => {
+    if (upstreamWs.readyState === WebSocket.OPEN) {
+      upstreamWs.send(data, { binary: isBinary });
+    }
+  });
+
+  clientWs.on('close', () => {
+    try { upstreamWs.close(); } catch (e) {}
+  });
+
+  clientWs.on('error', () => {
+    try { upstreamWs.close(); } catch (e) {}
+  });
+}
+
 function attachMultiplayerServer(serverInstance) {
   const wss = new WebSocket.Server({ server: serverInstance });
 
   wss.on('connection', (ws, req) => {
+    const reqUrl = (req && req.url) || '';
+    if (reqUrl.includes('/esp32-front-ws')) {
+      const front = discoveredEsp32Cams.front;
+      const targetIp = front.ip || '192.168.1.237';
+      return proxyEsp32WebSocket(ws, targetIp, front.port || 4213, 'Front Cam');
+    }
+    if (reqUrl.includes('/esp32-rear-ws')) {
+      const rear = discoveredEsp32Cams.rear;
+      const targetIp = rear.ip || '192.168.1.239';
+      return proxyEsp32WebSocket(ws, targetIp, rear.port || 4213, 'Rear Cam');
+    }
+
     const ua = (req && req.headers && req.headers['user-agent']) || '';
     // Chặn các kết nối từ ESP32, Arduino, curl, router probe không phải trình duyệt người chơi thật
     if (/esp32|arduino|curl|wget|lwip|httpclient/i.test(ua)) {
@@ -783,47 +843,65 @@ function attachMultiplayerServer(serverInstance) {
       return;
     }
 
-    const isFirstPlayer = players.size === 0;
-    const playerId = 'p_' + Math.random().toString(36).slice(2, 8);
-    const assignedOwnCarId = isFirstPlayer ? 'car_host' : `car_guest_${playerId}`;
+    const clientIp = (req && req.socket && req.socket.remoteAddress) || '';
+    ws._clientIp = clientIp;
 
-    // Nếu là thiết bị thứ 2 trở đi (Quest/iPhone/Android khác), tự động spawn xe riêng (Chỉ chạy 3D, KHÔNG cho kết nối ESP32)
-    if (!isFirstPlayer && !cars.has(assignedOwnCarId)) {
-      const idx = players.size;
-      cars.set(assignedOwnCarId, {
-        carId: assignedOwnCarId,
-        ownerId: playerId,
-        ownerName: `Xe Khách #${idx + 1} (Chỉ Chạy 3D - Không ESP32)`,
-        hasEsp32Capability: false,
-        x: -2.8 - (idx - 1) * 3.2,
-        z: 6.5 + (idx - 1) * 6.0,
-        heading: 0,
-        speedKmh: 0,
-        steerDeg: 0,
-        doorsOpen: false,
-        roofOpen: false,
-        turnSignal: 'OFF',
-        occupants: { 0: null, 1: null, 2: null, 3: null }
-      });
+    const hostCar = cars.get('car_host');
+    let seat0OccupantId = hostCar ? hostCar.occupants[0] : null;
+    let seat0Player = seat0OccupantId ? players.get(seat0OccupantId) : null;
+
+    // Tự động nhận diện trường hợp F5 (reload cùng một máy) hoặc kết nối cũ đã đứt:
+    // Nếu ghế 0 đang bị giữ bởi 1 player nhưng player đó từ cùng client IP (vừa F5)
+    // hoặc socket của player đó đã không còn ở trạng thái WebSocket.OPEN:
+    if (seat0Player) {
+      const isSameClient = Boolean(seat0Player.clientIp && seat0Player.clientIp === clientIp);
+      const isOldSocketDead = !seat0Player.ws || seat0Player.ws.readyState !== WebSocket.OPEN;
+      if (isSameClient || isOldSocketDead) {
+        if (seat0Player.ws && seat0Player.ws !== ws) {
+          try { seat0Player.ws.close(); } catch (e) {}
+        }
+        players.delete(seat0OccupantId);
+        if (hostCar) hostCar.occupants[0] = null;
+        seat0OccupantId = null;
+        seat0Player = null;
+      }
     }
+
+    // Ghế tài xế (seat 0) có trống không?
+    const isDriverSeatFree = (seat0OccupantId === null || !players.has(seat0OccupantId));
+    const assignedSeat = isDriverSeatFree ? 0 : ([1, 2, 3].find((s) => !hostCar || !hostCar.occupants[s]) ?? 1);
+    const isHostPlayer = (assignedSeat === 0);
+
+    const playerId = 'p_' + Math.random().toString(36).slice(2, 8);
+    // [HỢP NHẤT XE DUY NHẤT] Tất cả thiết bị (PC, Meta Quest 3, Mobile) mặc định CÙNG ĐỒNG BỘ 100% TRÊN 'car_host'
+    // Đảm bảo kính Quest 3 và Desktop luôn nhìn thấy 1 xe duy nhất, cùng vị trí, cùng góc lái và cùng xem FPV camera!
+    const assignedOwnCarId = 'car_host';
 
     players.set(playerId, {
       playerId,
-      name: isFirstPlayer ? 'Tài Xế Chủ Phòng' : `Người Chơi #${players.size + 1}`,
-      ownCarId: assignedOwnCarId,
-      inCarId: null,
-      seatIndex: 0,
+      ws,
+      clientIp,
+      name: isHostPlayer ? 'Tài Xế Desktop' : `Kính VR / Người Lái #${players.size + 1}`,
+      ownCarId: 'car_host',
+      inCarId: 'car_host',
+      seatIndex: assignedSeat,
+      isHost: isHostPlayer,
       leaningOut: false,
-      x: isFirstPlayer ? 0.65 : -4.5,
-      z: isFirstPlayer ? 1.15 : 6.5,
+      x: 0.65,
+      z: 1.15,
       yaw: 0
     });
+
+    if (hostCar) {
+      hostCar.occupants[assignedSeat] = playerId;
+    }
 
     ws.send(JSON.stringify({
       type: 'WELCOME',
       playerId,
       ownCarId: assignedOwnCarId,
-      isHost: isFirstPlayer,
+      isHost: isHostPlayer,
+      seatIndex: assignedSeat,
       cars: Array.from(cars.values())
     }));
 
@@ -914,7 +992,7 @@ function computeSafeEscPulseUs(msg) {
 
   // 2. Nếu client gửi trực tiếp xung micro-giây (ví dụ CAR_CONTROL: { steer: 90, throttle: 1500 })
   if (msg.escPulseUs !== undefined || (msg.throttle !== undefined && Math.abs(Number(msg.throttle)) >= 500)) {
-    const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1300, 1700, 1500);
+    const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1150, 1850, 1500);
     if (rawUs > 1520) {
       lastMovingForwardAt = Date.now();
       return Math.round(rawUs);
@@ -963,7 +1041,9 @@ function computeSafeEscPulseUs(msg) {
             const sNorm = Math.max(-1, Math.min(1, Number(data.steeringNorm ?? data.steerNorm ?? data.steer) || 0));
             steer = Math.round(90 + sNorm * 45);
           }
-          const throttle = typeof computeSafeEscPulseUs === 'function' ? computeSafeEscPulseUs(data) : (Number(data.throttle) || 1500);
+          const rawThrottle = typeof computeSafeEscPulseUs === 'function' ? computeSafeEscPulseUs(data) : (Number(data.throttle) || 1500);
+          const throttle = Math.abs(rawThrottle - 1500) < 15 ? 1500 : rawThrottle;
+          if (Math.abs(steer - 90) < 3) steer = 90;
           const isActivelyDriving = (throttle !== 1500 || steer !== 90);
           const now = Date.now();
 
@@ -997,9 +1077,9 @@ function computeSafeEscPulseUs(msg) {
             axes: data.axes || [],
             sourcePlayer: playerId
           });
-          for (const client of players.values()) {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(bridgePayload);
+          for (const p of players.values()) {
+            if (p.ws && p.ws !== ws && p.ws.readyState === WebSocket.OPEN) {
+              p.ws.send(bridgePayload);
             }
           }
           // Lưu ý: Không gọi sendUdpCarCommand ở đây vì client đã gửi qua CAR_CONTROL độc lập,
@@ -1009,6 +1089,10 @@ function computeSafeEscPulseUs(msg) {
           sendUdpCarCommand(60, 1500);
           setTimeout(() => sendUdpCarCommand(120, 1500), 250);
           setTimeout(() => sendUdpCarCommand(90, 1500), 500);
+        } else if (data.type === 'TEST_ESP32_MOTOR') {
+          console.log('[TEST MOTOR] Đang kích xung thử ga 1660µs trong 400ms...');
+          sendUdpCarCommand(90, 1660);
+          setTimeout(() => sendUdpCarCommand(90, 1500), 400);
         } else if (data.type === 'SET_ESP32_CAR_IP') {
           if (data.ip) {
             const cleanIp = String(data.ip).trim().replace(/^::ffff:/, '');
@@ -1058,8 +1142,36 @@ function computeSafeEscPulseUs(msg) {
         activeDriverLastActiveTime = 0;
         sendUdpCarCommand(90, 1500);
       }
-      if (players.size === 0 || isFirstPlayer) {
-        // Phanh dừng xe an toàn khi tài xế hoặc tất cả người chơi thoát web
+
+      // Tự động đôn người chơi kế tiếp lên làm Tài Xế (Seat 0) nếu ghế 0 vừa trống!
+      if (hostCar && !hostCar.occupants[0]) {
+        for (const s of [1, 2, 3]) {
+          const nextPid = hostCar.occupants[s];
+          if (nextPid && players.has(nextPid)) {
+            const nextP = players.get(nextPid);
+            if (nextP.ws && nextP.ws.readyState === WebSocket.OPEN) {
+              hostCar.occupants[0] = nextPid;
+              hostCar.occupants[s] = null;
+              nextP.seatIndex = 0;
+              nextP.isHost = true;
+              try {
+                nextP.ws.send(JSON.stringify({
+                  type: 'WELCOME',
+                  playerId: nextPid,
+                  ownCarId: 'car_host',
+                  isHost: true,
+                  seatIndex: 0,
+                  cars: Array.from(cars.values())
+                }));
+              } catch (e) {}
+              break;
+            }
+          }
+        }
+      }
+
+      if (players.size === 0) {
+        // Phanh dừng xe an toàn khi tất cả người chơi thoát web
         sendUdpCarCommand(90, 1500);
       }
       broadcastWorldState(wss);
@@ -1069,6 +1181,14 @@ function computeSafeEscPulseUs(msg) {
 
 const HTTP_PORT = process.env.PORT || 8080;
 const httpServer = http.createServer(app);
+httpServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ [PORT BUSY] Cổng HTTP ${HTTP_PORT} đang bị một tiến trình khác chiếm giữ!`);
+    console.error(`👉 Khắc phục nhanh: Chạy lệnh 'Stop-Process -Name node -Force' trong PowerShell rồi chạy lại: node server.js\n`);
+  } else {
+    console.error('[HTTP ERROR]', err);
+  }
+});
 attachMultiplayerServer(httpServer);
 httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`[HTTP] Server đang chạy tại: http://localhost:${HTTP_PORT}`);
@@ -1081,6 +1201,13 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
     app
   );
+  httpsServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n❌ [PORT BUSY] Cổng HTTPS 8443 đang bị chiếm giữ!`);
+    } else {
+      console.error('[HTTPS ERROR]', err);
+    }
+  });
   attachMultiplayerServer(httpsServer);
   httpsServer.listen(8443, '0.0.0.0', () => {
     const lan = getLocalLanIp();

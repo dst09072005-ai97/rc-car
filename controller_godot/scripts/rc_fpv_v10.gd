@@ -12,16 +12,16 @@ extends Node3D
 ## - Safe view-only mode on Android with explicit RC drive arming interlock
 
 @export_group("Network — RC Vehicle")
-@export var esp32_ip: String = "192.168.4.1"
+@export var esp32_ip: String = "192.168.1.238"
 @export var esp32_port: int = 4210
 
 @export_group("Network — Front Camera")
-@export var camera_ip: String = "192.168.4.102"
-@export var camera_video_port: int = 4212
+@export var camera_ip: String = "192.168.1.237"
+@export var camera_video_port: int = 4213
 
 @export_group("Network — Optional Relay")
-@export_enum("Direct UDP", "WebSocket relay") var video_source: int = 0
-@export var relay_url: String = "ws://192.168.4.2:3000/ws"
+@export_enum("Direct UDP", "WebSocket relay") var video_source: int = 1
+@export var relay_url: String = "ws://192.168.1.237:4213"
 @export var relay_token: String = ""
 
 @export_group("XR Screen Placement & Comfort")
@@ -234,7 +234,37 @@ var xr_button: Button
 var fullscreen_button: Button
 
 
+func _load_vr_config() -> void:
+	var paths := ["user://vr_config.json", "res://config/vr_config.json"]
+	for p in paths:
+		if FileAccess.file_exists(p):
+			var f := FileAccess.open(p, FileAccess.READ)
+			if f:
+				var json_str := f.get_as_text()
+				f.close()
+				var parsed = JSON.parse_string(json_str)
+				if parsed is Dictionary:
+					if parsed.has("relayUrl") and String(parsed["relayUrl"]).strip_edges() != "":
+						relay_url = String(parsed["relayUrl"]).strip_edges()
+					if parsed.has("cameraIp") and String(parsed["cameraIp"]).strip_edges() != "":
+						camera_ip = String(parsed["cameraIp"]).strip_edges()
+					if parsed.has("cameraPort") and int(parsed["cameraPort"]) > 0:
+						camera_video_port = int(parsed["cameraPort"])
+					if parsed.has("esp32Ip") and String(parsed["esp32Ip"]).strip_edges() != "":
+						esp32_ip = String(parsed["esp32Ip"]).strip_edges()
+					if parsed.has("esp32Port") and int(parsed["esp32Port"]) > 0:
+						esp32_port = int(parsed["esp32Port"])
+					if parsed.has("videoSource"):
+						var vs_val = String(parsed["videoSource"]).to_lower()
+						if vs_val == "websocket" or vs_val == "1":
+							video_source = 1
+						elif vs_val == "direct_udp" or vs_val == "0":
+							video_source = 0
+					print("[VR_CONFIG] Loaded configuration from: ", p, " -> relay_url: ", relay_url, " esp32_ip: ", esp32_ip)
+					break
+
 func _ready() -> void:
+	_load_vr_config()
 	is_android = OS.has_feature("android")
 	control_mode = ControlMode.VR_COCKPIT if is_android else ControlMode.DESKTOP_KEYBOARD
 	udp_packet.resize(4)
@@ -274,8 +304,8 @@ func _process(delta: float) -> void:
 	if button_cooldown > 0.0:
 		button_cooldown = max(0.0, button_cooldown - delta)
 
-	_poll_video()
 	_poll_websocket()
+	_poll_video()
 	_update_road_simulation(delta)
 	_update_camera_state(delta)
 	_update_rays_and_screen_interaction(delta)

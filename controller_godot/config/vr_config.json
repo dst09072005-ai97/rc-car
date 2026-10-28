@@ -1,0 +1,8 @@
+{
+  "videoSource": "websocket",
+  "cameraIp": "192.168.1.237",
+  "cameraPort": 4213,
+  "relayUrl": "ws://192.168.1.237:4213",
+  "esp32Ip": "192.168.1.238",
+  "esp32Port": 4210
+}

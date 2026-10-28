@@ -389,8 +389,8 @@ const state = {
   rcConnected: true,
   rcSpeedRatio: 1.0,
   rcSteerSensitivity: 1.0,
-  rcMaxForwardPulse: 1585,
-  rcMaxReversePulse: 1350,
+  rcMaxForwardPulse: 1660,
+  rcMaxReversePulse: 1320,
   rcTargetSpeedKmh: 12.0,
   rcSmoothThrottle: 1500,
   rcSmoothSteer: 90,
@@ -844,7 +844,8 @@ function buildPlayerMetaAvatar() {
 buildPlayerMetaAvatar();
 
 const vehicleRoot = new THREE.Group();
-vehicleRoot.position.set(2.4, 0, 0);
+vehicleRoot.position.set(-21.0, 0, -25.0);
+vehicleRoot.rotation.y = -Math.PI / 2;
 scene.add(vehicleRoot);
 
 const chassisGroup = new THREE.Group();
@@ -1384,7 +1385,11 @@ function connectEsp32Windshield(rawUrl) {
   }
   if (rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')) {
     try {
-      esp32Socket = new WebSocket(rawUrl);
+      let targetWs = rawUrl;
+      if (window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
+        targetWs = `wss://${window.location.host}/api/esp32-front-ws`;
+      }
+      esp32Socket = new WebSocket(targetWs);
       esp32Socket.binaryType = 'arraybuffer';
       esp32Socket.onopen = () => {
         state.esp32Connected = true;
@@ -3058,8 +3063,12 @@ function connectRearEsp32Camera(rawUrl) {
 
   if (rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')) {
     try {
-      console.log('[ESP32-REAR] Đang kết nối WebSocket Cam Lùi:', rawUrl);
-      esp32RearSocket = new WebSocket(rawUrl);
+      let targetWs = rawUrl;
+      if (window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
+        targetWs = `wss://${window.location.host}/api/esp32-rear-ws`;
+      }
+      console.log('[ESP32-REAR] Đang kết nối WebSocket Cam Lùi:', targetWs);
+      esp32RearSocket = new WebSocket(targetWs);
       esp32RearSocket.binaryType = 'arraybuffer';
       esp32RearSocket.onopen = () => {
         state.esp32RearConnected = true;
@@ -3519,28 +3528,33 @@ function updatePhysicsCollisionsAndTerrainLock(dt) {
     const localX = ((carPos.x % BLOCK_SIZE) + BLOCK_SIZE * 1.5) % BLOCK_SIZE - BLOCK_SIZE / 2;
     const localZ = ((carPos.z % BLOCK_SIZE) + BLOCK_SIZE * 1.5) % BLOCK_SIZE - BLOCK_SIZE / 2;
 
-    // 4 góc tòa nhà cao tầng trong mỗi ô phố ở (±22, ±22) với kích thước 13x13m (bán kính va chạm ~ 8.0m)
-    const buildingCorners = [[-22, -22], [22, -22], [-22, 22], [22, 22]];
-    let hitTerrain = false;
-    for (const [bx, bz] of buildingCorners) {
-      if (Math.abs(localX - bx) < 7.8 && Math.abs(localZ - bz) < 7.8) {
-        hitTerrain = true;
-        break;
-      }
-    }
+    // Ngoại trừ khu vực Gara Toàn & đường dốc ra vào (nằm ở góc x: -30..-13, z: -32..-17 của ô trung tâm)
+    const isInGarageZone = (Math.abs(carPos.x - (-21.5)) < 9.5 && Math.abs(carPos.z - (-25.0)) < 9.5);
 
-    if (hitTerrain) {
-      // Chặn không cho chạy xuyên địa hình, bật lùi xe lại và tạo hiệu ứng va chạm
-      vehicleRoot.position.copy(lastValidCarPos);
-      state.velocityMs = -state.velocityMs * 0.35;
-      state.speedKmh = state.velocityMs * 3.6;
-      if (collisionCooldown <= 0) {
-        playImpactSound(16);
-        state.suspensionShakeIntensity = 1.75;
-        collisionCooldown = 0.45;
-        state.lastActionLog = '🧱 TÔNG ĐỊA HÌNH! (Chưa kết nối ESP32 Cam trước nên xe bị chặn, không được xuyên địa hình!)';
+    if (!isInGarageZone) {
+      // 4 góc tòa nhà cao tầng trong mỗi ô phố ở (±22, ±22) với kích thước 13x13m (bán kính va chạm ~ 8.0m)
+      const buildingCorners = [[-22, -22], [22, -22], [-22, 22], [22, 22]];
+      let hitTerrain = false;
+      for (const [bx, bz] of buildingCorners) {
+        if (Math.abs(localX - bx) < 7.8 && Math.abs(localZ - bz) < 7.8) {
+          hitTerrain = true;
+          break;
+        }
       }
-      return;
+
+      if (hitTerrain) {
+        // Chặn không cho chạy xuyên địa hình, bật lùi xe lại và tạo hiệu ứng va chạm
+        vehicleRoot.position.copy(lastValidCarPos);
+        state.velocityMs = -state.velocityMs * 0.35;
+        state.speedKmh = state.velocityMs * 3.6;
+        if (collisionCooldown <= 0) {
+          playImpactSound(16);
+          state.suspensionShakeIntensity = 1.75;
+          collisionCooldown = 0.45;
+          state.lastActionLog = '🧱 TÔNG ĐỊA HÌNH! (Chưa kết nối ESP32 Cam trước nên xe bị chặn, không được xuyên địa hình!)';
+        }
+        return;
+      }
     }
   }
   lastValidCarPos.copy(vehicleRoot.position);
@@ -3787,8 +3801,36 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           state.playerId = msg.playerId;
           state.ownCarId = msg.ownCarId;
           state.activeCarId = msg.ownCarId;
-          state.isHostPlayer = Boolean(msg.isHost);
-          state.lastActionLog = '🌐 Đã kết nối vào Thế giới 3D!';
+          state.isHostPlayer = true; // Cho phép cả Desktop và Kính Quest 3 cùng điều khiển và xem camera
+          if (typeof msg.seatIndex === 'number') {
+            state.seatIndex = msg.seatIndex;
+          }
+          state.lastActionLog = '🌐 Đã kết nối đồng bộ vào Xe Rolls-Royce FPV!';
+          // Tự động lên xe luôn ở chế độ DRIVING để người dùng có thể nhấn ga/lái được ngay lập tức!
+          if (state.playerMode === 'ON_FOOT') {
+            state.playerMode = 'DRIVING';
+            state.doorsOpen = false;
+            state.engineRunning = true;
+            if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
+            if (typeof driverSeatMount !== 'undefined' && typeof SEAT_POSITIONS !== 'undefined') {
+              driverSeatMount.position.copy(SEAT_POSITIONS[state.seatIndex || 0].pos);
+            }
+          }
+          // Gửi ngay 1 gói CAR_SYNC để server cập nhật vị trí xe hiện tại
+          if (mpSocket && mpSocket.readyState === WebSocket.OPEN && (state.seatIndex === 0 || !state.seatIndex)) {
+            mpSocket.send(JSON.stringify({
+              type: 'CAR_SYNC',
+              carId: state.activeCarId,
+              x: vehicleRoot.position.x,
+              z: vehicleRoot.position.z,
+              heading: state.headingRad,
+              speedKmh: state.speedKmh,
+              steerDeg: state.steeringAngleDeg,
+              doorsOpen: state.doorsOpen,
+              roofOpen: state.convertibleRoofOpen,
+              turnSignal: state.turnSignal
+            }));
+          }
         } else if (msg.type === 'WHEEL_BRIDGE_STATE') {
           // Cầu nối vô lăng GOG R808 từ Laptop sang kính Meta Quest 3
           const wObj = window._racingWheel;
@@ -3839,13 +3881,19 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
                 }
               }
             }
-            if (c.carId === state.activeCarId && state.seatIndex !== 0 && state.playerMode === 'DRIVING') {
-              // Nếu mình đang ngồi ghế phụ (1, 2, 3) trên xe do người chơi kia cầm lái (ghế 0): đồng bộ vị trí xe theo tài xế!
-              vehicleRoot.position.x = THREE.MathUtils.lerp(vehicleRoot.position.x, c.x, 0.35);
-              vehicleRoot.position.z = THREE.MathUtils.lerp(vehicleRoot.position.z, c.z, 0.35);
-              state.headingRad = c.heading;
-              vehicleRoot.rotation.y = c.heading;
-              state.speedKmh = c.speedKmh || 0;
+            if (c.carId === state.activeCarId && state.playerMode === 'DRIVING') {
+              // Chỉ người ngồi ghế phụ / hành khách (seatIndex !== 0) mới lerp vị trí theo server.
+              // Tài xế lái xe chính (seatIndex === 0) tự chủ 100% tọa độ vật lý để xe KHÔNG BAO GIỜ bị giật lùi / rubberband!
+              if (state.seatIndex !== 0) {
+                vehicleRoot.position.x = THREE.MathUtils.lerp(vehicleRoot.position.x, c.x, 0.45);
+                vehicleRoot.position.z = THREE.MathUtils.lerp(vehicleRoot.position.z, c.z, 0.45);
+                state.headingRad = c.heading;
+                vehicleRoot.rotation.y = c.heading;
+                state.speedKmh = c.speedKmh || 0;
+                if (c.steerDeg !== undefined) {
+                  state.steeringAngleDeg = THREE.MathUtils.lerp(state.steeringAngleDeg, c.steerDeg, 0.35);
+                }
+              }
             } else if (c.carId !== state.activeCarId) {
               if (!remoteCarMeshes.has(c.carId)) {
                 remoteCarMeshes.set(c.carId, createRemotePeerCarMesh(c));
@@ -3921,7 +3969,7 @@ function supplementaryFrameUpdate() {
       leaningOut: state.isLeaningOut
     }));
 
-    if (state.playerMode === 'DRIVING' && state.seatIndex === 0) {
+    if (state.playerMode === 'DRIVING' && (state.seatIndex === 0 || !state.seatIndex)) {
       mpSocket.send(JSON.stringify({
         type: 'CAR_SYNC',
         carId: state.activeCarId,
@@ -19582,6 +19630,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     vehicleRoot.position.set(GARAGE_CENTER_POS.x + 0.5, 0, GARAGE_CENTER_POS.z);
     state.headingRad = -Math.PI / 2; // Mũi xe hướng thẳng ra cửa cuốn Gara (+X)
     vehicleRoot.rotation.y = state.headingRad;
+    if (typeof lastValidCarPos !== 'undefined') {
+      lastValidCarPos.copy(vehicleRoot.position);
+    }
 
     // Đặt điểm đứng ban đầu của người chơi ngay trước Gara (cách cửa cuốn 7.2m để thấy cửa đang khép hờ, bước tới 1.2m là tự mở!)
     state.avatarPos.set(GARAGE_CENTER_POS.x + GARAGE_W / 2 + 7.2, 0.24, GARAGE_CENTER_POS.z);
@@ -20278,6 +20329,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
       return;
     }
+    if (!activeGp.axes || !activeGp.buttons) return;
 
     if (!racingWheel.connected) {
       racingWheel.connected = true;
@@ -20990,6 +21042,25 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       btnInvertSteer.textContent = state.invertCarSteer ? '🔄 Đảo Lái: BẬT (Ngược)' : '🔄 Đảo Lái (Trái/Phải)';
     });
 
+    // Hoán đổi kênh Servo & ESC linh hoạt
+    const btnSwapPorts = document.getElementById('btn-toggle-swap-ports');
+    state.swapSteerAndThrottle = localStorage.getItem('rc_swap_ports') === 'true';
+    function updateSwapPortsBtn() {
+      if (btnSwapPorts) {
+        btnSwapPorts.style.background = state.swapSteerAndThrottle ? '#eb4d4b' : '#1f3354';
+        btnSwapPorts.textContent = state.swapSteerAndThrottle ? '🔀 Đổi Cổng: BẬT (ESC=P12, Servo=P13)' : '🔀 Đổi Cổng (Servo ⇋ ESC)';
+      }
+    }
+    updateSwapPortsBtn();
+    btnSwapPorts?.addEventListener('click', () => {
+      state.swapSteerAndThrottle = !state.swapSteerAndThrottle;
+      localStorage.setItem('rc_swap_ports', state.swapSteerAndThrottle ? 'true' : 'false');
+      updateSwapPortsBtn();
+      state.lastActionLog = state.swapSteerAndThrottle
+        ? '🔀 ĐÃ ĐỔI CỔNG: Phím W/S lái ESC (cổng 12), phím A/D bẻ lái Servo (cổng 13)!'
+        : '🔀 CHẾ ĐỘ CHUẨN: Phím A/D bẻ lái Servo (cổng 12), phím W/S lái ESC (cổng 13)!';
+    });
+
     // Nút Test Lắc Bánh Xe (Pulse Servo)
     // Cân chỉnh tốc độ xe thật và đồng bộ 1:1 với app 3D (Bản vá V195)
     const btnSpeedSlow = document.getElementById('btn-rc-speed-slow');
@@ -21075,6 +21146,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       const btn = savedPulse <= 1570 ? btnSpeedSlow : (savedPulse <= 1600 ? btnSpeedMedium : btnSpeedFast);
       setRcSpeedPreset(savedPulse, savedKmh, savedPulse <= 1570 ? '🐢 Êm Ái' : (savedPulse <= 1600 ? '🚗 Vừa Phải' : '🏎️ Thể Thao'), btn, savedRev || undefined);
     }
+
+    const btnTestMotor = document.getElementById('btn-test-esp32-motor');
+    btnTestMotor?.addEventListener('click', () => {
+      if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
+        state.lastActionLog = '⚠️ Chưa kết nối máy chủ WebSocket!';
+        return;
+      }
+      state.lastActionLog = '🏎️ Đang thử nhấp ga 1660µs tới xe RC trong 400ms...';
+      mpSocket.send(JSON.stringify({ type: 'TEST_ESP32_MOTOR' }));
+    });
 
     btnTestPulse?.addEventListener('click', () => {
       if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
@@ -21249,8 +21330,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (now - lastCarControlSendTime >= 40) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
-        const maxFwdDelta = Math.max(20, Math.min(180, (state.rcMaxForwardPulse || 1585) - 1500));
-        const maxRevDelta = Math.max(40, Math.min(220, 1500 - (state.rcMaxReversePulse || 1350)));
+        const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
+        const maxRevDelta = Math.max(40, Math.min(260, 1500 - (state.rcMaxReversePulse || 1320)));
 
         let targetSteer = 90;
         let targetThrottle = 1500;
@@ -21361,8 +21442,22 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         const steer = targetSteer;
         const throttle = Math.round(state.rcSmoothThrottle);
 
-        carControlPacket.steer = steer;
-        carControlPacket.throttle = throttle;
+        if (state.swapSteerAndThrottle) {
+          const gasNorm = (throttle - 1500) / 350.0;
+          const escAnglePort12 = Math.round(90 - gasNorm * 45);
+          const steerNorm = (steer - 90) / 45.0;
+          const servoPulsePort13 = Math.round(1500 + steerNorm * 350);
+          carControlPacket.steer = escAnglePort12;
+          carControlPacket.throttle = servoPulsePort13;
+          carControlPacket.steeringDeg = escAnglePort12;
+          carControlPacket.escPulseUs = servoPulsePort13;
+        } else {
+          carControlPacket.steer = steer;
+          carControlPacket.throttle = throttle;
+          carControlPacket.steeringDeg = steer;
+          carControlPacket.escPulseUs = throttle;
+        }
+        carControlPacket.gear = state.gearIndex === 1 ? 'R' : 'D';
         mpSocket.send(JSON.stringify(carControlPacket));
 
         // Nếu vô lăng GOG R808 đang cắm vào máy này, phát thêm Bridge State cho Quest 3
@@ -21423,66 +21518,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     };
   }
 
-  // 2. BỘ LẬP LỊCH GỬI LỆNH ĐIỀU KHIỂN XE THẬT 25HZ (40MS) ĐỘC LẬP VỚI VÒNG RENDER
-  // Sử dụng đúng biến mpSocket trong scope của app.js và đúng cấu trúc CAR_CONTROL
-  let smoothSteerDeg = 90;
-  let lastForwardMotionTime = 0;
-
-  setInterval(() => {
-    if (typeof mpSocket === 'undefined' || !mpSocket || mpSocket.readyState !== 1) return;
-    if (typeof state === 'undefined' || !state) return;
-
-    // Chỉ gửi lệnh điều khiển khi người chơi đang ở chế độ lái xe của mình
-    if (state.playerMode !== 'DRIVING') return;
-
-    // Quy đổi góc vô lăng [-540..540] sang góc servo [45..135] và giá trị chuẩn hóa [-1..1]
-    const steerNorm = THREE.MathUtils.clamp((state.steeringAngleDeg || 0) / 540, -1, 1);
-    const targetSteerDeg = 90 + steerNorm * 45;
-    smoothSteerDeg = THREE.MathUtils.lerp(smoothSteerDeg, targetSteerDeg, 0.45);
-
-    // Đọc từ bàn đạp ga / phanh / cần số thực tế của người chơi (KHÔNG lấy state.velocityMs)
-    const rawGas = THREE.MathUtils.clamp((state.throttlePercent || 0) / 100, 0, 1);
-    const rawBrake = THREE.MathUtils.clamp((state.brakePercent || 0) / 100, 0, 1);
-    const currentGear = state.gear || (state.velocityMs < -0.2 ? 'R' : 'D');
-
-    let targetEscUs = 1500;
-    let netThrottleNorm = 0;
-
-    if (rawBrake > 0.05) {
-      // Đạp phanh -> Cắt ga đưa về trung tính 1500 µs (Tuyệt đối không biến phanh thành lùi!)
-      targetEscUs = 1500;
-      netThrottleNorm = 0;
-    } else if (rawGas > 0.02) {
-      if (currentGear === 'R') {
-        // Chỉ lùi khi đang ở số R và đã qua thời gian khóa an toàn 350ms sau khi tiến
-        if (Date.now() - lastForwardMotionTime > 350) {
-          targetEscUs = Math.round(1500 - rawGas * 200); // [1500..1300 µs]
-          netThrottleNorm = -rawGas;
-        } else {
-          targetEscUs = 1500;
-        }
-      } else if (currentGear === 'D' || currentGear === 'S') {
-        lastForwardMotionTime = Date.now();
-        targetEscUs = Math.round(1500 + rawGas * 200);   // [1500..1700 µs]
-        netThrottleNorm = rawGas;
-      }
-    }
-
-    // Gửi gói CAR_CONTROL tương thích đầy đủ với cả relay hiện tại lẫn bộ lọc an toàn mới
-    mpSocket.send(JSON.stringify({
-      type: 'CAR_CONTROL',
-      steer: Math.round(smoothSteerDeg),
-      throttle: targetEscUs,
-      steeringDeg: Math.round(smoothSteerDeg),
-      escPulseUs: targetEscUs,
-      steeringNorm: Number(steerNorm.toFixed(4)),
-      throttleNorm: Number(netThrottleNorm.toFixed(4)),
-      brakeNorm: Number(rawBrake.toFixed(4)),
-      gear: currentGear,
-      timestamp: Date.now()
-    }));
-  }, 40);
-
+  // 2. SINGLE RENDER PIPELINE: LỆNH LÁI XE RC ESP32 ĐÃ ĐƯỢC HỢP NHẤT TRONG SCENE.ONBEFORERENDER
+  // Đã gỡ bỏ vòng lặp setInterval thứ 2 chạy song song để triệt tiêu 100% xung đột gửi đúp khiến Servo giật và ESC ngắt ga.
+  
   // 3. BỌC NỐI TIẾP (CHAINING) VÀO SCENE.ONBEFORERENDER — BẢO TOÀN 100% CALLBACK HIỆN CÓ
   const prevOnBeforeRender = scene.onBeforeRender;
 

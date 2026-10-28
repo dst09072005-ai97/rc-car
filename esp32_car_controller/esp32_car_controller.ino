@@ -11,8 +11,8 @@
 #if __has_include("wifi_credentials.h")
 #include "wifi_credentials.h"
 #else
-const char* WIFI_SSID = "YOUR_WIFI_SSID";
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc tạo file wifi_credentials.h)
+const char* WIFI_SSID = "BETEA";
+const char* WIFI_PASS = "daihongbao"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc tạo file wifi_credentials.h)
 #endif
 
 // Cổng UDP nhận lệnh điều khiển lái & ga từ Web Simulator (Mặc định 4210)
@@ -30,11 +30,11 @@ WiFiUDP udp;
 const int PIN_STATUS_LED = 2;
 
 // Chân điều khiển Servo bẻ lái (Trái / Phải)
-const int PIN_SERVO_STEER = 12;
+const int PIN_SERVO_STEER = 14; // Chân Servo Lái (Phím A/D)
 
 #if USE_L298N_MOTOR_DRIVER == 0
   // CẤU HÌNH A: RC ESC (Bộ điều tốc chuẩn RC 3 dây: Trắng-Đỏ-Đen)
-  const int PIN_ESC_THROTTLE = 13; // Chân xung PWM điều khiển ESC
+  const int PIN_ESC_THROTTLE = 12; // Chân xung PWM điều khiển ESC Ga Tiến/Lùi (GPIO 12)
   Servo escThrottle;
 #else
   // CẤU HÌNH B: Mạch cầu H L298N / TB6612
@@ -105,9 +105,9 @@ void setup() {
 
 #if USE_L298N_MOTOR_DRIVER == 0
   escThrottle.setPeriodHertz(50);
-  escThrottle.attach(PIN_ESC_THROTTLE, 1000, 2000);
+  escThrottle.attach(PIN_ESC_THROTTLE, 500, 2500);
   escThrottle.writeMicroseconds(1500); // Mức trung tính (dừng ga)
-  Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + ESC Động Cơ (GPIO 13)");
+  Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 14) + ESC Động Cơ (GPIO 12)");
   // Giữ xung Neutral 1500us trong 1.5s để ESC hoàn thành chu trình khởi động (Arming Beep)
   delay(1500);
 #else
@@ -193,7 +193,7 @@ void loop() {
           int sVal = 90, tVal = 1500;
           if (sscanf(str, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) == 2) {
             sVal = constrain(sVal, 45, 135);
-            tVal = constrain(tVal, 1300, 1700);
+            tVal = constrain(tVal, 1150, 1850);
             steeringServo.write(sVal);
             applyMotorThrottle(tVal);
             currentSteer = sVal;
@@ -210,16 +210,14 @@ void loop() {
         int16_t throttle = (int16_t)(buffer[2] | (buffer[3] << 8));
 
         steer = constrain(steer, 45, 135);          // 45° (trái) -> 90° (thẳng) -> 135° (phải)
-        throttle = constrain(throttle, 1300, 1700); // 1300us (lùi) -> 1500us (dừng) -> 1700us (tiến)
+        throttle = constrain(throttle, 1150, 1850); // 1150us (lùi) -> 1500us (dừng) -> 1850us (tiến)
 
         if (steer != currentSteer) {
           steeringServo.write(steer);
           currentSteer = steer;
         }
-        if (throttle != currentThrottle) {
-          applyMotorThrottle(throttle);
-          currentThrottle = throttle;
-        }
+        applyMotorThrottle(throttle);
+        currentThrottle = throttle;
 
         lastPacketTime = millis();
         isFailsafeActive = false;
