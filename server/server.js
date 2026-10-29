@@ -171,6 +171,7 @@ function compressCarsState() {
     carId: c.carId,
     ownerName: c.ownerName,
     hasEsp32Capability: c.hasEsp32Capability,
+    driverPlayerId: c.driverPlayerId || null,
     x: Math.round((c.x || 0) * 100) / 100,
     z: Math.round((c.z || 0) * 100) / 100,
     heading: Math.round((c.heading || 0) * 1000) / 1000,
@@ -508,18 +509,26 @@ cars.set('car_host', {
 cars.delete('car_guest_1');
 
 
-function broadcastWorldState(wss) {
+const activeMultiplayerSockets = new Set();
+
+function broadcastWorldState() {
+  if (activeMultiplayerSockets.size === 0) return;
   const payload = JSON.stringify({
     type: 'WORLD_STATE',
     cars: compressCarsState(),
     players: Array.from(players.values())
   });
-  for (const client of wss.clients) {
+  for (const client of activeMultiplayerSockets) {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
+      try { client.send(payload); } catch (e) {}
     }
   }
 }
+
+// Chu kỳ đồng bộ vị trí xe liên tục 20Hz (mỗi 50ms) giữa Desktop, Kính VR Meta Quest 3 và Điện Thoại
+setInterval(() => {
+  broadcastWorldState();
+}, 50);
 
 function proxyEsp32WebSocket(clientWs, targetIp, targetPort, roleName) {
   if (!targetIp) {
@@ -573,6 +582,7 @@ function attachMultiplayerServer(serverInstance) {
   wss.on('error', () => {});
 
   wss.on('connection', (ws, req) => {
+    activeMultiplayerSockets.add(ws);
     const reqUrl = (req && req.url) || '';
     if (reqUrl.includes('/esp32-front-ws')) {
       const front = (typeof discoveredEsp32Cams !== 'undefined' && discoveredEsp32Cams.front) || {};
@@ -650,7 +660,7 @@ function attachMultiplayerServer(serverInstance) {
       cars: Array.from(cars.values())
     }));
 
-    broadcastWorldState(wss);
+    broadcastWorldState();
 
     ws.on('message', (msg) => {
       try {
@@ -675,6 +685,8 @@ function attachMultiplayerServer(serverInstance) {
           c.doorsOpen = Boolean(data.doorsOpen);
           c.roofOpen = Boolean(data.roofOpen);
           c.turnSignal = data.turnSignal ?? c.turnSignal;
+          c.driverPlayerId = data.driverPlayerId || playerId;
+          broadcastWorldState();
         } else if (data.type === 'ENTER_CAR' && data.carId && cars.has(data.carId)) {
           const c = cars.get(data.carId);
           // Giải phóng ghế cũ nếu có
@@ -713,17 +725,19 @@ function attachMultiplayerServer(serverInstance) {
           }
         } else if (data.type === 'RC_HARDWARE_TELEMETRY') {
           // Nhận tín hiệu từ xe RC thật bên ngoài (tốc độ thực, trạng thái va chạm vật cản)
-          for (const client of wss.clients) {
+          const telPayload = JSON.stringify(data);
+          for (const client of activeMultiplayerSockets) {
             if (client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify(data));
+              try { client.send(telPayload); } catch (e) {}
             }
           }
         }
-        broadcastWorldState(wss);
+        broadcastWorldState();
       } catch (e) {}
     });
 
     ws.on('close', () => {
+      activeMultiplayerSockets.delete(ws);
       for (const carObj of cars.values()) {
         for (const s of [0, 1, 2, 3]) {
           if (carObj.occupants[s] === playerId) carObj.occupants[s] = null;
@@ -770,7 +784,7 @@ function attachMultiplayerServer(serverInstance) {
         }
       }
 
-      broadcastWorldState(wss);
+      broadcastWorldState();
     });
   });
 }

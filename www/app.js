@@ -3806,14 +3806,19 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             state.seatIndex = msg.seatIndex;
           }
           state.lastActionLog = '🌐 Đã kết nối đồng bộ vào Xe Rolls-Royce FPV!';
-          // Tự động lên xe luôn ở chế độ DRIVING để người dùng có thể nhấn ga/lái được ngay lập tức!
+          // Tự động lên xe luôn ở chế độ DRIVING và gắn cameraRig vào Ghế để khi xe chạy, Kính VR & Web di chuyển cùng xe 100%!
           if (state.playerMode === 'ON_FOOT') {
             state.playerMode = 'DRIVING';
             state.doorsOpen = false;
             state.engineRunning = true;
             if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
-            if (typeof driverSeatMount !== 'undefined' && typeof SEAT_POSITIONS !== 'undefined') {
-              driverSeatMount.position.copy(SEAT_POSITIONS[state.seatIndex || 0].pos);
+            if (typeof driverSeatMount !== 'undefined' && driverSeatMount) {
+              driverSeatMount.add(cameraRig);
+              cameraRig.position.set(0, 0, 0);
+              cameraRig.rotation.set(0, 0, 0);
+              if (typeof SEAT_POSITIONS !== 'undefined') {
+                driverSeatMount.position.copy(SEAT_POSITIONS[state.seatIndex || 0].pos);
+              }
             }
           }
           // Gửi ngay 1 gói CAR_SYNC để server cập nhật vị trí xe hiện tại
@@ -3881,17 +3886,32 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
                 }
               }
             }
-            if (c.carId === state.activeCarId && state.playerMode === 'DRIVING') {
-              // Chỉ người ngồi ghế phụ / hành khách (seatIndex !== 0) mới lerp vị trí theo server.
-              // Tài xế lái xe chính (seatIndex === 0) tự chủ 100% tọa độ vật lý để xe KHÔNG BAO GIỜ bị giật lùi / rubberband!
-              if (state.seatIndex !== 0) {
-                vehicleRoot.position.x = THREE.MathUtils.lerp(vehicleRoot.position.x, c.x, 0.45);
-                vehicleRoot.position.z = THREE.MathUtils.lerp(vehicleRoot.position.z, c.z, 0.45);
+            if (c.carId === state.activeCarId) {
+              // Kiểm tra xem máy này có đang chủ động ấn phím / đạp ga / bẻ lái trực tiếp không
+              const isLocallyDrivingInput = Boolean(
+                (keys && (keys.w || keys.s || keys.a || keys.d)) ||
+                (holdState && (holdState.gas || holdState.brake || holdState.left || holdState.right)) ||
+                (Math.abs(state.throttlePercent || 0) > 2) ||
+                (Math.abs(state.steeringAngleDeg || 0) > 3) ||
+                (Math.abs(xrThumbstickForward || 0) > 0.15) ||
+                (Math.abs(xrThumbstickTurn || 0) > 0.15) ||
+                (window._racingWheel && window._racingWheel.connected && (window._racingWheel.gasPercent > 2 || Math.abs(window._racingWheel.steerAngleDeg) > 5))
+              );
+
+              // Nếu máy này không đang chủ động bẻ lái/nhấn ga (ví dụ đang đeo kính VR hoặc xem trên điện thoại):
+              // Đồng bộ 100% vị trí xe, hướng xoay, tốc độ và góc vô lăng theo thiết bị đang lái!
+              if (!isLocallyDrivingInput) {
+                vehicleRoot.position.x = THREE.MathUtils.lerp(vehicleRoot.position.x, c.x, 0.65);
+                vehicleRoot.position.z = THREE.MathUtils.lerp(vehicleRoot.position.z, c.z, 0.65);
                 state.headingRad = c.heading;
                 vehicleRoot.rotation.y = c.heading;
                 state.speedKmh = c.speedKmh || 0;
+                state.velocityMs = (c.speedKmh || 0) / 3.6;
                 if (c.steerDeg !== undefined) {
-                  state.steeringAngleDeg = THREE.MathUtils.lerp(state.steeringAngleDeg, c.steerDeg, 0.35);
+                  state.steeringAngleDeg = THREE.MathUtils.lerp(state.steeringAngleDeg, c.steerDeg, 0.5);
+                  if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
+                    steeringWheelPivot.rotation.z = THREE.MathUtils.degToRad(-state.steeringAngleDeg);
+                  }
                 }
               }
             } else if (c.carId !== state.activeCarId) {
@@ -3969,10 +3989,23 @@ function supplementaryFrameUpdate() {
       leaningOut: state.isLeaningOut
     }));
 
-    if (state.playerMode === 'DRIVING' && (state.seatIndex === 0 || !state.seatIndex)) {
+    const isLocallyDrivingInput = Boolean(
+      (keys && (keys.w || keys.s || keys.a || keys.d)) ||
+      (holdState && (holdState.gas || holdState.brake || holdState.left || holdState.right)) ||
+      (Math.abs(state.throttlePercent || 0) > 2) ||
+      (Math.abs(state.steeringAngleDeg || 0) > 3) ||
+      (Math.abs(xrThumbstickForward || 0) > 0.15) ||
+      (Math.abs(xrThumbstickTurn || 0) > 0.15) ||
+      (window._racingWheel && window._racingWheel.connected && (window._racingWheel.gasPercent > 2 || Math.abs(window._racingWheel.steerAngleDeg) > 5))
+    );
+
+    // Bất kỳ thiết bị nào đang chủ động điều khiển xe (Laptop bấm W/A/S/D, Vô lăng GOG808 hay Kính Quest 3)
+    // đều phát CAR_SYNC lên server để kính VR, máy tính và điện thoại chạy theo đồng bộ 100%!
+    if (state.playerMode === 'DRIVING' && isLocallyDrivingInput) {
       mpSocket.send(JSON.stringify({
         type: 'CAR_SYNC',
         carId: state.activeCarId,
+        driverPlayerId: state.playerId,
         x: vehicleRoot.position.x,
         z: vehicleRoot.position.z,
         heading: state.headingRad,
