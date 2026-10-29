@@ -26,6 +26,7 @@ __pycache__/
 # Agent & IDE local state
 .kiln/
 .serena/
+.codegraph/
 
 # Prevent duplicating files between root junctions and v2 www
 v2/golden_baseline_v2_20261020/www/libs/

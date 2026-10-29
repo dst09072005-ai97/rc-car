@@ -15,8 +15,8 @@ uint8_t packetBuffer[4];
 // ==========================================
 // 2. CẤU HÌNH CHÂN (PINOUT) CHO XE
 // ==========================================
-const int STEER_PIN = 12; // Chân Servo lái
-const int ESC_PIN = 13;   // Chân ESC
+const int STEER_PIN = 14; // Chân Servo lái
+const int ESC_PIN = 12;   // Chân ESC
 
 Servo steeringServo;
 Servo esc;
@@ -40,7 +40,7 @@ void setup() {
   esc.setPeriodHertz(50);
 
   steeringServo.attach(STEER_PIN, 500, 2500); 
-  esc.attach(ESC_PIN, 1000, 2000);            
+  esc.attach(ESC_PIN, 500, 2500);            
 
   esc.writeMicroseconds(1500);
   steeringServo.write(90);
