@@ -822,6 +822,7 @@ function proxyEsp32WebSocket(clientWs, targetIp, targetPort, roleName) {
 
 function attachMultiplayerServer(serverInstance) {
   const wss = new WebSocket.Server({ server: serverInstance });
+  wss.on('error', () => {});
 
   wss.on('connection', (ws, req) => {
     const reqUrl = (req && req.url) || '';
