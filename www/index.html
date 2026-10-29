@@ -526,8 +526,10 @@
         <button id="btn-connect-car-esp32" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;flex:0.6;">📡 Nối Mạch Xe</button>
       </div>
       <div style="display:flex;gap:5px;width:100%;">
-        <button id="btn-toggle-invert-steer" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Lái (Trái/Phải)</button>
-        <button id="btn-test-esp32-pulse" class="act-btn" style="background:#ff9500;color:#000;font-size:10px;font-weight:bold;padding:3px 6px;flex:1;">⚡ Test Lắc Bánh Xe (Pulse)</button>
+        <button id="btn-toggle-invert-steer" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Lái</button>
+        <button id="btn-toggle-swap-ports" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔀 Đổi Cổng (Servo ⇋ ESC)</button>
+        <button id="btn-test-esp32-pulse" class="act-btn" style="background:#ff9500;color:#000;font-size:10px;font-weight:bold;padding:3px 6px;flex:1;">⚡ Test Lái (Servo)</button>
+        <button id="btn-test-esp32-motor" class="act-btn" style="background:#28cd41;color:#000;font-size:10px;font-weight:bold;padding:3px 6px;flex:1;">🏎️ Test Ga (1660µs)</button>
       </div>
       <!-- CÂN CHỈNH ĐỒNG BỘ TỐC ĐỘ 1:1 XE THẬT & APP 3D (CHẾ ĐỘ LÁI VỪA PHẢI, DỄ ĐIỀU KHIỂN) -->
       <div style="display:flex;flex-direction:column;gap:3px;background:rgba(0,0,0,0.3);padding:5px;border-radius:5px;border:1px solid #223046;">
@@ -542,8 +544,8 @@
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:10px;margin-top:2px;">
           <span style="color:#8ab4f8;white-space:nowrap;">Gạt chỉnh ga:</span>
-          <input id="slider-rc-max-throttle" type="range" min="1540" max="1680" step="5" value="1585" style="flex:1;accent-color:#00e5ff;" />
-          <span id="val-rc-max-throttle" style="font-family:monospace;color:#00ff88;font-weight:bold;min-width:42px;">1585µs</span>
+          <input id="slider-rc-max-throttle" type="range" min="1540" max="1760" step="5" value="1660" style="flex:1;accent-color:#00e5ff;" />
+          <span id="val-rc-max-throttle" style="font-family:monospace;color:#00ff88;font-weight:bold;min-width:42px;">1660µs</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px;font-size:10px;margin-top:2px;">
           <span style="color:#ffd60a;white-space:nowrap;">Lực ga lùi:</span>
