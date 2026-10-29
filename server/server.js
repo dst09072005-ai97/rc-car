@@ -1701,3 +1701,315 @@ async function handleSoundCloudSearch(req, res) {
 app.get('/api/sc-search', handleSoundCloudSearch);
 
 /* === END BASELINE V3 PATCH === */
+
+
+// ============================================================================
+// PATCH V250 CHO SERVER.JS:
+// 1. ĐỒNG BỘ DUAL ESP32-CAM (CAM TRƯỚC + CAM LÙI) QUA HTTPS/HTTP REVERSE PROXY
+// 2. RELAY TÍN HIỆU VÔ LĂNG GOG808 / GAMEPAD / APP RA XE THẬT (ESP32 CONTROLLER) QUA UDP + HTTP + WS
+// 3. ĐỒNG BỘ TRẠNG THÁI BẢNG CHỨC NĂNG GIỮA LOCAL HTTP VÀ QUEST 3 / MOBILE HTTPS
+// ============================================================================
+(() => {
+  const http = require('http');
+  const dgram = require('dgram');
+  const udpClient = dgram.createSocket('udp4');
+  udpClient.on('error', () => {});
+
+  // Cấu hình mặc định (Có thể đổi trực tiếp trên giao diện Web/Kính mà không cần khởi động lại Server)
+  const rcHardwareState = {
+    frontCamIp: process.env.ESP32_FRONT_CAM_IP || '192.168.1.101',
+    frontCamPort: Number(process.env.ESP32_FRONT_CAM_PORT || 81),
+    frontCamPath: process.env.ESP32_FRONT_CAM_PATH || '/stream',
+
+    rearCamIp: process.env.ESP32_REAR_CAM_IP || '192.168.1.102',
+    rearCamPort: Number(process.env.ESP32_REAR_CAM_PORT || 81),
+    rearCamPath: process.env.ESP32_REAR_CAM_PATH || '/stream',
+
+    ctrlIp: process.env.ESP32_CTRL_IP || '192.168.1.100',
+    ctrlUdpPort: Number(process.env.ESP32_CTRL_UDP_PORT || 4210),
+    ctrlHttpPort: Number(process.env.ESP32_CTRL_HTTP_PORT || 80),
+
+    // Trạng thái điều khiển & Bảng chức năng đồng bộ toàn hệ thống (HTTP <-> HTTPS)
+    throttle: 0,       // -255 .. 255
+    steering: 0,       // -100 .. 100
+    gear: 'D',         // 'P' | 'R' | 'N' | 'D'
+    brake: 0,          // 0 | 1
+    lights: false,
+    horn: false,
+    activeCam: 'front',
+    weatherMode: 'night',
+    inputSource: 'NONE',
+    lastUpdateTs: Date.now(),
+    esp32Alive: false
+  };
+
+  let lastHttpRelayTime = 0;
+
+  // Hàm bắn tín hiệu điều khiển xuống mạch ESP32 Controller ngoài đời thật
+  function dispatchToRealEsp32Controller(payload) {
+    const t = Math.max(-255, Math.min(255, Math.round(Number(payload.throttle) || 0)));
+    const s = Math.max(-100, Math.min(100, Math.round(Number(payload.steering) || 0)));
+    const b = payload.brake ? 1 : 0;
+    const l = payload.lights ? 1 : 0;
+    const h = payload.horn ? 1 : 0;
+    const g = String(payload.gear || (t < -5 ? 'R' : 'D'));
+
+    rcHardwareState.throttle = t;
+    rcHardwareState.steering = s;
+    rcHardwareState.brake = b;
+    rcHardwareState.lights = Boolean(l);
+    rcHardwareState.horn = Boolean(h);
+    rcHardwareState.gear = g;
+    if (payload.activeCam) rcHardwareState.activeCam = payload.activeCam;
+    if (payload.weatherMode) rcHardwareState.weatherMode = payload.weatherMode;
+    if (payload.inputSource) rcHardwareState.inputSource = payload.inputSource;
+    rcHardwareState.lastUpdateTs = Date.now();
+
+    const targetIp = rcHardwareState.ctrlIp;
+    if (!targetIp || targetIp === '0.0.0.0') return;
+
+    // 1. Gửi gói UDP tốc độ cao (Hỗ trợ cả định dạng JSON, CSV "T,S,B,L,H\n" và Binary 6-byte cho ESP32)
+    const jsonPacket = Buffer.from(JSON.stringify({ T: t, S: s, B: b, L: l, H: h, G: g, throttle: t, steer: s }) + '\n');
+    const csvPacket = Buffer.from(`T:${t},S:${s},B:${b},L:${l},H:${h}\n`);
+    const binPacket = Buffer.alloc(6);
+    binPacket.writeInt16LE(t, 0);
+    binPacket.writeInt16LE(s, 2);
+    binPacket.writeUInt8(b, 4);
+    binPacket.writeUInt8((l << 1) | h, 5);
+
+    const portsToTry = [rcHardwareState.ctrlUdpPort, 4210, 8888, 3333];
+    const uniquePorts = [...new Set(portsToTry)];
+    uniquePorts.forEach((port) => {
+      udpClient.send(jsonPacket, port, targetIp);
+      udpClient.send(csvPacket, port, targetIp);
+      udpClient.send(binPacket, port, targetIp);
+    });
+
+    // 2. Gửi HTTP GET Relay (Giới hạn 12Hz để không làm nghẽn TCP stack của ESP32 nếu dùng WebServer)
+    const now = Date.now();
+    if (now - lastHttpRelayTime > 80) {
+      lastHttpRelayTime = now;
+      const reqPath = `/control?throttle=${t}&steer=${s}&t=${t}&s=${s}&brake=${b}&lights=${l}&horn=${h}&gear=${g}`;
+      const req = http.get({
+        hostname: targetIp,
+        port: rcHardwareState.ctrlHttpPort || 80,
+        path: reqPath,
+        timeout: 350
+      }, (res) => {
+        rcHardwareState.esp32Alive = (res.statusCode >= 200 && res.statusCode < 500);
+        res.resume();
+      });
+      req.on('error', () => {});
+      req.on('timeout', () => req.destroy());
+    }
+  }
+
+  // Bộ chia luồng MJPEG / Snapshot cho Cam Trước và Cam Lùi (Khắc phục lỗi 1-client của ESP32-CAM & lỗi HTTPS Mixed Content)
+  const activeCamStreams = {
+    front: { clients: new Set(), upstreamReq: null, lastFrameBuf: null, lastFrameTs: 0 },
+    rear:  { clients: new Set(), upstreamReq: null, lastFrameBuf: null, lastFrameTs: 0 }
+  };
+
+  function getCamConfig(camType) {
+    if (camType === 'rear') {
+      return {
+        ip: rcHardwareState.rearCamIp,
+        port: rcHardwareState.rearCamPort || 81,
+        path: rcHardwareState.rearCamPath || '/stream'
+      };
+    }
+    return {
+      ip: rcHardwareState.frontCamIp,
+      port: rcHardwareState.frontCamPort || 81,
+      path: rcHardwareState.frontCamPath || '/stream'
+    };
+  }
+
+  // Hút ảnh đơn `/capture` (cổng 80) hoặc cắt frame từ MJPEG làm phương án dự phòng siêu ổn định
+  function fetchSingleCamSnapshot(camType, callback) {
+    const cfg = getCamConfig(camType);
+    const snapReq = http.get({
+      hostname: cfg.ip,
+      port: 80,
+      path: `/capture?_cb=${Date.now()}`,
+      timeout: 1200
+    }, (snapRes) => {
+      if (snapRes.statusCode !== 200) {
+        snapRes.resume();
+        return callback(activeCamStreams[camType].lastFrameBuf);
+      }
+      const chunks = [];
+      snapRes.on('data', (c) => chunks.push(c));
+      snapRes.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        if (buf.length > 100) {
+          activeCamStreams[camType].lastFrameBuf = buf;
+          activeCamStreams[camType].lastFrameTs = Date.now();
+        }
+        callback(buf);
+      });
+    });
+    snapReq.on('error', () => callback(activeCamStreams[camType].lastFrameBuf));
+    snapReq.on('timeout', () => {
+      snapReq.destroy();
+      callback(activeCamStreams[camType].lastFrameBuf);
+    });
+  }
+
+  function proxyEsp32CameraStream(camType, req, res) {
+    const cfg = getCamConfig(camType);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+
+    // Kết nối tới luồng MJPEG gốc của ESP32-CAM
+    const upReq = http.get({
+      hostname: cfg.ip,
+      port: cfg.port,
+      path: cfg.path,
+      timeout: 3500
+    }, (upRes) => {
+      const contentType = upRes.headers['content-type'] || 'multipart/x-mixed-replace;boundary=123456789000000000000987654321';
+      res.writeHead(upRes.statusCode || 200, {
+        'Content-Type': contentType,
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      });
+
+      upRes.on('data', (chunk) => {
+        // Lưu lại JPEG frame gần nhất nếu tìm thấy SOI..EOI để phục vụ nhiều thiết bị cùng xem
+        const soi = chunk.indexOf(Buffer.from([0xff, 0xd8]));
+        const eoi = chunk.indexOf(Buffer.from([0xff, 0xd9]));
+        if (soi !== -1 && eoi !== -1 && eoi > soi) {
+          activeCamStreams[camType].lastFrameBuf = chunk.slice(soi, eoi + 2);
+          activeCamStreams[camType].lastFrameTs = Date.now();
+        }
+        if (!res.writableEnded) res.write(chunk);
+      });
+
+      upRes.on('end', () => {
+        if (!res.writableEnded) res.end();
+      });
+    });
+
+    // Nếu cổng :81/stream của Cam Lùi hoặc Cam Trước đang bận (do chỉ nhận 1 client) -> Tự động giả lập MJPEG từ cổng 80 `/capture`!
+    upReq.on('error', () => {
+      if (res.headersSent) return;
+      const boundary = 'esp32fallbackboundary';
+      res.writeHead(200, {
+        'Content-Type': `multipart/x-mixed-replace; boundary=--${boundary}`,
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache'
+      });
+      const intervalId = setInterval(() => {
+        if (res.writableEnded) {
+          clearInterval(intervalId);
+          return;
+        }
+        fetchSingleCamSnapshot(camType, (jpgBuf) => {
+          if (jpgBuf && !res.writableEnded) {
+            res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpgBuf.length}\r\n\r\n`);
+            res.write(jpgBuf);
+            res.write('\r\n');
+          }
+        });
+      }, 90);
+      req.on('close', () => clearInterval(intervalId));
+    });
+
+    upReq.on('timeout', () => upReq.destroy());
+    req.on('close', () => {
+      try { upReq.destroy(); } catch (e) {}
+    });
+  }
+
+  // Middleware ưu tiên xử lý tất cả API Camera, Điều khiển ESP32 và Đồng bộ HTTP <-> HTTPS
+  function rcHardwareV250Middleware(req, res, next) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+
+    // 1. Luồng MJPEG Proxy cho Cam Trước (`?cam=front`) và Cam Lùi (`?cam=rear`) - Chạy mượt trên cả HTTP lẫn HTTPS!
+    if (req.path === '/api/esp32-cam-proxy' || req.path === '/stream/front' || req.path === '/stream/rear') {
+      const camType = (req.query.cam === 'rear' || req.path === '/stream/rear') ? 'rear' : 'front';
+      if (req.query.ip) {
+        if (camType === 'rear') rcHardwareState.rearCamIp = String(req.query.ip).trim();
+        else rcHardwareState.frontCamIp = String(req.query.ip).trim();
+      }
+      if (req.query.port) {
+        if (camType === 'rear') rcHardwareState.rearCamPort = Number(req.query.port) || 81;
+        else rcHardwareState.frontCamPort = Number(req.query.port) || 81;
+      }
+      return proxyEsp32CameraStream(camType, req, res);
+    }
+
+    // 2. Ảnh Snapshot JPEG tức thì cho Cam Trước & Cam Lùi (Dùng để vẽ lên màn hình 3D trong xe không bao giờ bị lỗi CORS)
+    if (req.path === '/api/esp32-snapshot') {
+      const camType = req.query.cam === 'rear' ? 'rear' : 'front';
+      if (req.query.ip) {
+        if (camType === 'rear') rcHardwareState.rearCamIp = String(req.query.ip).trim();
+        else rcHardwareState.frontCamIp = String(req.query.ip).trim();
+      }
+      return fetchSingleCamSnapshot(camType, (jpgBuf) => {
+        if (jpgBuf && jpgBuf.length > 100) {
+          res.writeHead(200, {
+            'Content-Type': 'image/jpeg',
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'no-store'
+          });
+          return res.end(jpgBuf);
+        }
+        res.status(204).end();
+      });
+    }
+
+    // 3. API Nhận lệnh điều khiển từ Vô lăng GOG808 / Tay cầm Quest 3 / Điện thoại / Bảng chức năng -> Bắn ra ESP32 Controller
+    if (req.path === '/api/rc-control' || req.path === '/api/esp32-config') {
+      const applyParams = (data) => {
+        if (data.frontCamIp) rcHardwareState.frontCamIp = String(data.frontCamIp).trim();
+        if (data.rearCamIp) rcHardwareState.rearCamIp = String(data.rearCamIp).trim();
+        if (data.ctrlIp) rcHardwareState.ctrlIp = String(data.ctrlIp).trim();
+        if (data.frontCamPort) rcHardwareState.frontCamPort = Number(data.frontCamPort) || 81;
+        if (data.rearCamPort) rcHardwareState.rearCamPort = Number(data.rearCamPort) || 81;
+        if (data.ctrlUdpPort) rcHardwareState.ctrlUdpPort = Number(data.ctrlUdpPort) || 4210;
+
+        if (data.throttle !== undefined || data.steering !== undefined || data.gear !== undefined) {
+          dispatchToRealEsp32Controller(data);
+        }
+        return res.json({ ok: true, state: rcHardwareState });
+      };
+
+      if (req.method === 'POST') {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        req.on('end', () => {
+          try {
+            return applyParams(JSON.parse(raw || '{}'));
+          } catch (e) {
+            return applyParams(req.query || {});
+          }
+        });
+        return;
+      }
+      return applyParams(req.query || {});
+    }
+
+    // 4. API Đồng bộ trạng thái 2 chiều giữa Local HTTP và Web HTTPS của Kính / Điện thoại
+    if (req.path === '/api/rc-sync-state') {
+      return res.json(rcHardwareState);
+    }
+
+    next();
+  }
+
+  if (typeof app !== 'undefined' && app && app._router && Array.isArray(app._router.stack)) {
+    app.use(rcHardwareV250Middleware);
+    const layer = app._router.stack.pop();
+    app._router.stack.splice(2, 0, layer);
+  } else if (typeof app !== 'undefined' && app && typeof app.use === 'function') {
+    app.use(rcHardwareV250Middleware);
+  }
+})();

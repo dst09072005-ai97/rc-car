@@ -1326,5 +1326,120 @@
       }
     })();
   </script>
+  <!-- ====================================================================== -->
+  <!-- PATCH V250 CHO INDEX.HTML:                                             -->
+  <!-- 1. BẢNG KẾT NỐI CAM TRƯỚC + CAM LÙI ESP32 & MẠCH ESP32 CONTROLLER      -->
+  <!-- 2. HIỂN THỊ TRỰC QUAN CAM TRƯỚC / CAM LÙI TỰ ĐỘNG KHI LÙI XE (HTTP/HTTPS) -->
+  <!-- ====================================================================== -->
+  <style>
+    #v250-dual-cam-hud {
+      position: fixed;
+      top: 58px;
+      right: 12px;
+      z-index: 9400;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: auto;
+      transition: all 0.25s ease;
+    }
+    .v250-cam-box {
+      width: 210px;
+      height: 118px;
+      background: rgba(8, 15, 30, 0.92);
+      border: 1.5px solid rgba(0, 229, 255, 0.65);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
+    }
+    .v250-cam-box.rear-active-reverse {
+      width: 320px;
+      height: 180px;
+      border: 2.5px solid #ff2a55;
+      box-shadow: 0 0 22px rgba(255, 42, 85, 0.75);
+    }
+    .v250-cam-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .v250-cam-label {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #00ff88;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      z-index: 2;
+    }
+    .v250-reverse-guidelines {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      background:
+        linear-gradient(to top, rgba(255, 0, 50, 0.32) 0%, transparent 28%),
+        repeating-linear-gradient(to top, transparent 0px, transparent 22px, rgba(255, 214, 10, 0.55) 23px, transparent 24px);
+    }
+    .v250-cam-box.rear-active-reverse .v250-reverse-guidelines {
+      display: block;
+    }
+    @media (max-width: 768px) {
+      .v250-cam-box { width: 145px; height: 82px; }
+      .v250-cam-box.rear-active-reverse { width: 220px; height: 124px; }
+    }
+  </style>
+
+  <div id="v250-dual-cam-hud">
+    <div id="v250-front-cam-card" class="v250-cam-box">
+      <div class="v250-cam-label" id="v250-front-cam-status">📹 CAM TRƯỚC: ĐANG NỐI...</div>
+      <img id="v250-front-cam-img" crossorigin="anonymous" alt="ESP32 Front Cam" />
+    </div>
+    <div id="v250-rear-cam-card" class="v250-cam-box">
+      <div class="v250-cam-label" id="v250-rear-cam-status" style="color:#ffd60a;">🔙 CAM LÙI: ĐANG NỐI...</div>
+      <img id="v250-rear-cam-img" crossorigin="anonymous" alt="ESP32 Rear Cam" />
+      <div class="v250-reverse-guidelines"></div>
+    </div>
+  </div>
+
+  <script>
+    function initV250Esp32HwBox() {
+      const funcPanel = document.getElementById('function-panel');
+      if (funcPanel && !document.getElementById('v250-esp32-hw-box')) {
+        const hwBox = document.createElement('div');
+        hwBox.id = 'v250-esp32-hw-box';
+        hwBox.style.cssText = 'background:rgba(0,229,255,0.08);border:1.5px solid #00e5ff;border-radius:10px;padding:8px;margin-bottom:8px;';
+        hwBox.innerHTML = `
+          <div style="font-weight:800;color:#00e5ff;font-size:12px;margin-bottom:6px;">
+            📡 KẾT NỐI ĐỒNG BỘ ESP32 & VÔ LĂNG GOG808 (HTTP & HTTPS):
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:6px;">
+            <input id="v250-ip-front" type="text" placeholder="IP Cam Trước (VD: 192.168.1.101)" style="background:#0f172a;color:#00ff88;border:1px solid #334155;border-radius:5px;padding:4px;font-size:11px;" />
+            <input id="v250-ip-rear" type="text" placeholder="IP Cam Lùi (VD: 192.168.1.102)" style="background:#0f172a;color:#ffd60a;border:1px solid #334155;border-radius:5px;padding:4px;font-size:11px;" />
+            <input id="v250-ip-ctrl" type="text" placeholder="IP Mạch Xe (VD: 192.168.1.100)" style="background:#0f172a;color:#38bdf8;border:1px solid #334155;border-radius:5px;padding:4px;font-size:11px;" />
+          </div>
+          <div class="row" style="gap:4px;">
+            <button id="v250-btn-connect-all" class="act-btn" style="background:#00ff88;color:#000;font-weight:700;">🔗 Kết Nối Cả 2 Cam & Mạch Xe</button>
+            <button id="v250-btn-toggle-cam-hud" class="act-btn" style="background:#0284c7;color:#fff;">👁️ Ẩn/Hiện Cửa Sổ 2 Cam</button>
+            <button id="v250-btn-test-esp32" class="act-btn" style="background:#f59e0b;color:#000;">⚡ Test Nhích Ga Xe Thật</button>
+          </div>
+          <div id="v250-hw-telemetry-bar" style="font-size:11px;color:#e2e8f0;margin-top:5px;font-family:monospace;">
+            🎮 Thiết bị: Đang quét GOG808 / Tay cầm Quest 3... | 📡 ESP32: Chờ lệnh
+          </div>
+        `;
+        funcPanel.prepend(hwBox);
+      }
+    }
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initV250Esp32HwBox);
+    } else {
+      initV250Esp32HwBox();
+    }
+  </script>
 </body>
 </html>
