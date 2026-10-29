@@ -625,8 +625,23 @@ function attachMultiplayerServer(serverInstance) {
     }
 
     // Ghế tài xế (seat 0) có trống không?
-    const isDriverSeatFree = (seat0OccupantId === null || !players.has(seat0OccupantId));
-    const assignedSeat = isDriverSeatFree ? 0 : ([1, 2, 3].find((s) => !hostCar || !hostCar.occupants[s]) ?? 1);
+    const isQuestVR = /Quest|OculusBrowser|Pacific|VR|Headset/i.test(ua);
+    let assignedSeat = 0;
+    if (isQuestVR) {
+      // Ưu tiên kính Meta Quest 3 luôn vào Ghế Lái (Seat 0) để người dùng trong VR lái được xe ngay lập tức!
+      assignedSeat = 0;
+      if (hostCar && hostCar.occupants[0] && hostCar.occupants[0] !== playerId) {
+        const prevDriverId = hostCar.occupants[0];
+        hostCar.occupants[1] = prevDriverId;
+        if (players.has(prevDriverId)) {
+          players.get(prevDriverId).seatIndex = 1;
+          players.get(prevDriverId).isHost = false;
+        }
+      }
+    } else {
+      const isDriverSeatFree = (seat0OccupantId === null || !players.has(seat0OccupantId));
+      assignedSeat = isDriverSeatFree ? 0 : ([1, 2, 3].find((s) => !hostCar || !hostCar.occupants[s]) ?? 1);
+    }
     const isHostPlayer = (assignedSeat === 0);
 
     const playerId = 'p_' + Math.random().toString(36).slice(2, 8);
@@ -695,14 +710,30 @@ function attachMultiplayerServer(serverInstance) {
               if (carObj.occupants[s] === playerId) carObj.occupants[s] = null;
             }
           }
-          // Nếu ghế tài xế (0) đã có người, tự động xếp vào Ghế Phụ Trước (1) hoặc ghế trống tiếp theo
+          // Ưu tiên Ghế Lái (0) cho người chơi vừa bấm Lên xe
           let chosenSeat = data.preferredSeat ?? 0;
           if (c.occupants[chosenSeat] && c.occupants[chosenSeat] !== playerId) {
-            chosenSeat = [1, 2, 3, 0].find((s) => !c.occupants[s]) ?? 1;
+            if (chosenSeat === 0) {
+              const oldDriverId = c.occupants[0];
+              c.occupants[1] = oldDriverId;
+              if (players.has(oldDriverId)) {
+                players.get(oldDriverId).seatIndex = 1;
+                players.get(oldDriverId).isHost = false;
+              }
+            } else {
+              chosenSeat = [1, 2, 3, 0].find((s) => !c.occupants[s]) ?? 1;
+            }
           }
           c.occupants[chosenSeat] = playerId;
           p.inCarId = c.carId;
           p.seatIndex = chosenSeat;
+          p.isHost = (chosenSeat === 0);
+          ws.send(JSON.stringify({
+            type: 'SEAT_ASSIGNED',
+            seatIndex: chosenSeat,
+            isHost: p.isHost,
+            carId: c.carId
+          }));
         } else if (data.type === 'EXIT_CAR') {
           for (const carObj of cars.values()) {
             for (const s of [0, 1, 2, 3]) {
@@ -716,13 +747,20 @@ function attachMultiplayerServer(serverInstance) {
           const targetSeat = (data.targetSeatIndex ?? ((p.seatIndex + 1) % 4)) % 4;
           const otherPlayerId = c.occupants[targetSeat];
           const oldSeat = p.seatIndex;
-          // Đổi chỗ trực tiếp với tài xế hoặc chuyển sang ghế phụ/ghế sau
           c.occupants[oldSeat] = otherPlayerId || null;
           c.occupants[targetSeat] = playerId;
           p.seatIndex = targetSeat;
+          p.isHost = (targetSeat === 0);
           if (otherPlayerId && players.has(otherPlayerId)) {
             players.get(otherPlayerId).seatIndex = oldSeat;
+            players.get(otherPlayerId).isHost = (oldSeat === 0);
           }
+          ws.send(JSON.stringify({
+            type: 'SEAT_ASSIGNED',
+            seatIndex: targetSeat,
+            isHost: p.isHost,
+            carId: c.carId
+          }));
         } else if (data.type === 'RC_HARDWARE_TELEMETRY') {
           // Nhận tín hiệu từ xe RC thật bên ngoài (tốc độ thực, trạng thái va chạm vật cản)
           const telPayload = JSON.stringify(data);

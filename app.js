@@ -3836,34 +3836,62 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
               turnSignal: state.turnSignal
             }));
           }
-        } else if (msg.type === 'WHEEL_BRIDGE_STATE') {
-          // Cầu nối vô lăng GOG R808 từ Laptop sang kính Meta Quest 3
-          const wObj = window._racingWheel;
-          if (wObj && msg.connected) {
-            wObj.connected = true;
-            wObj.deviceName = msg.deviceId || 'GOG R808';
-            wObj.steerAngleDeg = msg.steerAngleDeg ?? (msg.steeringNorm * 540);
-            wObj.gasPercent = msg.gasPercent ?? Math.max(0, msg.throttleNorm * 100);
-            wObj.brakePercent = msg.brakePercent ?? 0;
-            wObj.reversePercent = msg.reversePercent ?? 0;
-            wObj.gear = msg.gear || 'D';
-            state.steeringAngleDeg = wObj.steerAngleDeg;
-            state.throttlePercent = wObj.gasPercent;
-            state.brakePercent = wObj.brakePercent;
-            state.reversePercent = wObj.reversePercent;
-            if (wObj.reversePercent > 3) {
-              state.gearIndex = 1;
-              wObj.gear = 'R';
-              state.throttlePercent = wObj.reversePercent;
-            } else if (wObj.gasPercent > 3) {
-              state.gearIndex = 3;
-              wObj.gear = 'D';
+        } else if (msg.type === 'SEAT_ASSIGNED') {
+          if (typeof msg.seatIndex === 'number') {
+            state.seatIndex = msg.seatIndex;
+            state.isHostPlayer = (msg.seatIndex === 0);
+            if (typeof SEAT_POSITIONS !== 'undefined' && SEAT_POSITIONS[msg.seatIndex] && typeof driverSeatMount !== 'undefined' && driverSeatMount) {
+              driverSeatMount.position.copy(SEAT_POSITIONS[msg.seatIndex].pos);
+              cameraRig.position.set(0, 0, 0);
             }
-            if (wObj.gasPercent > 3 || Math.abs(msg.steeringNorm || 0) > 0.04) {
-              if (state.playerMode !== 'DRIVING') {
-                state.playerMode = 'DRIVING';
-                state.engineRunning = true;
-              }
+          }
+        } else if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
+          // Cầu nối vô lăng GOG R808 & Bàn phím Laptop sang kính Meta Quest 3
+          if (!window._racingWheel) {
+            window._racingWheel = {
+              connected: true,
+              deviceName: 'GOG R808 / Keyboard Bridge',
+              steerAngleDeg: 0,
+              rawSteer: 0,
+              gasPercent: 0,
+              brakePercent: 0,
+              reversePercent: 0,
+              gear: 'D',
+              lastInputTime: performance.now()
+            };
+          }
+          const wObj = window._racingWheel;
+          wObj.connected = true;
+          wObj.deviceName = msg.deviceId || 'GOG R808 / Keyboard';
+          const steeringNorm = typeof msg.steeringNorm === 'number' ? msg.steeringNorm : (typeof msg.steer === 'number' ? (msg.steer - 90) / 45 : 0);
+          const throttleNorm = typeof msg.throttleNorm === 'number' ? msg.throttleNorm : (typeof msg.throttle === 'number' ? (msg.throttle - 1500) / 350 : 0);
+          wObj.rawSteer = steeringNorm;
+          wObj.steerAngleDeg = msg.steerAngleDeg ?? (steeringNorm * 540);
+          wObj.gasPercent = msg.gasPercent ?? Math.max(0, throttleNorm * 100);
+          wObj.brakePercent = msg.brakePercent ?? (throttleNorm < 0 ? Math.abs(throttleNorm * 100) : 0);
+          wObj.reversePercent = msg.reversePercent ?? (throttleNorm < 0 ? Math.abs(throttleNorm * 100) : 0);
+          wObj.gear = msg.gear || (throttleNorm < -0.05 ? 'R' : 'D');
+          wObj.lastInputTime = performance.now();
+
+          state.steeringAngleDeg = wObj.steerAngleDeg;
+          if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
+            steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(state.steeringAngleDeg);
+          }
+          state.throttlePercent = wObj.gasPercent;
+          state.brakePercent = wObj.brakePercent;
+          state.reversePercent = wObj.reversePercent;
+          if (wObj.reversePercent > 3) {
+            state.gearIndex = 1;
+            wObj.gear = 'R';
+            state.throttlePercent = wObj.reversePercent;
+          } else if (wObj.gasPercent > 3) {
+            state.gearIndex = 3;
+            wObj.gear = 'D';
+          }
+          if (wObj.gasPercent > 3 || Math.abs(steeringNorm) > 0.04 || wObj.reversePercent > 3) {
+            if (state.playerMode !== 'DRIVING') {
+              state.playerMode = 'DRIVING';
+              state.engineRunning = true;
             }
           }
         } else if (msg.type === 'RC_HARDWARE_TELEMETRY') {
@@ -8085,9 +8113,10 @@ function updateV112ControllerSteeringBrakingAndLookLock(dt) {
 
   // TỰ ĐỘNG PHÁT HIỆN ĐIỆN THOẠI JOIN BẰNG MÃ QR (TỈ LỆ 9:16) ĐỂ ĐƯA VÀO GHẾ PHỤ & TỐI ƯU 60FPS KHÔNG LAG!
   const params = new URLSearchParams(window.location.search);
-  const isMobilePortrait = params.get('ratio') === '9x16' ||
+  const isQuest = /Quest|OculusBrowser/i.test(navigator.userAgent);
+  const isMobilePortrait = !isQuest && (params.get('ratio') === '9x16' ||
                            params.get('join') === 'passenger' ||
-                           (window.innerHeight > window.innerWidth && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent));
+                           (window.innerHeight > window.innerWidth && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent)));
 
   if (isMobilePortrait) {
     // Tối ưu hóa GPU cho màn hình dọc 9:16 của điện thoại để chạy mượt 60FPS không lag
@@ -9233,9 +9262,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 (function fixSafariIosWhiteScreenAndResponsiveMobile() {
   const urlParams = new URLSearchParams(window.location.search);
   const modeParam = urlParams.get('mode') || urlParams.get('join') || '';
-  const isIosOrMobile = /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent) ||
+  const isQuestDevice = /Quest|OculusBrowser/i.test(navigator.userAgent);
+  const isIosOrMobile = !isQuestDevice && (/iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent) ||
                         modeParam === 'passenger_mobile' ||
-                        modeParam === 'passenger';
+                        modeParam === 'passenger');
 
   // Nếu người dùng mở trên iPhone Safari qua cổng HTTPS 8443 bị chặn WebSocket/SSL làm màn hình đen/trắng,
   // hoặc mở ?mode=passenger_mobile, lập tức tối ưu hóa WebGL để Safari không bị tràn RAM GPU:
@@ -11111,11 +11141,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
 (function setupV128MobileTouch360GyroAndCleanUI() {
   const urlParams = new URLSearchParams(window.location.search);
+  const isQuestClient = /Quest|OculusBrowser/i.test(navigator.userAgent);
   const isMobileClient =
-    /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent) ||
+    !isQuestClient && (/iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent) ||
     urlParams.get('mode') === 'passenger_mobile' ||
     urlParams.get('join') === 'passenger' ||
-    window.innerWidth <= 960;
+    window.innerWidth <= 960);
 
   // Khởi tạo biến điều khiển từ Cần xoay ảo & Gyroscope trên điện thoại
   window.mobileJoyFwd = 0;
@@ -18075,13 +18106,15 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       matBodyPaint.color.setHex(vd.interiorTheme.bodyHex);
     }
 
-    // YÊU CẦU QUAN TRỌNG: Khi lên xe NPC, người chơi MẶC ĐỊNH NGỒI Ở GHẾ PHỤ (seatIndex = 1) góc nhìn thứ nhất,
-    // còn Tài xế NPC ngồi ở Ghế Lái (seatIndex = 0) để chở người chơi đi!
-    state.seatIndex = 1;
-    driverSeatMount.position.copy(SEAT_POSITIONS[1].pos);
+    // MẶC ĐỊNH LÊN GHẾ LÁI (seatIndex = 0) để người chơi tự cầm lái!
+    // Có thể bấm [C] hoặc Nút B/Y trên tay cầm Quest bất kỳ lúc nào để chuyển sang ngồi Ghế Phụ.
+    state.seatIndex = 0;
+    driverSeatMount.position.copy(SEAT_POSITIONS[0].pos);
 
-    activeNpcChauffeurMesh.visible = true;
-    activeNpcChauffeurMesh.position.copy(SEAT_POSITIONS[0].pos);
+    if (activeNpcChauffeurMesh) {
+      activeNpcChauffeurMesh.visible = false;
+      activeNpcChauffeurMesh.position.copy(SEAT_POSITIONS[1].pos);
+    }
 
     if (state.playerMode !== 'DRIVING') {
       state.playerMode = 'DRIVING';
@@ -18125,6 +18158,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
       if (state.seatIndex !== 0) {
         if (typeof autoCenterBalancePassengerView === 'function') autoCenterBalancePassengerView();
+      }
+      if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+        mpSocket.send(JSON.stringify({
+          type: 'SWAP_SEAT',
+          carId: state.activeCarId,
+          targetSeatIndex: state.seatIndex
+        }));
       }
       state.lastActionLog = state.seatIndex === 0
         ? `🛞 BẠN ĐANG CẦM LÁI [${state.boardedNpcVehicleRef.userData.modelName}] và chở NPC ngồi bên ghế phụ!`
@@ -21493,18 +21533,27 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         carControlPacket.gear = state.gearIndex === 1 ? 'R' : 'D';
         mpSocket.send(JSON.stringify(carControlPacket));
 
-        // Nếu vô lăng GOG R808 đang cắm vào máy này, phát thêm Bridge State cho Quest 3
-        if (wheel && wheel.connected) {
+        // Phát Bridge State cho Quest 3 (Vô lăng GOG R808 HOẶC Bàn phím Laptop WASD / Mũi tên)
+        const isKeyboardDriving = (wantGas || wantRev || keys.a || keys.d || keys.ArrowLeft || keys.ArrowRight);
+        const hasWheel = (wheel && wheel.connected);
+        if (hasWheel || isKeyboardDriving || Math.abs(steer - 90) > 1 || throttle !== 1500) {
+          const steeringNorm = hasWheel ? (wheel.rawSteer || 0) : ((steer - 90) / 45.0);
+          const steerAngleDeg = hasWheel ? (wheel.steerAngleDeg || 0) : (steeringNorm * 45.0);
+          const throttleNorm = (throttle - 1500) / 350.0;
+          const gasPct = hasWheel ? (wheel.gasPercent || 0) : Math.max(0, throttleNorm * 100);
+          const revPct = hasWheel ? (wheel.reversePercent || 0) : (throttleNorm < 0 ? Math.abs(throttleNorm * 100) : 0);
+          const brkPct = hasWheel ? (wheel.brakePercent || 0) : (isHardBraking ? 100 : 0);
+
           mpSocket.send(JSON.stringify({
             type: 'WHEEL_BRIDGE_INPUT',
             connected: true,
-            deviceId: wheel.deviceName || 'GOG R808',
-            steeringNorm: wheel.rawSteer || 0,
-            steerAngleDeg: wheel.steerAngleDeg || 0,
-            gasPercent: wheel.gasPercent || 0,
-            brakePercent: wheel.brakePercent || 0,
-            reversePercent: wheel.reversePercent || 0,
-            gear: wheel.gear || 'D',
+            deviceId: hasWheel ? (wheel.deviceName || 'GOG R808') : 'PC Keyboard (WASD)',
+            steeringNorm,
+            steerAngleDeg,
+            gasPercent: gasPct,
+            brakePercent: brkPct,
+            reversePercent: revPct,
+            gear: (state.gearIndex === 1 || revPct > 5) ? 'R' : 'D',
             steer,
             throttle
           }));
@@ -21812,6 +21861,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // Sử dụng trộn Vector 2D độc lập: Không bao giờ khóa trục rẽ khi đang giữ ga tiến/lùi!
   let smoothedSteerInput = 0;
   let smoothedThrottleInput = 0;
+  let lastTouchSeatSwapTime = 0;
 
   function applyDeadzone(val, dz = 0.08) {
     if (Math.abs(val) < dz) return 0;
@@ -21819,10 +21869,30 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   function pollAllGamepadsWheelGog808AndThumbsticks(dt) {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     let rawSteer = 0;     // -1 (Rẽ Trái) .. +1 (Rẽ Phải)
     let rawThrottle = 0;  // -1 (Lùi) .. +1 (Tiến)
     let isBraking = false;
     let activeDeviceName = '';
+
+    // 0. Quét cầu nối vô lăng GOG 808 / Bàn phím từ WebSocket (Laptop sang Meta Quest 3)
+    if (typeof window !== 'undefined' && window._racingWheel && window._racingWheel.connected) {
+      const rw = window._racingWheel;
+      const isFresh = (now - (rw.lastInputTime || 0)) < 1500;
+      if (isFresh) {
+        const bridgeSteer = (typeof rw.rawSteer === 'number') ? rw.rawSteer : (rw.steerAngleDeg ? rw.steerAngleDeg / 540 : 0);
+        const bridgeThrottle = (rw.gasPercent > 0) ? (rw.gasPercent / 100) : (rw.reversePercent > 0 ? -(rw.reversePercent / 100) : 0);
+        if (Math.abs(bridgeSteer) > Math.abs(rawSteer)) {
+          rawSteer = bridgeSteer;
+          activeDeviceName = rw.deviceName || 'Cầu nối GOG808/Keyboard';
+        }
+        if (Math.abs(bridgeThrottle) > Math.abs(rawThrottle)) {
+          rawThrottle = bridgeThrottle;
+          if (!activeDeviceName) activeDeviceName = rw.deviceName || 'Cầu nối GOG808/Keyboard';
+        }
+        if (rw.brakePercent > 30) isBraking = true;
+      }
+    }
 
     // 1. Quét toàn bộ navigator.getGamepads() (Bao gồm Vô lăng GOG808 ở slot 0..3 và Gamepad Bluetooth trên Kính Quest 3)
     const gamepads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
@@ -21932,6 +22002,19 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
             activeDeviceName = 'Quest 3 Trigger + Stick';
           }
           if (gripVal > 0.5) isBraking = true;
+
+          // Gán nút đổi chỗ (Ghế Lái <-> Ghế Phụ) trên Tay Cầm Quest Touch:
+          // Nút Thumbstick Click (btns[3]) hoặc Nút B/Y (btns[5]) khi đang ở chế độ lái xe
+          const isStickClick = !!btns[3]?.pressed;
+          const isButtonBOrY = !!btns[5]?.pressed;
+          if ((isStickClick || isButtonBOrY) && (now - lastTouchSeatSwapTime > 400)) {
+            lastTouchSeatSwapTime = now;
+            if (typeof window.swapSeatOrTakeDriverControl === 'function') {
+              window.swapSeatOrTakeDriverControl();
+            } else if (typeof swapSeatOrTakeDriverControl === 'function') {
+              swapSeatOrTakeDriverControl();
+            }
+          }
         }
       }
     }
@@ -21974,7 +22057,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     // 3. Truyền tín hiệu ra mạch ESP32 Controller ngoài đời thật ở tần số 25Hz (mỗi 40ms)
-    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     if (now - lastEsp32SendTime >= 40) {
       // Lấy giá trị từ Vô lăng / Tay cầm HOẶC từ vận tốc xe trên App (khi bấm nút cảm ứng / bàn phím)
       let outThrottlePwm = 0;
