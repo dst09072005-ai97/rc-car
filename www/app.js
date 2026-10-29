@@ -843,6 +843,15 @@ function buildPlayerMetaAvatar() {
 }
 buildPlayerMetaAvatar();
 
+function setPlayerOnFootAvatarVisibility(visible) {
+  if (avatarBodyMesh) avatarBodyMesh.visible = visible;
+  if (avatarLeftLeg) avatarLeftLeg.visible = visible;
+  if (avatarRightLeg) avatarRightLeg.visible = visible;
+  if (avatarLeftArm) avatarLeftArm.visible = visible;
+  if (avatarRightArm) avatarRightArm.visible = visible;
+}
+window.setPlayerOnFootAvatarVisibility = setPlayerOnFootAvatarVisibility;
+
 const vehicleRoot = new THREE.Group();
 vehicleRoot.position.set(-21.0, 0, -25.0);
 vehicleRoot.rotation.y = -Math.PI / 2;
@@ -4007,6 +4016,10 @@ function supplementaryFrameUpdate() {
   mpSyncTimer += dt;
   if (mpSyncTimer >= 0.08 && mpSocket && mpSocket.readyState === WebSocket.OPEN) {
     mpSyncTimer = 0;
+    if (typeof setPlayerOnFootAvatarVisibility === 'function') {
+      setPlayerOnFootAvatarVisibility(state.playerMode === 'ON_FOOT');
+    }
+
     mpSocket.send(JSON.stringify({
       type: 'PLAYER_SYNC',
       x: state.avatarPos.x,
@@ -12433,26 +12446,8 @@ let wristLookOrigin = new THREE.Vector3();
 let initialHeadYaw = 0;
 
 function checkWrist360LookTrigger(session) {
-  if (!session) return;
-  const sources = session.inputSources || [];
+  // Đã tắt hoàn toàn tính năng xoay cổ tay theo nút A để chống lệch tâm góc nhìn
   isHoldingButtonA = false;
-
-  for (const src of sources) {
-    if (src.gamepad && src.gamepad.buttons) {
-      // Nút A trên tay phải Quest thường là button[4] hoặc button[0]
-      if (src.handedness === 'right' && (src.gamepad.buttons[4]?.pressed || src.gamepad.buttons[0]?.pressed)) {
-        isHoldingButtonA = true;
-      }
-    }
-  }
-
-  if (isHoldingButtonA) {
-    // Khi giữ nút A: Cho phép xoay góc nhìn 360 độ cực nhanh theo hướng đưa tay
-    if (controller2) {
-      const wristRot = controller2.rotation.y;
-      cameraRig.rotation.y = wristRot * 1.5;
-    }
-  }
 }
 
 // --- 20.4. XOAY NHÌN 360 ĐỘ TRÊN GHẾ PHỤ (GẤP 5 LẦN ĐỘ NHẠY KHI ĐẨY CẦN GẠT) ---
@@ -12750,23 +12745,10 @@ function updateV140HoldAOrThumbstick360Look(dt) {
     }
   }
 
-  if (isHoldingBtnA) {
-    // 1. ĐANG NHẤN GIỮ NÚT A: Xoay góc nhìn 360° theo cử động xoay cổ tay của tay cầm!
-    const ctrl = xrControllers[1] || xrControllers[0];
-    if (ctrl && renderer.xr.isPresenting) {
-      const euler = new THREE.Euler().setFromQuaternion(ctrl.quaternion, 'YXZ');
-      if (v140WristRefYaw === null) {
-        v140WristRefYaw = euler.y - state.eyeLookYaw;
-        v140WristRefPitch = euler.x - state.eyeLookPitch;
-      }
-      state.eyeLookYaw = (euler.y - v140WristRefYaw) * 2.6;
-      state.eyeLookPitch = THREE.MathUtils.clamp((euler.x - v140WristRefPitch) * 2.2, -1.4, 1.4);
-    }
-  } else {
-    // 2. KHI THẢ NÚT A: Khóa ngay cử động xoay cổ tay, chuyển sang nhận chuyển động của NÚT XOAY TAY CẦM (Thumbstick) để nhìn 360°!
-    v140WristRefYaw = null;
-    v140WristRefPitch = null;
-
+  // Đã tắt hoàn toàn xoay cổ tay theo nút A - Nút A giữ vai trò Còi xe / Đèn pha không làm lệch tâm
+  v140WristRefYaw = null;
+  v140WristRefPitch = null;
+  if (true) {
     const lookInputX = Math.abs(rightStickX) > 0.12 ? rightStickX : (state.seatIndex !== 0 ? anyStickX : 0);
     const lookInputY = Math.abs(rightStickY) > 0.12 ? rightStickY : (state.seatIndex !== 0 ? anyStickY : 0);
 
@@ -21862,6 +21844,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   let smoothedSteerInput = 0;
   let smoothedThrottleInput = 0;
   let lastTouchSeatSwapTime = 0;
+  let lastEnterExitTime = 0;
+  let lastRecenterTime = 0;
+  let lastHornTime = 0;
 
   function applyDeadzone(val, dz = 0.08) {
     if (Math.abs(val) < dz) return 0;
@@ -22003,17 +21988,55 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           }
           if (gripVal > 0.5) isBraking = true;
 
-          // Gán nút đổi chỗ (Ghế Lái <-> Ghế Phụ) trên Tay Cầm Quest Touch:
-          // Nút Thumbstick Click (btns[3]) hoặc Nút B/Y (btns[5]) khi đang ở chế độ lái xe
-          const isStickClick = !!btns[3]?.pressed;
-          const isButtonBOrY = !!btns[5]?.pressed;
-          if ((isStickClick || isButtonBOrY) && (now - lastTouchSeatSwapTime > 400)) {
+          // Gán nút bấm chuẩn xác trên Tay Cầm Meta Quest Touch:
+          const isLeftHand = (src.handedness === 'left');
+          const isRightHand = (src.handedness === 'right');
+
+          // 1. NÚT X (Tay trái, btns[4]): LÊN XE / XUỐNG XE
+          if (isLeftHand && btns[4]?.pressed && (now - lastEnterExitTime > 500)) {
+            lastEnterExitTime = now;
+            if (typeof window.enterOrExitCarWithBlink === 'function') {
+              window.enterOrExitCarWithBlink();
+            } else if (typeof enterOrExitCarWithBlink === 'function') {
+              enterOrExitCarWithBlink();
+            }
+          }
+
+          // 2. NÚT Y (Tay trái, btns[5]): ĐỔI GHẾ LÁI <-> GHẾ PHỤ
+          if (isLeftHand && btns[5]?.pressed && (now - lastTouchSeatSwapTime > 400)) {
             lastTouchSeatSwapTime = now;
             if (typeof window.swapSeatOrTakeDriverControl === 'function') {
               window.swapSeatOrTakeDriverControl();
             } else if (typeof swapSeatOrTakeDriverControl === 'function') {
               swapSeatOrTakeDriverControl();
             }
+          }
+
+          // 3. NÚT B (Tay phải, btns[5]) & THUMBSTICK CLICK (btns[3] cả 2 tay): CÂN BẰNG TÂM GÓC NHÌN
+          const isRecenterBtn = (isRightHand && btns[5]?.pressed) || btns[3]?.pressed;
+          if (isRecenterBtn && (now - lastRecenterTime > 300)) {
+            lastRecenterTime = now;
+            state.eyeLookYaw = 0;
+            state.eyeLookPitch = 0;
+            state.avatarYaw = 0;
+            if (cameraRig) {
+              cameraRig.position.set(0, 0, 0);
+              cameraRig.rotation.set(0, 0, 0);
+            }
+            if (typeof camera !== 'undefined' && camera) camera.rotation.set(0, 0, 0);
+            if (typeof autoCenterBalancePassengerView === 'function') {
+              autoCenterBalancePassengerView();
+            }
+            state.lastActionLog = '🎯 ĐÃ CÂN BẰNG TÂM GÓC NHÌN CHUẨN 100%!';
+          }
+
+          // 4. NÚT A (Tay phải, btns[4]): BẤM CÒI XE (HORN) - KHÔNG XOAY CAMERA LỆCH TÂM!
+          if (isRightHand && btns[4]?.pressed && (now - lastHornTime > 350)) {
+            lastHornTime = now;
+            initAudio();
+            if (typeof playHonkSound === 'function') playHonkSound();
+            state.hornActive = true;
+            setTimeout(() => { state.hornActive = false; }, 200);
           }
         }
       }
@@ -22041,6 +22064,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.headingRad += yawDelta;
       if (typeof vehicleRoot !== 'undefined' && vehicleRoot) {
         vehicleRoot.rotation.y = state.headingRad;
+        const step = state.velocityMs * dt;
+        vehicleRoot.position.x -= Math.sin(state.headingRad) * step;
+        vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
       }
       if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
         steeringWheelPivot.rotation.z = -curvedSteer * 1.35;
@@ -22287,6 +22313,63 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   // --- 25.5. TÍCH HỢP VÀO VÒNG LẶP RENDER CHÍNH ---
   if (typeof scene !== 'undefined' && scene) {
+    // DEDICATED BACKGROUND TRANSMITTER: Đảm bảo ngay cả khi cửa sổ Laptop bị ẩn / mất focus / chạy ngầm,
+    // tín hiệu Vô Lăng GOG 808 vẫn được quét thẳng từ Gamepad API và phát 25Hz qua WebSocket sang kính Quest 3!
+    let lastBgSendWheelTime = 0;
+    setInterval(() => {
+      if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) return;
+      const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+      if (now - lastBgSendWheelTime < 38) return;
+
+      const gamepads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
+      let bgWheel = null;
+      for (let i = 0; i < gamepads.length; i++) {
+        const gp = gamepads[i];
+        if (!gp || !gp.connected) continue;
+        const id = (gp.id || '').toLowerCase();
+        if (/r808|gog|wheel|steering|g29|g920|g923|thrustmaster|fanatec|pxn|racing/i.test(id) || gp.mapping === '') {
+          bgWheel = gp;
+          break;
+        }
+      }
+      if (!bgWheel) return;
+
+      const rawSteerAxis = bgWheel.axes[0] || 0;
+      const steerDeadband = Math.abs(rawSteerAxis) < 0.04 ? 0 : rawSteerAxis;
+
+      let gasVal = 0;
+      let brakeVal = 0;
+      let revVal = 0;
+      if (bgWheel.buttons[7] && bgWheel.buttons[7].value > 0.05) gasVal = bgWheel.buttons[7].value;
+      if (bgWheel.buttons[6] && bgWheel.buttons[6].value > 0.05) brakeVal = bgWheel.buttons[6].value;
+      if (bgWheel.axes[1] && bgWheel.axes[1] < -0.08) gasVal = -bgWheel.axes[1];
+      if (bgWheel.axes[1] && bgWheel.axes[1] > 0.08) revVal = bgWheel.axes[1];
+      if (bgWheel.buttons[0]?.pressed) gasVal = 1.0;
+      if (bgWheel.buttons[1]?.pressed) revVal = 0.8;
+
+      const steerNorm = THREE.MathUtils.clamp(steerDeadband, -1.0, 1.0);
+      const throttleNorm = gasVal > 0 ? gasVal : (revVal > 0 ? -revVal : 0);
+      const steerDeg = Math.round(90 - steerNorm * 45);
+      const throttlePulse = Math.round(1500 + throttleNorm * 350);
+
+      if (Math.abs(steerNorm) > 0.01 || Math.abs(throttleNorm) > 0.01 || brakeVal > 0.05) {
+        lastBgSendWheelTime = now;
+        mpSocket.send(JSON.stringify({
+          type: 'WHEEL_BRIDGE_INPUT',
+          connected: true,
+          deviceId: bgWheel.id.replace(/\(.*?\)/g, '').trim() || 'GOG R808',
+          steeringNorm: steerNorm,
+          steerAngleDeg: steerNorm * 540,
+          gasPercent: Math.round(gasVal * 100),
+          brakePercent: Math.round(brakeVal * 100),
+          reversePercent: Math.round(revVal * 100),
+          gear: revVal > 0.05 ? 'R' : 'D',
+          steer: steerDeg,
+          throttle: throttlePulse
+        }));
+      }
+    }, 40);
+
     const prevOnBeforeRenderV250 = scene.onBeforeRender;
     let lastV250Time = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 
