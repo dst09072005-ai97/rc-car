@@ -71,6 +71,22 @@ app.use((req, res, next) => {
   next();
 });
 const wwwPath = fs.existsSync(path.resolve(__dirname, '../www')) ? path.resolve(__dirname, '../www') : __dirname;
+
+// [PATCH V400] API PING CHO KÍNH META QUEST 3 TỰ ĐỘNG DÒ TÌM LAPTOP QUA WI-FI
+app.get('/api/bridge-ping', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Cache-Control', 'no-store');
+  const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.32';
+  res.json({
+    ok: true,
+    service: 'GOG808_LAPTOP_BRIDGE',
+    ips: [lanIp, '192.168.1.32'],
+    wheelConnected: true,
+    timestamp: Date.now()
+  });
+});
+
 app.use(express.static(wwwPath));
 app.use(express.static(__dirname));
 const v2Www = path.resolve(__dirname, 'v2/golden_baseline_v2_20261020/www');
@@ -2015,4 +2031,174 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   } else if (typeof app !== 'undefined' && app && typeof app.use === 'function') {
     app.use(rcHardwareV250Middleware);
   }
+})();
+
+
+// ============================================================================
+// [PATCH V400 - SERVER] ĐỌC TRỰC TIẾP USB VÔ LĂNG GOG R808 TỪ WINDOWS KERNEL 50Hz
+// (TỰ ĐỘNG PHÁT RA XE RC & SANG KÍNH QUEST 3 MÀ KHÔNG CẦN MỞ TRÌNH DUYỆT LOCALHOST!)
+// ============================================================================
+(function attachNativeWinMmReaderV400() {
+  if (process.platform !== 'win32') return;
+  const { spawn } = require('child_process');
+  const path = require('path');
+
+  const psScriptPath = path.join(__dirname, 'tools', 'winmm_wheel_reader.ps1');
+  if (!fs.existsSync(psScriptPath)) {
+    const altPath = path.join(process.cwd(), 'tools', 'winmm_wheel_reader.ps1');
+    if (!fs.existsSync(altPath)) return;
+  }
+
+  let psProc = null;
+  try {
+    psProc = spawn('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', fs.existsSync(psScriptPath) ? psScriptPath : path.join(process.cwd(), 'tools', 'winmm_wheel_reader.ps1')
+    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (err) {
+    console.warn('[V400 USB] Lỗi khởi chạy WinMM Wheel Reader:', err.message);
+    return;
+  }
+
+  let loggedConnect = false;
+  let restCalibrated = false;
+  let calibSamples = 0;
+  let restY = 32767, restZ = 32767, restR = 32767;
+  let prevButtonsMask = 0;
+  let stdoutBuf = '';
+
+  const BUTTON_BIT_ACTIONS = [
+    { bit: 4, action: 'TURN_LEFT' },
+    { bit: 14, action: 'TURN_LEFT' },
+    { bit: 5, action: 'TURN_RIGHT' },
+    { bit: 15, action: 'TURN_RIGHT' },
+    { bit: 0, action: 'HORN' },
+    { bit: 8, action: 'HORN' },
+    { bit: 9, action: 'HORN' },
+    { bit: 2, action: 'ENTER_EXIT_CAR' },
+    { bit: 3, action: 'ENTER_EXIT_CAR' },
+    { bit: 1, action: 'CYCLE_SEAT' },
+    { bit: 12, action: 'CYCLE_SEAT' }
+  ];
+
+  psProc.stdout.on('data', (chunk) => {
+    stdoutBuf += chunk.toString();
+    const lines = stdoutBuf.split(/\r?\n/);
+    stdoutBuf = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.startsWith('USB_WHEEL:')) continue;
+      const parts = line.split(':');
+      if (parts.length < 7) continue;
+
+      const rawX = Number(parts[2]);
+      const rawY = Number(parts[3]);
+      const rawZ = Number(parts[4]);
+      const rawR = Number(parts[5]);
+      const buttons = Number(parts[6]) >>> 0;
+
+      if (!loggedConnect) {
+        loggedConnect = true;
+        const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.32';
+        console.log('🎮 [GOG R808 USB] Đã nhận tín hiệu trực tiếp từ cổng USB Laptop (50Hz)!');
+        console.log('📡 [Wi-Fi Bridge] IP Laptop cho kính Meta Quest 3:', lanIp);
+      }
+
+      // Tự động căn chỉnh điểm nghỉ bàn đạp trong 10 mẫu đầu
+      if (!restCalibrated) {
+        if (calibSamples === 0) { restY = rawY; restZ = rawZ; restR = rawR; }
+        else {
+          restY = Math.round((restY + rawY) * 0.5);
+          restZ = Math.round((restZ + rawZ) * 0.5);
+          restR = Math.round((restR + rawR) * 0.5);
+        }
+        calibSamples++;
+        if (calibSamples >= 10) restCalibrated = true;
+        continue;
+      }
+
+      // Chuẩn hóa góc lái [-1.0 .. +1.0]
+      let steerNorm = (rawX - 32767.5) / 32767.5;
+      if (Math.abs(steerNorm) < 0.035) steerNorm = 0;
+      steerNorm = Math.max(-1, Math.min(1, steerNorm));
+
+      // Chuẩn hóa bàn đạp Ga và Phanh/Lùi
+      let gasNorm = 0, brakeNorm = 0;
+      const btnGas = (buttons & (1 << 6)) !== 0 ? 1 : 0;
+      const btnBrake = (buttons & (1 << 7)) !== 0 ? 1 : 0;
+      const deltaY = restY - rawY;
+      const deltaZ = Math.abs(rawZ - restZ);
+      const deltaR = Math.abs(rawR - restR);
+
+      if (deltaZ > 2500 || deltaR > 2500) {
+        const normY = Math.abs(rawY - restY) / (restY > 40000 ? 65535 : 32767);
+        const normZR = Math.max(deltaZ, deltaR) / (Math.max(restZ, restR) > 40000 ? 65535 : 32767);
+        gasNorm = Math.min(1, Math.max(0, normY));
+        brakeNorm = Math.min(1, Math.max(0, normZR));
+      } else if (Math.abs(deltaY) > 1800) {
+        if (deltaY > 1800) gasNorm = Math.min(1, deltaY / 32767);
+        else if (deltaY < -1800) brakeNorm = Math.min(1, (-deltaY) / 32767);
+      } else if (btnGas || btnBrake) {
+        gasNorm = btnGas;
+        brakeNorm = btnBrake;
+      }
+
+      const btnEvents = [];
+      for (const item of BUTTON_BIT_ACTIONS) {
+        const isDown = (buttons & (1 << item.bit)) !== 0;
+        const wasDown = (prevButtonsMask & (1 << item.bit)) !== 0;
+        if (isDown && !wasDown) btnEvents.push(item.action);
+      }
+      prevButtonsMask = buttons;
+
+      const driveNorm = Number((gasNorm - brakeNorm).toFixed(4));
+      const gear = brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : 'D';
+      const steerDeg = Math.round(90 + steerNorm * 45);
+      const throttleVal = Math.round(1500 + driveNorm * 260);
+
+      // 1. Gửi lệnh UDP ra mạch ESP32 xe RC thật
+      if (typeof sendUdpCarCommand === 'function') {
+        const isActivelyDriving = (throttleVal !== 1500 || steerDeg !== 90);
+        if (isActivelyDriving) {
+          sendUdpCarCommand(steerDeg, throttleVal);
+        }
+      }
+
+      // 2. Phát WebSocket sang kính Meta Quest 3
+      if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets.size > 0) {
+        const wheelPayload = JSON.stringify({
+          type: 'WHEEL_BRIDGE_STATE',
+          connected: true,
+          source: 'NATIVE_WINMM_GOG808',
+          deviceId: 'GOG R808 Native',
+          steeringNorm: Number(steerNorm.toFixed(3)),
+          steerAngleDeg: Number((steerNorm * 540).toFixed(1)),
+          gasPercent: Math.round(gasNorm * 100),
+          brakePercent: Math.round(brakeNorm * 100),
+          reversePercent: gear === 'R' ? Math.round(brakeNorm * 100) : 0,
+          gear,
+          steer: steerDeg,
+          throttle: throttleVal,
+          buttonEvents
+        });
+
+        for (const client of activeMultiplayerSockets) {
+          if (client.readyState === 1) {
+            try { client.send(wheelPayload); } catch (e) {}
+          }
+        }
+      }
+    }
+  });
+
+  const cleanupPs = () => {
+    if (psProc) {
+      try { psProc.kill(); } catch (e) {}
+      psProc = null;
+    }
+  };
+  process.on('exit', cleanupPs);
+  process.on('SIGINT', () => { cleanupPs(); process.exit(0); });
+  process.on('SIGTERM', () => { cleanupPs(); process.exit(0); });
 })();

@@ -22995,3 +22995,201 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 })();
+
+
+// ============================================================================
+// [PATCH V400 - CLIENT] TỰ ĐỘNG DÒ TÌM LAPTOP QUA WI-FI (KHÔNG CẦN CÁP TYPE-C)
+// & HIỂN THỊ THANH TRẠNG THÁI MÀU XANH TRÊN MÀN HÌNH 2D UNKNOWN SOURCES
+// ============================================================================
+(function setupV400WirelessQuestBridge() {
+  if (typeof window === 'undefined' || window.__V400_WIRELESS_BRIDGE_INSTALLED__) return;
+  window.__V400_WIRELESS_BRIDGE_INSTALLED__ = true;
+
+  const BAKED_LAPTOP_IPS = ['192.168.1.32', '127.0.0.1'];
+  let activeBridgeWs = null;
+  let isScanningSubnet = false;
+
+  function ensureStatusBanner() {
+    let banner = document.getElementById('v400-wifi-status-banner');
+    if (banner) return banner;
+
+    banner = document.createElement('div');
+    banner.id = 'v400-wifi-status-banner';
+    banner.style.cssText =
+      'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:999999;display:flex;align-items:center;gap:10px;padding:8px 18px;border-radius:999px;background:rgba(10,16,28,0.92);border:2px solid #f59e0b;color:#fbbf24;font-family:Segoe UI,sans-serif;font-size:12.5px;font-weight:700;box-shadow:0 6px 20px rgba(0,0,0,0.6);backdrop-filter:blur(6px);user-select:none;';
+
+    const textSpan = document.createElement('span');
+    textSpan.id = 'v400-wifi-status-text';
+    textSpan.textContent = '📡 Đang tự động tìm Laptop trên mạng Wi-Fi...';
+
+    const manualBtn = document.createElement('button');
+    manualBtn.textContent = 'Đổi IP';
+    manualBtn.style.cssText =
+      'background:#1e293b;color:#38bdf8;border:1px solid #38bdf8;border-radius:999px;padding:3px 10px;font-size:11px;cursor:pointer;font-weight:700;';
+    manualBtn.onclick = () => {
+      const saved = localStorage.getItem('pc_server_ip') || '192.168.1.32';
+      const entered = prompt('Nhập IP Wi-Fi của Laptop (VD: 192.168.1.32):', saved);
+      if (entered && entered.trim()) {
+        const cleanIp = entered.trim().replace(/^https?:\/\//, '').replace(/:\d+$/, '');
+        localStorage.setItem('pc_server_ip', cleanIp);
+        connectToLaptopWs(cleanIp);
+      }
+    };
+
+    banner.appendChild(textSpan);
+    banner.appendChild(manualBtn);
+    document.body.appendChild(banner);
+    return banner;
+  }
+
+  function setBannerState(isConnected, message) {
+    ensureStatusBanner();
+    const banner = document.getElementById('v400-wifi-status-banner');
+    const textSpan = document.getElementById('v400-wifi-status-text');
+    if (!banner || !textSpan) return;
+
+    if (isConnected) {
+      banner.style.borderColor = '#10b981';
+      banner.style.color = '#34d399';
+      banner.style.background = 'rgba(6, 36, 24, 0.94)';
+      textSpan.textContent = message;
+    } else {
+      banner.style.borderColor = '#f59e0b';
+      banner.style.color = '#fbbf24';
+      banner.style.background = 'rgba(10, 16, 28, 0.92)';
+      textSpan.textContent = message;
+    }
+  }
+
+  async function checkHostAlive(ip, timeoutMs = 500) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`http://${ip}:8080/api/bridge-ping`, {
+        method: 'GET',
+        mode: 'cors',
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok) return ip;
+      }
+    } catch (e) {
+      clearTimeout(timer);
+    }
+    return null;
+  }
+
+  async function discoverLaptopOnWifi() {
+    if (isScanningSubnet) return;
+    if (activeBridgeWs && activeBridgeWs.readyState === WebSocket.OPEN) return;
+    isScanningSubnet = true;
+
+    try {
+      const priorityIps = [];
+      const savedIp = localStorage.getItem('pc_server_ip');
+      if (savedIp && savedIp !== 'localhost' && savedIp !== '127.0.0.1') priorityIps.push(savedIp);
+      BAKED_LAPTOP_IPS.forEach(ip => {
+        if (ip && !priorityIps.includes(ip)) priorityIps.push(ip);
+      });
+
+      for (const ip of priorityIps) {
+        const found = await checkHostAlive(ip, 450);
+        if (found) {
+          localStorage.setItem('pc_server_ip', found);
+          connectToLaptopWs(found);
+          isScanningSubnet = false;
+          return;
+        }
+      }
+
+      // Quét nhanh các dải mạng phổ biến nếu laptop đổi IP
+      setBannerState(false, '🔍 Đang quét dải Wi-Fi tìm Laptop...');
+      const subnets = ['192.168.1', '192.168.0', '192.168.4'];
+      for (const prefix of subnets) {
+        const candidates = [];
+        for (let i = 1; i <= 254; i++) candidates.push(`${prefix}.${i}`);
+        const batchSize = 35;
+        for (let i = 0; i < candidates.length; i += batchSize) {
+          if (activeBridgeWs && activeBridgeWs.readyState === WebSocket.OPEN) {
+            isScanningSubnet = false;
+            return;
+          }
+          const batch = candidates.slice(i, i + batchSize);
+          const results = await Promise.all(batch.map(ip => checkHostAlive(ip, 350)));
+          const winner = results.find(Boolean);
+          if (winner) {
+            localStorage.setItem('pc_server_ip', winner);
+            connectToLaptopWs(winner);
+            isScanningSubnet = false;
+            return;
+          }
+        }
+      }
+    } catch (e) {}
+    isScanningSubnet = false;
+  }
+
+  function connectToLaptopWs(ip) {
+    if (activeBridgeWs && activeBridgeWs.readyState === WebSocket.OPEN) return;
+    if (activeBridgeWs) {
+      try { activeBridgeWs.close(); } catch (e) {}
+    }
+
+    try {
+      const sock = new WebSocket(`ws://${ip}:8080`);
+      activeBridgeWs = sock;
+
+      sock.addEventListener('open', () => {
+        localStorage.setItem('pc_server_ip', ip);
+        setBannerState(true, `🟢 ĐÃ KẾT NỐI LAPTOP (${ip}:8080) — SẴN SÀNG LÁI GOG R808`);
+        sock.send(JSON.stringify({ type: 'PLAYER_HELLO', deviceType: 'META_QUEST' }));
+      });
+
+      sock.addEventListener('message', (ev) => {
+        if (typeof ev.data !== 'string') return;
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch (e) { return; }
+        if (!msg) return;
+
+        if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
+          // Tự động lên ghế lái khi có tín hiệu vô lăng
+          if (typeof state !== 'undefined' && state) {
+            if (state.playerMode !== 'DRIVING' || state.seatIndex !== 0) {
+              state.playerMode = 'DRIVING';
+              state.seatIndex = 0;
+              state.engineRunning = true;
+              state.gearIndex = 3;
+            }
+          }
+        }
+      });
+
+      sock.addEventListener('close', () => {
+        setBannerState(false, `🟡 Mất kết nối tới ${ip}:8080 — Đang thử lại...`);
+      });
+
+      sock.addEventListener('error', () => {
+        try { sock.close(); } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  // Khởi động dò tìm
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      ensureStatusBanner();
+      discoverLaptopOnWifi();
+    });
+  } else {
+    ensureStatusBanner();
+    discoverLaptopOnWifi();
+  }
+
+  setInterval(() => {
+    if (!activeBridgeWs || activeBridgeWs.readyState === WebSocket.CLOSED) {
+      discoverLaptopOnWifi();
+    }
+  }, 3000);
+})();
