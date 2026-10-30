@@ -928,6 +928,11 @@ function attachMultiplayerServer(serverInstance) {
     }
 
     ws.send(JSON.stringify({
+      type: 'SERVER_LAN_INFO',
+      lanIp: getLocalLanIp(),
+      port: HTTP_PORT
+    }));
+    ws.send(JSON.stringify({
       type: 'WELCOME',
       playerId,
       ownCarId: assignedOwnCarId,

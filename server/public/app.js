@@ -3951,7 +3951,11 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     mpSocket.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'WELCOME') {
+        if (msg.type === 'SERVER_LAN_INFO' && msg.lanIp) {
+          if (typeof localStorage !== 'undefined' && msg.lanIp !== '127.0.0.1') {
+            localStorage.setItem('pc_server_ip', msg.lanIp);
+          }
+        } else if (msg.type === 'WELCOME') {
           state.playerId = msg.playerId;
           state.ownCarId = msg.ownCarId;
           state.activeCarId = msg.ownCarId;

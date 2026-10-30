@@ -3,7 +3,11 @@
   "appName": "RollsRoyce VR Simulator",
   "webDir": "www",
   "server": {
+    "androidScheme": "http",
     "cleartext": true,
     "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true
   }
 }

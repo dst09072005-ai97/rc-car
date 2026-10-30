@@ -1316,6 +1316,7 @@ D:\XE_RC_FPV_V10\server.js	server.js
 D:\XE_RC_FPV_V10\start_all.bat	start_all.bat
 D:\XE_RC_FPV_V10\tools\apply_systemic_fix.js	tools/apply_systemic_fix.js
 D:\XE_RC_FPV_V10\tools\apply_v190_cabin_rules.js	tools/apply_v190_cabin_rules.js
+D:\XE_RC_FPV_V10\tools\apply_v300_perfect_hybrid.js	tools/apply_v300_perfect_hybrid.js
 D:\XE_RC_FPV_V10\tools\audit_individual_meshes.js	tools/audit_individual_meshes.js
 D:\XE_RC_FPV_V10\tools\build_v260_module.js	tools/build_v260_module.js
 D:\XE_RC_FPV_V10\tools\check_env.js	tools/check_env.js
