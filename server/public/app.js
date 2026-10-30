@@ -166,11 +166,19 @@ async function setupSeamless3D2DSwitcher() {
     }
 
     // 2.5 NẾU ĐANG CHẠY TRONG BẢN APK LAUNCHER TRÊN KÍNH META QUEST (MỤC UNAUTHORIZED / UNKNOWN SOURCES)
-    // Tự động phóng sang Meta Quest Browser với URL HTTPS để kích hoạt Immersive WebXR 6DoF
-    const isQuestApkLauncher = (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.launchQuestVR === 'function');
-    if (isQuestApkLauncher) {
+    // Tự động chuyển hướng sang Meta Quest Browser với URL HTTPS để kích hoạt Immersive WebXR 6DoF
+    const isQuestDevice = /Quest|OculusBrowser/i.test(navigator.userAgent);
+    const isApkEnvironment = (typeof window !== 'undefined' && (
+      window.QuestVRBridge ||
+      window.Capacitor ||
+      window.location.protocol === 'capacitor:' ||
+      window.location.protocol === 'file:' ||
+      (isQuestDevice && !window.isSecureContext)
+    ));
+
+    if (isApkEnvironment) {
       let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
-      if (!pcIp && typeof window.QuestVRBridge.getDefaultHostIp === 'function') {
+      if (!pcIp && typeof window.QuestVRBridge !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function') {
         try { pcIp = window.QuestVRBridge.getDefaultHostIp(); } catch (e) {}
       }
       if (!pcIp) pcIp = '192.168.1.32';
@@ -178,11 +186,23 @@ async function setupSeamless3D2DSwitcher() {
 
       const vrTargetUrl = `https://${pcIp}:8443/?vr=immersive`;
       state.lastActionLog = `🚀 Đang tự động phóng sang Meta Quest Browser Immersive VR (${pcIp})...`;
+
+      if (window.QuestVRBridge && typeof window.QuestVRBridge.launchQuestVR === 'function') {
+        try {
+          window.QuestVRBridge.launchQuestVR(vrTargetUrl);
+          return;
+        } catch (bridgeErr) {
+          console.warn('[QuestVRBridge] Lỗi gọi launchQuestVR:', bridgeErr);
+        }
+      }
+
+      // Fallback nếu chạy trong WebView chưa tiêm bridge: Mở URL ra trình duyệt ngoài
       try {
-        window.QuestVRBridge.launchQuestVR(vrTargetUrl);
+        window.open(vrTargetUrl, '_system');
         return;
-      } catch (bridgeErr) {
-        console.warn('[QuestVRBridge] Lỗi gọi launchQuestVR:', bridgeErr);
+      } catch (e) {
+        window.location.href = vrTargetUrl;
+        return;
       }
     }
 
@@ -3891,7 +3911,42 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
 (function initMultiplayerClient() {
   try {
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    mpSocket = new WebSocket(`${wsProto}//${window.location.host}`);
+    let hostTarget = window.location.host;
+
+    // ĐỊNH TUYẾN KẾT NỐI TỚI LAPTOP SERVER CHO CẢ BẢN WEB VÀ APK META QUEST
+    const isApkEnvironment = (
+      (typeof window !== 'undefined' && window.QuestVRBridge) ||
+      (typeof window !== 'undefined' && window.Capacitor) ||
+      (typeof window !== 'undefined' && window.location.protocol === 'capacitor:') ||
+      (typeof window !== 'undefined' && window.location.protocol === 'file:') ||
+      (typeof window !== 'undefined' && window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')
+    );
+
+    if (isApkEnvironment) {
+      const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.32';
+      hostTarget = `${pcIp}:8080`;
+      wsProto = 'ws:';
+    }
+
+    mpSocket = new WebSocket(`${wsProto}//${hostTarget}`);
+
+    mpSocket.onopen = () => {
+      console.log('[Multiplayer] ✅ Đã kết nối WebSocket thành công tới server:', hostTarget);
+      state.lastActionLog = '📶 Đã kết nối Server Máy tính! Nhận tín hiệu Vô lăng GOG808 & Xe.';
+    };
+
+    mpSocket.onclose = () => {
+      console.warn('[Multiplayer] ⚠️ Mất kết nối WebSocket, tự động thử lại sau 2.5s...');
+      setTimeout(() => {
+        if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
+          try { initMultiplayerClient(); } catch (e) {}
+        }
+      }, 2500);
+    };
+
+    mpSocket.onerror = (err) => {
+      console.warn('[Multiplayer] Lỗi kết nối WebSocket:', err);
+    };
 
     mpSocket.onmessage = (event) => {
       try {

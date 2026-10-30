@@ -15,11 +15,16 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setupVrBridge();
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        setupVrBridge();
+    }
+
+    private void setupVrBridge() {
         if (bridge != null && bridge.getWebView() != null) {
             WebView webView = bridge.getWebView();
             WebSettings settings = webView.getSettings();
