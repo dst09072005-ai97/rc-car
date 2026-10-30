@@ -121,6 +121,31 @@ let panoramaPitchOffset = 0;
 async function setupSeamless3D2DSwitcher() {
   if (!smartVrBtn) return;
 
+  // Khởi tạo sẵn cấu hình IP Server Máy tính trong localStorage (Mặc định 192.168.1.32 để người dùng không phải nhập tay)
+  if (typeof localStorage !== 'undefined' && !localStorage.getItem('pc_server_ip')) {
+    const fallbackDefaultIp = (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function')
+      ? window.QuestVRBridge.getDefaultHostIp()
+      : '192.168.1.32';
+    localStorage.setItem('pc_server_ip', fallbackDefaultIp);
+  }
+
+  // Kết nối ô cấu hình IP Máy tính (#pc-server-ip-input)
+  const pcIpInput = document.getElementById('pc-server-ip-input');
+  const btnSavePcIp = document.getElementById('btn-save-pc-ip');
+  if (pcIpInput) {
+    const curIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.32';
+    pcIpInput.value = curIp;
+    const saveIp = () => {
+      const val = pcIpInput.value.trim();
+      if (val && typeof localStorage !== 'undefined') {
+        localStorage.setItem('pc_server_ip', val);
+        state.lastActionLog = `💾 Đã lưu IP máy tính VR: ${val}`;
+      }
+    };
+    pcIpInput.addEventListener('change', saveIp);
+    if (btnSavePcIp) btnSavePcIp.addEventListener('click', saveIp);
+  }
+
   smartVrBtn.addEventListener('click', async () => {
     initAudio();
 
@@ -140,7 +165,28 @@ async function setupSeamless3D2DSwitcher() {
       return;
     }
 
-    // 3. KÍCH HOẠT WEBXR 'immersive-vr' CHUẨN NHƯ BẢN V17 & DMNSHD.GG (KHÔNG DÙNG dom-overlay ĐỂ TRÁNH KẸT CỬA SỔ 2D!)
+    // 2.5 NẾU ĐANG CHẠY TRONG BẢN APK LAUNCHER TRÊN KÍNH META QUEST (MỤC UNAUTHORIZED / UNKNOWN SOURCES)
+    // Tự động phóng sang Meta Quest Browser với URL HTTPS để kích hoạt Immersive WebXR 6DoF
+    const isQuestApkLauncher = (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.launchQuestVR === 'function');
+    if (isQuestApkLauncher) {
+      let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
+      if (!pcIp && typeof window.QuestVRBridge.getDefaultHostIp === 'function') {
+        try { pcIp = window.QuestVRBridge.getDefaultHostIp(); } catch (e) {}
+      }
+      if (!pcIp) pcIp = '192.168.1.32';
+      if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
+
+      const vrTargetUrl = `https://${pcIp}:8443/?vr=immersive`;
+      state.lastActionLog = `🚀 Đang tự động phóng sang Meta Quest Browser Immersive VR (${pcIp})...`;
+      try {
+        window.QuestVRBridge.launchQuestVR(vrTargetUrl);
+        return;
+      } catch (bridgeErr) {
+        console.warn('[QuestVRBridge] Lỗi gọi launchQuestVR:', bridgeErr);
+      }
+    }
+
+    // 3. KÍCH HOẠT WEBXR 'immersive-vr' CHUẨN (KHÔNG DÙNG dom-overlay ĐỂ TRÁNH KẸT CỬA SỔ 2D!)
     if ('xr' in navigator) {
       try {
         const supported = await navigator.xr.isSessionSupported('immersive-vr');
@@ -148,8 +194,14 @@ async function setupSeamless3D2DSwitcher() {
           const session = await navigator.xr.requestSession('immersive-vr', {
             optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
           });
-          renderer.xr.setReferenceSpaceType('local-floor');
-          await renderer.xr.setSession(session);
+          try {
+            renderer.xr.setReferenceSpaceType('local-floor');
+            await renderer.xr.setSession(session);
+          } catch (refErr) {
+            console.warn('[WebXR] Fallback reference space sang local:', refErr);
+            renderer.xr.setReferenceSpaceType('local');
+            await renderer.xr.setSession(session);
+          }
           currentXrSession = session;
           setImmersedWorldUIState(true);
           smartVrBtn.textContent = '🚪 THOÁT VR 360° VỀ CỬA SỔ 2D';
@@ -178,6 +230,44 @@ async function setupSeamless3D2DSwitcher() {
   });
 }
 setupSeamless3D2DSwitcher();
+
+// ----------------------------------------------------------------------------
+// HỖ TRỢ AUTO-ENTER VÀO BUỒNG LÁI VR KHI MỞ BẰNG ?vr=immersive TRÊN META QUEST BROWSER
+// ----------------------------------------------------------------------------
+(function setupAutoEnterVrFromQuestIntent() {
+  if (typeof window === 'undefined') return;
+  const p = new URLSearchParams(window.location.search);
+  if (p.get('vr') === 'immersive' && !window.QuestVRBridge) {
+    window.addEventListener('DOMContentLoaded', () => {
+      const vrPrompt = document.createElement('div');
+      vrPrompt.id = 'vr-immersive-intent-prompt';
+      vrPrompt.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:999999;background:rgba(8,16,32,0.95);border:2px solid #00ff88;box-shadow:0 0 35px rgba(0,255,136,0.65);border-radius:18px;padding:22px 30px;text-align:center;font-family:sans-serif;color:#fff;backdrop-filter:blur(10px);cursor:pointer;user-select:none;';
+      vrPrompt.innerHTML = '<div style="font-size:42px;margin-bottom:8px;">🥽</div><div style="font-size:18px;font-weight:bold;color:#00ff88;margin-bottom:6px;">BẤM VÀO ĐÂY ĐỂ VÀO BUỒNG LÁI VR 360°</div><div style="font-size:12px;color:#a0c0e0;">(Tự động chuyển từ Launcher 2D sang Không gian Ảo 6DoF)</div>';
+      vrPrompt.addEventListener('click', () => {
+        vrPrompt.remove();
+        if (typeof smartVrBtn !== 'undefined' && smartVrBtn) smartVrBtn.click();
+      });
+      document.body.appendChild(vrPrompt);
+
+      if (typeof navigator !== 'undefined' && navigator.xr && typeof navigator.xr.offerSession === 'function') {
+        navigator.xr.offerSession('immersive-vr', {
+          optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+        }).then(async (session) => {
+          if (vrPrompt.parentNode) vrPrompt.remove();
+          try {
+            renderer.xr.setReferenceSpaceType('local-floor');
+            await renderer.xr.setSession(session);
+          } catch (e) {
+            renderer.xr.setReferenceSpaceType('local');
+            await renderer.xr.setSession(session);
+          }
+          currentXrSession = session;
+          setImmersedWorldUIState(true);
+        }).catch(() => {});
+      }
+    });
+  }
+})();
 
 // ============================================================================
 // 3. ỨNG DỤNG YOUTUBE THẬT (MỞ PHIM / MỞ NHẠC CÓ TIẾNG & ĐỒNG BỘ MÀN HÌNH XE)
@@ -3854,6 +3944,10 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
               cameraRig.position.set(0, 0, 0);
             }
           }
+        } else if (msg.type === 'ESP32_CAM_FRAME_RELAY' && msg.dataUrl) {
+          if (typeof window !== 'undefined' && window.__questRelayImg) {
+            window.__questRelayImg.src = msg.dataUrl;
+          }
         } else if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
           // Cầu nối vô lăng GOG R808 & Bàn phím Laptop sang kính Meta Quest 3
           if (!window._racingWheel) {
@@ -3882,6 +3976,26 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           wObj.gear = msg.gear || (throttleNorm < -0.05 ? 'R' : 'D');
           wObj.lastInputTime = performance.now();
 
+          if (Array.isArray(msg.buttonEvents) && msg.buttonEvents.length > 0) {
+            msg.buttonEvents.forEach((act) => {
+              if (act === 'TURN_LEFT') {
+                if (typeof cycleTurnSignals === 'function') cycleTurnSignals('LEFT');
+                else if (typeof toggleTurnSignal === 'function') toggleTurnSignal('LEFT');
+              } else if (act === 'TURN_RIGHT') {
+                if (typeof cycleTurnSignals === 'function') cycleTurnSignals('RIGHT');
+                else if (typeof toggleTurnSignal === 'function') toggleTurnSignal('RIGHT');
+              } else if (act === 'HORN') {
+                if (typeof playSmartVehicleHornSound === 'function') playSmartVehicleHornSound('CAR');
+                else if (typeof playHonkSound === 'function') playHonkSound();
+              } else if (act === 'ENTER_EXIT') {
+                if (typeof window.enterOrExitCarWithBlink === 'function') window.enterOrExitCarWithBlink();
+                else if (typeof toggleEnterExitVehicle === 'function') toggleEnterExitVehicle();
+              } else if (act === 'SWAP_SEAT') {
+                if (typeof window.swapSeatOrTakeDriverControl === 'function') window.swapSeatOrTakeDriverControl();
+                else if (typeof cycleCabinSeatPosition === 'function') cycleCabinSeatPosition();
+              }
+            });
+          }
           state.steeringAngleDeg = wObj.steerAngleDeg;
           if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
             steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(state.steeringAngleDeg);
@@ -3925,7 +4039,11 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             }
             if (c.carId === state.activeCarId) {
               // Kiểm tra xem máy này có đang chủ động ấn phím / đạp ga / bẻ lái trực tiếp không
+              // CHỐNG SNAP-BACK / RUBBER-BANDING:
+              // Khi người chơi đang ở chế độ lái xe (DRIVING) trên ghế tài xế (seatIndex === 0),
+              // client này là người quyết định vị trí xe! Tuyệt đối không để vị trí server kéo giật về chỗ cũ khi vừa nhả ga!
               const isLocallyDrivingInput = Boolean(
+                (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING' && state.seatIndex === 0) ||
                 (keys && (keys.w || keys.s || keys.a || keys.d)) ||
                 (holdState && (holdState.gas || holdState.brake || holdState.left || holdState.right)) ||
                 (Math.abs(state.throttlePercent || 0) > 2) ||
@@ -12793,7 +12911,7 @@ const interiorVariants = {
   const busSign = createSpeechBubbleSprite('🚌 KHOANG LÁI XE BUS THÀNH PHỐ (MÁY SOÁT VÉ & CỬA TỰ ĐỘNG)', '#003566', '#ffd60a');
   busSign.scale.set(0.75, 0.16, 1);
   busSign.position.set(0, 1.38, -0.45);
-  busSign.visible = true;
+  busSign.visible = false;
   interiorVariants.BUS.add(busWheel, ticketMachine, handrailPole, busSign);
 
   // 2. Nội thất XE CỨU HỎA: Bảng điều khiển Bơm Nước Áp Lực Cao, Nút Còi Hụ 114, Bộ đàm chỉ huy Đỏ
@@ -12805,7 +12923,7 @@ const interiorVariants = {
   const fireNotice = createSpeechBubbleSprite('🚒 BUỒNG CHỈ HUY XE CỨU HỎA 114 (ÁP LỰC VÒI RỒNG: 100%)', '#780000', '#ffbe0b');
   fireNotice.scale.set(0.75, 0.16, 1);
   fireNotice.position.set(0, 1.38, -0.45);
-  fireNotice.visible = true;
+  fireNotice.visible = false;
   interiorVariants.FIRETRUCK.add(pumpConsole, pressureGauge, fireNotice);
 
   // 3. Nội thất XE CẤP CỨU: Máy theo dõi nhịp tim ECG, Hộp sơ cứu Chữ Thập Đỏ, Băng ca Y tế phía sau
@@ -12816,7 +12934,7 @@ const interiorVariants = {
   const ambNotice = createSpeechBubbleSprite('🚑 KHOANG Y TẾ XE CẤP CỨU 115 (MÁY MONITOR & BĂNG CA)', '#0077b6', '#00ff88');
   ambNotice.scale.set(0.75, 0.16, 1);
   ambNotice.position.set(0, 1.38, -0.45);
-  ambNotice.visible = true;
+  ambNotice.visible = false;
   interiorVariants.AMBULANCE.add(ecgMonitor, medKit, ambNotice);
 
   // 4. Nội thất XE TẢI HẠNG NẶNG: Cần số sàn 12 cấp cao, Dây giật còi hơi trên trần, Đồng hồ áp suất khí nén
@@ -12825,7 +12943,7 @@ const interiorVariants = {
   const truckNotice = createSpeechBubbleSprite('🚚 CABIN XE TẢI HẠNG NẶNG (CÒI HƠI & HỘP SỐ 12 CẤP)', '#1e293b', '#00bbf9');
   truckNotice.scale.set(0.75, 0.16, 1);
   truckNotice.position.set(0, 1.38, -0.45);
-  truckNotice.visible = true;
+  truckNotice.visible = false;
   interiorVariants.TRUCK.add(tallGearStick, truckNotice);
 
   Object.values(interiorVariants).forEach((grp) => {
@@ -20821,19 +20939,20 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const maxVelocity = targetMaxKmh / 3.6; // 12 km/h = 3.33 m/s
     const speedFactor = 1.0;
 
-    // B. BÀN ĐẠP THẮNG (PHANH DỪNG XE HÃM TỨC THÌ)
-    // Chỉ kích hoạt phanh khi thực sự đạp chân phanh (>8%) và lực đạp phanh áp đảo ga/lùi
-    const isDeliberateBrake = (racingWheel.brakePercent > 8) && (racingWheel.brakePercent > racingWheel.gasPercent * 0.6) && (racingWheel.brakePercent > racingWheel.reversePercent * 0.6);
-    if (isDeliberateBrake) {
+    // B. BÀN ĐẠP THẮNG (QUY TẮC ƯU TIÊN PHANH & GIẢM TỐC MƯỢT CHỐNG GIẬT)
+    // Khi đạp chân phanh (> 6%): Luôn chiếm quyền ưu tiên tuyệt đối, triệt tiêu ga/lùi để giảm tốc êm ái
+    if (racingWheel.brakePercent > 6) {
       state.throttlePercent = 0;
       state.reversePercent = 0;
       state.brakePercent = racingWheel.brakePercent;
-      const brakeDecel = (racingWheel.brakePercent / 100) * 35.0;
-      state.velocityMs = THREE.MathUtils.lerp(state.velocityMs, 0, dt * brakeDecel);
-      if (Math.abs(state.velocityMs) < 0.12 && racingWheel.brakePercent > 18) {
+      const decelRate = 6.0 + (racingWheel.brakePercent / 100) * 12.0;
+      const decelAlpha = THREE.MathUtils.clamp(dt * decelRate, 0, 1.0);
+      state.velocityMs = THREE.MathUtils.lerp(state.velocityMs, 0, decelAlpha);
+      if (Math.abs(state.velocityMs) < 0.08) {
         state.velocityMs = 0;
       }
       state.speedKmh = state.velocityMs * 3.6;
+      state.rpm = THREE.MathUtils.lerp(state.rpm, 850, Math.min(1, dt * 6.0));
     }
     // C. BÀN ĐẠP LÙI (REVERSE PEDAL - TỰ ĐỘNG LÙI XE RIÊNG BIỆT)
     else if (racingWheel.reversePercent > 5 && racingWheel.reversePercent > racingWheel.gasPercent) {
@@ -21608,15 +21727,40 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
 
 // ============================================================================
-// 25. BẢN CẬP NHẬT MASTER V250 (BỌC IIFE CÔ LẬP SCOPE - KHÔNG TRÙNG BIẾN):
-//     1. ĐỒNG BỘ CAM TRƯỚC + CAM LÙI ESP32 QUA PROXY (CHẠY MƯỢT TRÊN CẢ HTTP & HTTPS)
-//     2. TRUYỀN TÍN HIỆU VÔ LĂNG / APP RA MẠCH ESP32 CONTROLLER CỦA XE THẬT (25HZ)
-//     3. LÁI XE TRÊN KÍNH QUEST 3 BẰNG VÔ LĂNG GOG808 & SỬA LỖI THUMBSTICK VỪA CHẠY VỪA RẼ MƯỢT
-//     4. ĐỒNG BỘ BẢNG CHỨC NĂNG GIỮA LOCAL HTTP VÀ BẢN HTTPS TRÊN KÍNH / ĐIỆN THOẠI
-//     5. VẬT LÝ TÔNG HẤT TUNG / HẤT VĂNG (RAGDOLL LAUNCH) CHO TẤT CẢ NPC ĐI BỘ & THÚ CƯNG (PET)
+// 25. BẢN CẬP NHẬT MASTER V260 (KIẾN TRÚC HỆ THỐNG HỢP NHẤT — KHÔNG XUNG ĐỘT)
+//     1. ĐỒNG BỘ VÔ LĂNG GOG R808 TỪ LAPTOP (ADMIN) SANG KÍNH META QUEST 3 (PLAYER CHÍNH)
+//     2. TĂNG TỐC ĐỘ XE TRÊN APP LÊN GẤP 5 LẦN (VIRTUAL 5X) — GIỮ NGUYÊN TỐC ĐỘ 1X XE THẬT
+//     3. PHÂN BỔ GHẾ TÀI XẾ (SEAT 0) ĐỘC QUYỀN: KÍNH QUEST 2 HOẶC MOBILE KHÔNG CƯỚP ĐƯỢC LÁI
+//     4. BÀN ĐẠP GA/PHANH/LÙI: GA TIẾN, PHANH ƯU TIÊN GIẢM TỐC MƯỢT MÀ, CHỐNG GIẬT (ANTI-JERK)
+//     5. WEB WORKER 50HZ UNTHROTTLED: PHÁT VÔ LĂNG LIÊN TỤC KHI TAB LAPTOP CHẠY NGẦM
+//     6. BẢN ĐIỆN THOẠI: TỐI ƯU KHÔNG GIAN MÀN HÌNH, VUỐT LƯỚT 360° + XOAY LẮC GYROSCOPE
+//     7. CAMERA ESP32-CAM: RELAY KHÔNG GIÁN ĐOẠN, TỰ ĐỘNG VẼ NỀN GƯƠNG CHIẾU HẬU TRÁNH BẢNG ĐEN
+//     8. GƯƠNG HẬU & 3D INTERIOR: DỌN SẠCH BẢNG TÊN / MESH THỪA CHẮN TẦM NHÌN KÍNH HẬU
+//     9. LIQUID GEAR WIDGET & ROLE SEAT BADGE HIỂN THỊ TRẠNG THÁI THEO THỜI GIAN THỰC
 // ============================================================================
 (() => {
-  // --- 25.1. QUẢN LÝ KẾT NỐI ĐỒNG BỘ CAM TRƯỚC + CAM LÙI ESP32 QUA HTTPS/HTTP PROXY ---
+  'use strict';
+
+  if (typeof window !== 'undefined' && window.__V260_MASTER_ACTIVE__) return;
+  if (typeof window !== 'undefined') window.__V260_MASTER_ACTIVE__ = true;
+
+  // HỆ SỐ NHÂN TỐC ĐỘ XE ẢO TRÊN APP (Nhanh gấp 5 lần so với xe thật ngoài đời)
+  const VIRTUAL_APP_SPEED_SCALE = 5.0;
+
+  // --------------------------------------------------------------------------
+  // 25.1. NHẬN DIỆN THIẾT BỊ & PHÂN BỔ VAI TRÒ
+  // --------------------------------------------------------------------------
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+  const isQuestHeadset = /Quest|OculusBrowser|Pacific/i.test(ua);
+  const isMobilePhone = !isQuestHeadset && (
+    (typeof window !== 'undefined' && window.__DETECTED_DEVICE_TYPE__ === 'MOBILE_PHONE') ||
+    (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) && (typeof window !== 'undefined' && window.innerWidth < 1024))
+  );
+  const isLaptopAdmin = !isQuestHeadset && !isMobilePhone;
+
+  // --------------------------------------------------------------------------
+  // 25.2. CẤU HÌNH CAMERA ESP32 & GƯƠNG CHIẾU HẬU 3D
+  // --------------------------------------------------------------------------
   const hwConfig = {
     frontCamIp: (typeof localStorage !== 'undefined' && localStorage.getItem('rc_front_cam_ip')) || '192.168.1.101',
     rearCamIp: (typeof localStorage !== 'undefined' && localStorage.getItem('rc_rear_cam_ip')) || '192.168.1.102',
@@ -21627,23 +21771,63 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     useSnapshotFallbackRear: false
   };
 
-  // Tạo màn hình Cam Lùi 3D gắn ngay trên Gương Chiếu Hậu / Táp-lô trong khoang xe để nhìn trực quan trong VR
-  const cockpitRearCamCanvas = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
-  if (cockpitRearCamCanvas) {
-    cockpitRearCamCanvas.width = 320;
-    cockpitRearCamCanvas.height = 180;
-  }
-  const cockpitRearCamCtx = cockpitRearCamCanvas ? cockpitRearCamCanvas.getContext('2d') : null;
-  const cockpitRearCamTex = cockpitRearCamCanvas ? new THREE.CanvasTexture(cockpitRearCamCanvas) : null;
-  const cockpitRearCamMesh = cockpitRearCamTex ? new THREE.Mesh(
-    new THREE.PlaneGeometry(0.32, 0.16),
-    new THREE.MeshBasicMaterial({ map: cockpitRearCamTex })
-  ) : null;
-  if (cockpitRearCamMesh) {
-    cockpitRearCamMesh.position.set(0.0, 1.32, -0.46); // Vị trí gương chiếu hậu trung tâm trong khoang lái
-    if (typeof chassisGroup !== 'undefined' && chassisGroup) {
-      chassisGroup.add(cockpitRearCamMesh);
+  // Khởi tạo nền gương chiếu hậu mặc định (Tránh hiện bảng đen khi chưa có tín hiệu Cam Lùi ESP32)
+  function initRearMirrorDefaultBackdrop() {
+    if (typeof rearCamCtx !== 'undefined' && rearCamCtx && typeof rearCamCanvas !== 'undefined' && rearCamCanvas) {
+      const w = rearCamCanvas.width || 512;
+      const h = rearCamCanvas.height || 256;
+      const grad = rearCamCtx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, '#0d1828');
+      grad.addColorStop(0.5, '#070d16');
+      grad.addColorStop(1, '#020509');
+      rearCamCtx.fillStyle = grad;
+      rearCamCtx.fillRect(0, 0, w, h);
+
+      // Viền gương & góc hiển thị
+      rearCamCtx.strokeStyle = 'rgba(0, 255, 136, 0.45)';
+      rearCamCtx.lineWidth = 3;
+      rearCamCtx.strokeRect(6, 6, w - 12, h - 12);
+
+      // Nhãn OSD
+      rearCamCtx.fillStyle = 'rgba(0, 255, 136, 0.85)';
+      rearCamCtx.font = 'bold 15px monospace';
+      rearCamCtx.textAlign = 'center';
+      rearCamCtx.fillText('🪞 GƯƠNG CHIẾU HẬU 3D | ESP32 CAM LÙI STANDBY', w / 2, 34);
+
+      // Vạch căn khoảng cách lùi
+      rearCamCtx.strokeStyle = 'rgba(255, 214, 10, 0.4)';
+      rearCamCtx.lineWidth = 2;
+      rearCamCtx.beginPath();
+      rearCamCtx.moveTo(w * 0.22, h - 16);
+      rearCamCtx.lineTo(w * 0.35, h * 0.62);
+      rearCamCtx.lineTo(w * 0.65, h * 0.62);
+      rearCamCtx.lineTo(w * 0.78, h - 16);
+      rearCamCtx.stroke();
+
+      if (typeof rearCamTex !== 'undefined' && rearCamTex) {
+        rearCamTex.needsUpdate = true;
+      }
     }
+  }
+
+  // ESP32-CAM Relay qua WebSocket cho Kính Meta Quest 3 (Vượt chặn Mixed Content HTTPS)
+  if (typeof window !== 'undefined') {
+    window.__questRelayImg = new Image();
+    window.__questRelayImg.crossOrigin = 'anonymous';
+    window.__questRelayImg.onload = () => {
+      if (typeof wsCtx !== 'undefined' && wsCtx && typeof wsTex !== 'undefined' && wsTex) {
+        wsCtx.drawImage(window.__questRelayImg, 0, 0, 1024, 512);
+        wsTex.needsUpdate = true;
+      }
+      if (typeof rearCamCtx !== 'undefined' && rearCamCtx && typeof rearCamTex !== 'undefined' && rearCamTex) {
+        rearCamCtx.drawImage(window.__questRelayImg, 0, 0, 512, 256);
+        rearCamTex.needsUpdate = true;
+      }
+      if (typeof state !== 'undefined' && state) {
+        state.esp32Connected = true;
+        state.windshieldMode = 'ESP32_LIVE';
+      }
+    };
   }
 
   function connectBothEsp32CamerasAndController() {
@@ -21662,7 +21846,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       localStorage.setItem('rc_ctrl_ip', hwConfig.ctrlIp);
     }
 
-    // Gửi cấu hình IP xuống Server để Server mở cầu nối UDP + HTTP + Camera Proxy
     if (typeof fetch !== 'undefined') {
       fetch('/api/esp32-config', {
         method: 'POST',
@@ -21677,116 +21860,19 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     const frontImg = document.getElementById('v250-front-cam-img');
     const rearImg = document.getElementById('v250-rear-cam-img');
-    const frontStatus = document.getElementById('v250-front-cam-status');
-    const rearStatus = document.getElementById('v250-rear-cam-status');
-
-    // Luôn đi qua Relative URL `/api/esp32-cam-proxy` để hoạt động 100% trên cả HTTP Local lẫn HTTPS Kính Quest 3 / Điện thoại!
-    if (frontImg) {
-      hwConfig.useSnapshotFallbackFront = false;
-      frontImg.crossOrigin = 'anonymous';
-      frontImg.onload = () => {
-        hwConfig.frontConnected = true;
-        if (frontStatus) frontStatus.textContent = `📹 CAM TRƯỚC (${hwConfig.frontCamIp}): ONLINE`;
-      };
-      frontImg.onerror = () => {
-        // Nếu luồng MJPEG :81 bị bận, chuyển ngay sang chế độ hút Snapshot liên tục qua Proxy
-        hwConfig.useSnapshotFallbackFront = true;
-        if (frontStatus) frontStatus.textContent = `📹 CAM TRƯỚC: CHẾ ĐỘ SNAPSHOT PROXY`;
-      };
-      frontImg.src = `/api/esp32-cam-proxy?cam=front&ip=${encodeURIComponent(hwConfig.frontCamIp)}&_t=${Date.now()}`;
-    }
-
-    if (rearImg) {
-      hwConfig.useSnapshotFallbackRear = false;
-      rearImg.crossOrigin = 'anonymous';
-      rearImg.onload = () => {
-        hwConfig.rearConnected = true;
-        if (rearStatus) rearStatus.textContent = `🔙 CAM LÙI (${hwConfig.rearCamIp}): ONLINE`;
-      };
-      rearImg.onerror = () => {
-        hwConfig.useSnapshotFallbackRear = true;
-        if (rearStatus) rearStatus.textContent = `🔙 CAM LÙI: CHẾ ĐỘ SNAPSHOT PROXY`;
-      };
-      rearImg.src = `/api/esp32-cam-proxy?cam=rear&ip=${encodeURIComponent(hwConfig.rearCamIp)}&_t=${Date.now()}`;
-    }
+    if (frontImg) frontImg.src = `/api/esp32-proxy?ip=${hwConfig.frontCamIp}&port=81&t=${Date.now()}`;
+    if (rearImg) rearImg.src = `/api/esp32-proxy?ip=${hwConfig.rearCamIp}&port=81&t=${Date.now()}`;
   }
 
-  // Chu kỳ làm tươi Snapshot Fallback (nếu 1 trong 2 cam dùng firmware chỉ mở cổng 80 `/capture`)
-  setInterval(() => {
-    if (typeof document === 'undefined') return;
-    const frontImg = document.getElementById('v250-front-cam-img');
-    const rearImg = document.getElementById('v250-rear-cam-img');
-    if (hwConfig.useSnapshotFallbackFront && frontImg) {
-      frontImg.src = `/api/esp32-snapshot?cam=front&ip=${encodeURIComponent(hwConfig.frontCamIp)}&_t=${Date.now()}`;
-    }
-    if (hwConfig.useSnapshotFallbackRear && rearImg) {
-      rearImg.src = `/api/esp32-snapshot?cam=rear&ip=${encodeURIComponent(hwConfig.rearCamIp)}&_t=${Date.now()}`;
-    }
-
-    // Vẽ hình ảnh Cam Lùi (khi lùi xe) hoặc Cam Trước lên màn hình Gương 3D trong khoang lái VR
-    if (cockpitRearCamCtx) {
-      const isReversing = typeof state !== 'undefined' && state && state.velocityMs < -0.15;
-      const activeImg = isReversing ? rearImg : frontImg;
-      cockpitRearCamCtx.fillStyle = '#091326';
-      cockpitRearCamCtx.fillRect(0, 0, 320, 180);
-      if (activeImg && activeImg.complete && (activeImg.naturalWidth || 0) > 0) {
-        try {
-          cockpitRearCamCtx.drawImage(activeImg, 0, 0, 320, 180);
-        } catch (e) {}
-      }
-      // Vẽ vạch căn khoảng cách lùi xe trực quan trên màn hình 3D khi vào số R
-      if (isReversing) {
-        cockpitRearCamCtx.strokeStyle = '#ff2a55';
-        cockpitRearCamCtx.lineWidth = 3;
-        cockpitRearCamCtx.beginPath();
-        cockpitRearCamCtx.moveTo(50, 175);
-        cockpitRearCamCtx.lineTo(105, 105);
-        cockpitRearCamCtx.lineTo(215, 105);
-        cockpitRearCamCtx.lineTo(270, 175);
-        cockpitRearCamCtx.stroke();
-      }
-      cockpitRearCamCtx.fillStyle = isReversing ? '#ff2a55' : '#00ff88';
-      cockpitRearCamCtx.font = 'bold 14px sans-serif';
-      cockpitRearCamCtx.fillText(isReversing ? '🔙 CAM LÙI ESP32 (R)' : '📹 CAM TRƯỚC ESP32 (D)', 10, 22);
-      if (cockpitRearCamTex) cockpitRearCamTex.needsUpdate = true;
-    }
-  }, 110);
-
-  if (typeof window !== 'undefined') {
-    const bindV250DomControls = () => {
-      const inFront = document.getElementById('v250-ip-front');
-      const inRear = document.getElementById('v250-ip-rear');
-      const inCtrl = document.getElementById('v250-ip-ctrl');
-      if (inFront) inFront.value = hwConfig.frontCamIp;
-      if (inRear) inRear.value = hwConfig.rearCamIp;
-      if (inCtrl) inCtrl.value = hwConfig.ctrlIp;
-
-      document.getElementById('v250-btn-connect-all')?.addEventListener('click', connectBothEsp32CamerasAndController);
-      document.getElementById('v250-btn-toggle-cam-hud')?.addEventListener('click', () => {
-        const hud = document.getElementById('v250-dual-cam-hud');
-        if (hud) hud.style.display = hud.style.display === 'none' ? 'flex' : 'none';
-      });
-      document.getElementById('v250-btn-test-esp32')?.addEventListener('click', () => {
-        sendHardwareControlToEsp32(160, 0, 'D', false, 'TEST_PULSE');
-        setTimeout(() => sendHardwareControlToEsp32(0, 0, 'P', false, 'TEST_STOP'), 600);
-      });
-
-      setTimeout(connectBothEsp32CamerasAndController, 800);
-    };
-
-    if (document.readyState === 'loading') {
-      window.addEventListener('DOMContentLoaded', bindV250DomControls);
-    } else {
-      bindV250DomControls();
-    }
-  }
-
-  // --- 25.2. BỘ PHÁT TÍN HIỆU ĐIỀU KHIỂN RA XE THẬT (ESP32 CONTROLLER) & ĐỒNG BỘ HTTP <-> HTTPS ---
+  // --------------------------------------------------------------------------
+  // 25.3. PHÁT LỆNH ĐIỀU KHIỂN XUỐNG ESP32 RC CAR (UDP 4210) — GIỮ NGUYÊN 1X AN TOÀN
+  // --------------------------------------------------------------------------
   let lastEsp32SendTime = 0;
   let lastSentThrottle = 0;
   let lastSentSteer = 0;
 
   function sendHardwareControlToEsp32(throttlePwm, steerPercent, gearStr, brakeFlag, sourceName) {
+    // ĐỘC LẬP HOÀN TOÀN: Xung phát ra phần cứng xe RC thật luôn nằm trong dải [-255, 255] an toàn
     const payload = {
       throttle: Math.max(-255, Math.min(255, Math.round(throttlePwm))),
       steering: Math.max(-100, Math.min(100, Math.round(steerPercent))),
@@ -21799,7 +21885,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       inputSource: sourceName || 'APP'
     };
 
-    // Gửi qua Fetch POST tới `/api/rc-control` (Tương thích 100% cả HTTP Local lẫn HTTPS Kính Quest 3 / Điện thoại)
     if (typeof fetch !== 'undefined') {
       fetch('/api/rc-control', {
         method: 'POST',
@@ -21817,36 +21902,260 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  // Đồng bộ các nút bấm trong Bảng Chức Năng giữa bản Local HTTP và bản HTTPS trên Kính / Điện thoại
-  let lastSyncedTimestamp = 0;
-  setInterval(() => {
-    if (typeof fetch === 'undefined') return;
-    fetch('/api/rc-sync-state')
-      .then((r) => r.json())
-      .then((remoteState) => {
-        if (!remoteState || !remoteState.lastUpdateTs || remoteState.lastUpdateTs <= lastSyncedTimestamp) return;
-        lastSyncedTimestamp = remoteState.lastUpdateTs;
-        if (remoteState.frontCamIp && remoteState.frontCamIp !== hwConfig.frontCamIp) {
-          hwConfig.frontCamIp = remoteState.frontCamIp;
-        }
-        if (remoteState.rearCamIp && remoteState.rearCamIp !== hwConfig.rearCamIp) {
-          hwConfig.rearCamIp = remoteState.rearCamIp;
-        }
-        if (remoteState.ctrlIp && remoteState.ctrlIp !== hwConfig.ctrlIp) {
-          hwConfig.ctrlIp = remoteState.ctrlIp;
-        }
-      })
-      .catch(() => {});
-  }, 1200);
+  // --------------------------------------------------------------------------
+  // 25.4. ĐỌC VÔ LĂNG & BÀN ĐẠP GOG R808 TRÊN LAPTOP + WEB WORKER CHỐNG BỊ GIẢM FPS KHI CHẠY NGẦM
+  // --------------------------------------------------------------------------
+  let lastBgSendWheelTime = 0;
+  let consecutiveNeutralCount = 0;
+  let restAxesCalibrated = false;
+  let restCalibrationFrames = 0;
+  let restAxes = [];
+  let restButtons = [];
+  let prevWheelBtns = {};
 
-  // --- 25.3. BỘ ĐỌC ĐA THIẾT BỊ LÁI: VÔ LĂNG GOG808 TRÊN KÍNH/PC + THUMBSTICK VỪA CHẠY VỪA RẼ MƯỢT MÀ ---
-  // Sử dụng trộn Vector 2D độc lập: Không bao giờ khóa trục rẽ khi đang giữ ga tiến/lùi!
+  let lastCamRelaySentAt = 0;
+  const relayCanvas = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
+  if (relayCanvas) {
+    relayCanvas.width = 480;
+    relayCanvas.height = 270;
+  }
+  const relayCtx = relayCanvas ? relayCanvas.getContext('2d') : null;
+
+  function runDedicatedLaptopWheelAndCameraTransmitter() {
+    if (!isLaptopAdmin) return;
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+
+    // 1. Chuyển tiếp khung hình ESP32 Cam từ Laptop sang Quest 3 (~12 FPS)
+    if (relayCtx && typeof mpSocket !== 'undefined' && mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+      if (now - lastCamRelaySentAt > 80) {
+        const frontImg = document.getElementById('v250-front-cam-img');
+        if (frontImg && frontImg.complete && (frontImg.naturalWidth || 0) > 0) {
+          try {
+            relayCtx.drawImage(frontImg, 0, 0, 480, 270);
+            const dataUrl = relayCanvas.toDataURL('image/jpeg', 0.60);
+            lastCamRelaySentAt = now;
+            mpSocket.send(JSON.stringify({
+              type: 'ESP32_CAM_FRAME_RELAY',
+              role: 'front',
+              dataUrl
+            }));
+          } catch (e) {}
+        }
+      }
+    }
+
+    // 2. Đọc Gamepad API quét Vô lăng & Bàn đạp GOG R808
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    const pads = navigator.getGamepads();
+    if (!pads) return;
+
+    let wheelPad = null;
+    for (let i = 0; i < pads.length; i++) {
+      const p = pads[i];
+      if (!p || !p.connected) continue;
+      const id = (p.id || '').toLowerCase();
+      if (/quest|oculus|touch|openxr|hands/i.test(id)) continue;
+      if (/808|gog|wheel|steering|g29|g920|thrustmaster|fanatec|racing/i.test(id) || p.mapping === '' || p.axes.length >= 2) {
+        wheelPad = p;
+        break;
+      }
+    }
+    if (!wheelPad) return;
+
+    // Tự động hiệu chuẩn trạng thái nghỉ của các trục
+    if (!restAxesCalibrated) {
+      if (restCalibrationFrames === 0) {
+        restAxes = wheelPad.axes.map((v) => Number(v) || 0);
+        restButtons = wheelPad.buttons.map((b) => (b ? Number(b.value) || 0 : 0));
+      }
+      restCalibrationFrames++;
+      if (restCalibrationFrames >= 12) {
+        restAxesCalibrated = true;
+      }
+    }
+
+    // A. Trục vô lăng (Axis 0)
+    const rawSteerAxis = wheelPad.axes[0] || 0;
+    const steerDeadband = Math.abs(rawSteerAxis) < 0.035 ? 0 : rawSteerAxis;
+    const steerNorm = THREE.MathUtils.clamp(steerDeadband, -1.0, 1.0);
+
+    // B. Đọc bàn đạp Ga & Bàn đạp Phanh / Lùi
+    let gasVal = 0;
+    let brakeVal = 0;
+
+    const swapPedals = (typeof window !== 'undefined' && window.__GOG808_SWAP_PEDALS__ === true);
+    const gasAxisIdx = swapPedals ? 2 : 1;
+    const brakeAxisIdx = swapPedals ? 1 : 2;
+
+    if (wheelPad.axes.length > Math.max(gasAxisIdx, brakeAxisIdx)) {
+      const rawGasAxis = wheelPad.axes[gasAxisIdx];
+      const rawBrakeAxis = wheelPad.axes[brakeAxisIdx];
+
+      const restGas = restAxes[gasAxisIdx] !== undefined ? restAxes[gasAxisIdx] : -1.0;
+      const restBrake = restAxes[brakeAxisIdx] !== undefined ? restAxes[brakeAxisIdx] : -1.0;
+
+      if (restGas < -0.65) gasVal = Math.max(0, (rawGasAxis + 1.0) / 2.0);
+      else if (restGas > 0.65) gasVal = Math.max(0, (1.0 - rawGasAxis) / 2.0);
+      else gasVal = Math.max(0, rawGasAxis);
+
+      if (restBrake < -0.65) brakeVal = Math.max(0, (rawBrakeAxis + 1.0) / 2.0);
+      else if (restBrake > 0.65) brakeVal = Math.max(0, (1.0 - rawBrakeAxis) / 2.0);
+      else brakeVal = Math.max(0, rawBrakeAxis);
+    }
+
+    // Nút cò L2 / R2 nếu bàn đạp báo qua Buttons
+    const btnR2 = wheelPad.buttons[7] ? wheelPad.buttons[7].value : 0;
+    const btnL2 = wheelPad.buttons[6] ? wheelPad.buttons[6].value : 0;
+    if (btnR2 > gasVal) gasVal = btnR2;
+    if (btnL2 > brakeVal) brakeVal = btnL2;
+
+    // Lọc nhiễu trạng thái nghỉ
+    if (gasVal < 0.04) gasVal = 0;
+    if (brakeVal < 0.04) brakeVal = 0;
+
+    // C. Logic Gài Số & Ưu tiên Phanh chống giật:
+    let gear = 'D';
+    let netThrottleNorm = 0;
+    const curSpeed = (typeof state !== 'undefined' && state) ? (state.velocityMs || 0) : 0;
+
+    // QUY TẮC ƯU TIÊN PHANH (BRAKE PRIORITY INTERLOCK):
+    if (brakeVal > 0.04) {
+      if (Math.abs(curSpeed) > 0.20 || gasVal > 0.04) {
+        gear = 'D';
+        netThrottleNorm = 0; // Cắt ga hoàn toàn để giảm tốc mượt mà
+      } else {
+        gear = 'R';
+        netThrottleNorm = -brakeVal;
+      }
+    } else if (gasVal > 0.04) {
+      gear = 'D';
+      netThrottleNorm = gasVal;
+    }
+
+    // D. Nút bấm trên Vô lăng GOG R808
+    const btnEvents = [];
+    const checkBtnPress = (btnIndex, eventName) => {
+      const b = wheelPad.buttons[btnIndex];
+      const isPressed = Boolean(b && (b.pressed || b.value > 0.5));
+      if (isPressed && !prevWheelBtns[btnIndex]) {
+        btnEvents.push(eventName);
+      }
+      prevWheelBtns[btnIndex] = isPressed;
+    };
+
+    checkBtnPress(4, 'TURN_LEFT');
+    checkBtnPress(5, 'TURN_RIGHT');
+    checkBtnPress(0, 'HORN');
+    checkBtnPress(1, 'ENTER_EXIT');
+    checkBtnPress(2, 'SWAP_SEAT');
+    checkBtnPress(3, 'HEADLIGHT');
+
+    // E. Phát gói WHEEL_BRIDGE_INPUT sang Kính Meta Quest 3 và Xe RC
+    const steerDeg = Math.round(90 + steerNorm * 45);
+    const throttlePulse = Math.round(1500 + netThrottleNorm * 260);
+
+    const isDrivingActive = (Math.abs(steerNorm) > 0.02 || Math.abs(netThrottleNorm) > 0.02 || brakeVal > 0.04 || btnEvents.length > 0);
+
+    if (now - lastBgSendWheelTime >= 20) {
+      if (isDrivingActive) {
+        consecutiveNeutralCount = 0;
+        lastBgSendWheelTime = now;
+        if (typeof mpSocket !== 'undefined' && mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+          mpSocket.send(JSON.stringify({
+            type: 'WHEEL_BRIDGE_INPUT',
+            connected: true,
+            deviceId: wheelPad.id.replace(/\(.*?\)/g, '').trim() || 'GOG R808',
+            steeringNorm: Number(steerNorm.toFixed(3)),
+            steerAngleDeg: Number((steerNorm * 540).toFixed(1)),
+            gasPercent: Math.round(gasVal * 100),
+            brakePercent: Math.round(brakeVal * 100),
+            reversePercent: gear === 'R' ? Math.round(brakeVal * 100) : 0,
+            gear: gear,
+            steer: steerDeg,
+            throttle: throttlePulse,
+            buttonEvents: btnEvents
+          }));
+        }
+      } else if (consecutiveNeutralCount < 5) {
+        consecutiveNeutralCount++;
+        lastBgSendWheelTime = now;
+        if (typeof mpSocket !== 'undefined' && mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+          mpSocket.send(JSON.stringify({
+            type: 'WHEEL_BRIDGE_INPUT',
+            connected: true,
+            deviceId: wheelPad.id.replace(/\(.*?\)/g, '').trim() || 'GOG R808',
+            steeringNorm: 0,
+            steerAngleDeg: 0,
+            gasPercent: 0,
+            brakePercent: 0,
+            reversePercent: 0,
+            gear: 'D',
+            steer: 90,
+            throttle: 1500,
+            buttonEvents: []
+          }));
+        }
+      }
+    }
+  }
+
+  // Khởi động Web Worker 50Hz trên Laptop để KHÔNG BỊ TRÌNH DUYỆT GIẢM XUỐNG 1HZ KHI CHẠY NGẦM
+  function startGog808UnthrottledWorker() {
+    if (typeof window === 'undefined' || !window.Worker) return;
+    if (window.__GOG808_WORKER__) return;
+    try {
+      const workerScript = `
+        let timer = null;
+        self.onmessage = function(e) {
+          if (e.data === 'start') {
+            if (!timer) timer = setInterval(function() { postMessage('tick'); }, 20);
+          } else if (e.data === 'stop') {
+            if (timer) { clearInterval(timer); timer = null; }
+          }
+        };
+      `;
+      const blob = new Blob([workerScript], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      const worker = new Worker(workerUrl);
+      worker.onmessage = function() {
+        runDedicatedLaptopWheelAndCameraTransmitter();
+      };
+      worker.postMessage('start');
+      window.__GOG808_WORKER__ = worker;
+    } catch (err) {
+      console.warn('[GOG808] Web Worker fallback to setInterval:', err);
+      setInterval(runDedicatedLaptopWheelAndCameraTransmitter, 20);
+    }
+  }
+
+  if (isLaptopAdmin) {
+    startGog808UnthrottledWorker();
+  }
+
+  // Fallback định kỳ
+  setInterval(runDedicatedLaptopWheelAndCameraTransmitter, 20);
+
+  if (typeof window !== 'undefined') {
+    window.toggleGog808Pedals = () => {
+      window.__GOG808_SWAP_PEDALS__ = !window.__GOG808_SWAP_PEDALS__;
+      restAxesCalibrated = false;
+      restCalibrationFrames = 0;
+      console.log('🔄 Đã đảo chiều bàn đạp GOG R808:', window.__GOG808_SWAP_PEDALS__);
+      return window.__GOG808_SWAP_PEDALS__;
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // 25.5. BỘ ĐỌC TRỘN ĐA THIẾT BỊ: GOG R808 + TAY CẦM TOUCH META QUEST 3
+  //       + PHÂN QUYỀN ĐỘC QUYỀN GHẾ TÀI XẾ (CHỐNG CƯỚP LÁI TỪ KÍNH 2 / MOBILE)
+  // --------------------------------------------------------------------------
   let smoothedSteerInput = 0;
   let smoothedThrottleInput = 0;
   let lastTouchSeatSwapTime = 0;
   let lastEnterExitTime = 0;
   let lastRecenterTime = 0;
   let lastHornTime = 0;
+  let lastCarSyncTime = 0;
 
   function applyDeadzone(val, dz = 0.08) {
     if (Math.abs(val) < dz) return 0;
@@ -21855,104 +22164,80 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   function pollAllGamepadsWheelGog808AndThumbsticks(dt) {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-    let rawSteer = 0;     // -1 (Rẽ Trái) .. +1 (Rẽ Phải)
-    let rawThrottle = 0;  // -1 (Lùi) .. +1 (Tiến)
+    let rawSteer = 0;
+    let rawThrottle = 0;
     let isBraking = false;
     let activeDeviceName = '';
+    let isBridgeWheelActive = false;
 
-    // 0. Quét cầu nối vô lăng GOG 808 / Bàn phím từ WebSocket (Laptop sang Meta Quest 3)
+    // ------------------------------------------------------------------------
+    // KIỂM TRA PHÂN QUYỀN LÁI XE: CHỈ TÀI XẾ (SEAT 0) HOẶC LAPTOP ADMIN MỚI ĐƯỢC LÁI!
+    // ------------------------------------------------------------------------
+    const isDriver = (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING' && (state.seatIndex === 0 || state.isHostPlayer === true));
+    const isLaptopLocalAdmin = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'));
+    const canDrive = isDriver || (isLaptopLocalAdmin && typeof state !== 'undefined' && state && state.playerMode === 'DRIVING');
+
+    // 0. Quét cầu nối Vô lăng GOG 808 từ WebSocket (Laptop sang Meta Quest 3)
     if (typeof window !== 'undefined' && window._racingWheel && window._racingWheel.connected) {
       const rw = window._racingWheel;
-      const isFresh = (now - (rw.lastInputTime || 0)) < 1500;
+      // Nới rộng cửa sổ tươi mới lên 850ms để chống rớt gói khi mạng Wi-Fi chập chờn
+      const isFresh = (now - (rw.lastInputTime || 0)) < 850;
       if (isFresh) {
         const bridgeSteer = (typeof rw.rawSteer === 'number') ? rw.rawSteer : (rw.steerAngleDeg ? rw.steerAngleDeg / 540 : 0);
-        const bridgeThrottle = (rw.gasPercent > 0) ? (rw.gasPercent / 100) : (rw.reversePercent > 0 ? -(rw.reversePercent / 100) : 0);
-        if (Math.abs(bridgeSteer) > Math.abs(rawSteer)) {
+        let bridgeThrottle = (rw.gasPercent > 0) ? (rw.gasPercent / 100) : (rw.reversePercent > 0 ? -(rw.reversePercent / 100) : 0);
+        const curSpd = (typeof state !== 'undefined' && state) ? (state.velocityMs || 0) : 0;
+
+        if (rw.brakePercent > 8) {
+          isBraking = true;
+          if (Math.abs(curSpd) > 0.15 || rw.gasPercent > 8) {
+            bridgeThrottle = 0;
+          }
+        }
+
+        if (Math.abs(bridgeSteer) > 0.02 || Math.abs(bridgeThrottle) > 0.02 || isBraking) {
+          isBridgeWheelActive = true;
           rawSteer = bridgeSteer;
-          activeDeviceName = rw.deviceName || 'Cầu nối GOG808/Keyboard';
-        }
-        if (Math.abs(bridgeThrottle) > Math.abs(rawThrottle)) {
           rawThrottle = bridgeThrottle;
-          if (!activeDeviceName) activeDeviceName = rw.deviceName || 'Cầu nối GOG808/Keyboard';
+          activeDeviceName = rw.deviceName || 'Vô lăng GOG808 (Cầu nối)';
         }
-        if (rw.brakePercent > 30) isBraking = true;
       }
     }
 
-    // 1. Quét toàn bộ navigator.getGamepads() (Bao gồm Vô lăng GOG808 ở slot 0..3 và Gamepad Bluetooth trên Kính Quest 3)
+    // 1. Quét Gamepad cắm trực tiếp vào thiết bị hiện tại (nếu ở Laptop)
     const gamepads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
       if (!gp || !gp.connected) continue;
-
       const idLower = (gp.id || '').toLowerCase();
-      const isWheelGog808 =
-        idLower.includes('gog') ||
-        idLower.includes('808') ||
-        idLower.includes('wheel') ||
-        idLower.includes('racing') ||
-        idLower.includes('logitech') ||
-        idLower.includes('pxn') ||
-        idLower.includes('thrustmaster') ||
-        gp.mapping === '';
+      if (/quest|oculus|touch|openxr|hands/i.test(idLower)) continue;
 
-      // Đọc trục Xoay Vô Lăng / Thumbstick Ngang (axes[0] và axes[2])
-      const ax0 = applyDeadzone(gp.axes[0] || 0, 0.05);
-      const ax2 = applyDeadzone(gp.axes[2] || 0, 0.08);
+      const isWheelGog808 = /808|gog|wheel|steering|g29|g920|thrustmaster|racing/i.test(idLower) || gp.mapping === '';
+      const ax0 = applyDeadzone(gp.axes[0] || 0, 0.04);
       if (Math.abs(ax0) > Math.abs(rawSteer)) {
         rawSteer = ax0;
-        activeDeviceName = isWheelGog808 ? `Vô lăng GOG808 (${gp.id.slice(0, 14)})` : `Tay cầm (${gp.id.slice(0, 14)})`;
-      } else if (!isWheelGog808 && Math.abs(ax2) > Math.abs(rawSteer)) {
-        rawSteer = ax2;
-        activeDeviceName = `Tay cầm (${gp.id.slice(0, 14)})`;
+        activeDeviceName = isWheelGog808 ? 'Vô lăng GOG808' : 'Gamepad';
       }
 
-      // Đọc trục Ga / Lùi từ Thumbstick Dọc (axes[1] và axes[3]) - ĐỘC LẬP 100% VỚI TRỤC RẼ!
-      // Nhờ đọc độc lập, khi đẩy chéo Thumbstick (vừa đẩy tới vừa nghiêng trái/phải), CẢ rawThrottle VÀ rawSteer đều có giá trị!
-      const stickY1 = -applyDeadzone(gp.axes[1] || 0, 0.08);
-      const stickY2 = -applyDeadzone(gp.axes[3] || 0, 0.08);
-      if (Math.abs(stickY1) > Math.abs(rawThrottle)) {
-        rawThrottle = stickY1;
-        if (!activeDeviceName) activeDeviceName = isWheelGog808 ? 'Vô lăng GOG808' : 'Thumbstick';
-      }
-      if (!isWheelGog808 && Math.abs(stickY2) > Math.abs(rawThrottle)) {
-        rawThrottle = stickY2;
-      }
-
-      // Đọc Bàn đạp Ga / Phanh của Vô lăng GOG808 & Cò Analog R2/L2 (buttons[7], buttons[6], hoặc axes[2]/axes[5] trên Wheel)
       const r2Val = gp.buttons[7] ? gp.buttons[7].value : 0;
       const l2Val = gp.buttons[6] ? gp.buttons[6].value : 0;
-      const btnGasAlt = (gp.buttons[0]?.pressed ? 1 : 0) || (gp.buttons[1]?.pressed ? -0.8 : 0);
+      const curSpd = (typeof state !== 'undefined' && state) ? (state.velocityMs || 0) : 0;
 
-      if (r2Val > 0.05 || l2Val > 0.05) {
-        const pedalNet = r2Val - l2Val;
-        if (Math.abs(pedalNet) > Math.abs(rawThrottle)) {
-          rawThrottle = pedalNet;
-          activeDeviceName = isWheelGog808 ? 'Vô lăng GOG808 (Pedals)' : 'Gamepad Trigger';
+      if (l2Val > 0.04) {
+        isBraking = true;
+        if (Math.abs(curSpd) > 0.15 || r2Val > 0.04) {
+          rawThrottle = 0;
+        } else {
+          rawThrottle = -l2Val;
         }
-      } else if (isWheelGog808 && Math.abs(btnGasAlt) > Math.abs(rawThrottle)) {
-        rawThrottle = btnGasAlt;
-        activeDeviceName = 'Vô lăng GOG808';
+        activeDeviceName = isWheelGog808 ? 'Bàn đạp GOG808' : 'Triggers';
+      } else if (r2Val > 0.04) {
+        rawThrottle = r2Val;
+        activeDeviceName = isWheelGog808 ? 'Bàn đạp GOG808' : 'Triggers';
       }
-
-      // Hỗ trợ bàn đạp rời của GOG808 xuất tín hiệu trên axes[2] (Ga) và axes[5] hoặc axes[3] (Phanh)
-      if (isWheelGog808 && gp.axes.length >= 3 && Math.abs(rawThrottle) < 0.05) {
-        // Nhiều vô lăng HID để bàn đạp ở trạng thái nghỉ là +1.0, khi đạp xuống tiến về -1.0
-        if (gp.axes[2] !== undefined && gp.axes[2] < 0.85 && gp.axes[2] !== 0) {
-          const normGas = (1 - gp.axes[2]) * 0.5;
-          const normBrake = (gp.axes[5] !== undefined && gp.axes[5] < 0.85) ? (1 - gp.axes[5]) * 0.5 : 0;
-          const wheelPedal = normGas - normBrake;
-          if (Math.abs(wheelPedal) > 0.08) {
-            rawThrottle = wheelPedal;
-            activeDeviceName = 'Vô lăng GOG808 (Axis Pedals)';
-          }
-        }
-      }
-
       if (gp.buttons[2]?.pressed) isBraking = true;
     }
 
-    // 2. Quét trực tiếp WebXR InputSources của Kính Meta Quest 3 (Đảm bảo vừa đẩy Thumbstick vừa rẽ trái/phải cực mượt trong VR!)
+    // 2. Quét Tay Cầm Meta Quest Touch trong WebXR
     if (typeof renderer !== 'undefined' && renderer && renderer.xr && renderer.xr.isPresenting) {
       const session = renderer.xr.getSession();
       if (session && session.inputSources) {
@@ -21961,143 +22246,185 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           const axes = src.gamepad.axes || [];
           const btns = src.gamepad.buttons || [];
 
-          // Trên tay cầm Quest Touch: axes[2] là Thumbstick X, axes[3] là Thumbstick Y (hoặc axes[0], axes[1])
-          const tx = applyDeadzone(axes.length >= 4 ? axes[2] : (axes[0] || 0), 0.07);
-          const ty = -applyDeadzone(axes.length >= 4 ? axes[3] : (axes[1] || 0), 0.07);
-
-          // Cộng trộn đồng thời cả 2 trục X và Y của cả tay trái lẫn tay phải!
-          if (Math.abs(tx) > Math.abs(rawSteer)) {
-            rawSteer = tx;
-            activeDeviceName = `Quest 3 Thumbstick (${src.handedness})`;
-          }
-          if (Math.abs(ty) > Math.abs(rawThrottle)) {
-            rawThrottle = ty;
-            activeDeviceName = `Quest 3 Thumbstick (${src.handedness})`;
-          }
-
-          // Cò Trigger (btns[0]) = Tăng ga, Nút Grip (btns[1]) = Lùi/Phanh
+          const tx = applyDeadzone(axes.length >= 4 ? axes[2] : (axes[0] || 0), 0.08);
+          const ty = -applyDeadzone(axes.length >= 4 ? axes[3] : (axes[1] || 0), 0.08);
           const trigVal = btns[0] ? btns[0].value : 0;
           const gripVal = btns[1] ? btns[1].value : 0;
-          if (trigVal > 0.1 && src.handedness === 'right' && trigVal > rawThrottle) {
-            rawThrottle = trigVal;
-            activeDeviceName = 'Quest 3 Trigger + Stick';
-          }
-          if (trigVal > 0.1 && src.handedness === 'left' && -trigVal < rawThrottle) {
-            rawThrottle = -trigVal;
-            activeDeviceName = 'Quest 3 Trigger + Stick';
-          }
-          if (gripVal > 0.5) isBraking = true;
 
-          // Gán nút bấm chuẩn xác trên Tay Cầm Meta Quest Touch:
+          // NẾU LÀ HÀNH KHÁCH (KÍNH 2 HOẶC GHẾ PHỤ):
+          // Cần gạt thumbstick dùng để XOAY ĐẦU QUAN SÁT 360° TRONG CABIN, TUYỆT ĐỐI KHÔNG LÁI XE!
+          if (!canDrive) {
+            if (typeof state !== 'undefined' && state) {
+              if (Math.abs(tx) > 0.12) {
+                state.eyeLookYaw = (state.eyeLookYaw || 0) + tx * 1.6 * dt;
+              }
+              if (Math.abs(ty) > 0.12) {
+                state.eyeLookPitch = THREE.MathUtils.clamp((state.eyeLookPitch || 0) - ty * 1.2 * dt, -0.85, 0.85);
+              }
+            }
+          } else {
+            // NẾU LÀ TÀI XẾ HỢP LỆ (SEAT 0):
+            const isTouchIntentionallyUsed = Math.abs(tx) > 0.15 || Math.abs(ty) > 0.15 || trigVal > 0.18;
+            if (!isBridgeWheelActive || isTouchIntentionallyUsed) {
+              if (Math.abs(tx) > Math.abs(rawSteer)) {
+                rawSteer = tx;
+                activeDeviceName = `Quest 3 Touch (${src.handedness})`;
+              }
+              if (Math.abs(ty) > Math.abs(rawThrottle)) {
+                rawThrottle = ty;
+                activeDeviceName = `Quest 3 Touch (${src.handedness})`;
+              }
+              if (trigVal > 0.12 && src.handedness === 'right' && trigVal > rawThrottle) {
+                rawThrottle = trigVal;
+                activeDeviceName = 'Quest 3 Trigger';
+              }
+              if (trigVal > 0.12 && src.handedness === 'left' && -trigVal < rawThrottle) {
+                rawThrottle = -trigVal;
+                activeDeviceName = 'Quest 3 Reverse Trigger';
+              }
+              if (gripVal > 0.5) isBraking = true;
+            }
+          }
+
+          // Nút bấm trên tay cầm Touch
           const isLeftHand = (src.handedness === 'left');
           const isRightHand = (src.handedness === 'right');
 
-          // 1. NÚT X (Tay trái, btns[4]): LÊN XE / XUỐNG XE
+          // Nút X (Tay trái): Lên/Xuống xe
           if (isLeftHand && btns[4]?.pressed && (now - lastEnterExitTime > 500)) {
             lastEnterExitTime = now;
-            if (typeof window.enterOrExitCarWithBlink === 'function') {
-              window.enterOrExitCarWithBlink();
-            } else if (typeof enterOrExitCarWithBlink === 'function') {
-              enterOrExitCarWithBlink();
-            }
+            if (typeof window.enterOrExitCarWithBlink === 'function') window.enterOrExitCarWithBlink();
+            else if (typeof toggleEnterExitVehicle === 'function') toggleEnterExitVehicle();
           }
 
-          // 2. NÚT Y (Tay trái, btns[5]): ĐỔI GHẾ LÁI <-> GHẾ PHỤ
+          // Nút Y (Tay trái): Đổi ghế ngồi giữa các ghế phụ (1, 2, 3)
           if (isLeftHand && btns[5]?.pressed && (now - lastTouchSeatSwapTime > 400)) {
             lastTouchSeatSwapTime = now;
-            if (typeof window.swapSeatOrTakeDriverControl === 'function') {
-              window.swapSeatOrTakeDriverControl();
-            } else if (typeof swapSeatOrTakeDriverControl === 'function') {
-              swapSeatOrTakeDriverControl();
-            }
+            if (typeof window.swapSeatOrTakeDriverControl === 'function') window.swapSeatOrTakeDriverControl();
+            else if (typeof cycleCabinSeatPosition === 'function') cycleCabinSeatPosition();
           }
 
-          // 3. NÚT B (Tay phải, btns[5]) & THUMBSTICK CLICK (btns[3] cả 2 tay): CÂN BẰNG TÂM GÓC NHÌN
-          const isRecenterBtn = (isRightHand && btns[5]?.pressed) || btns[3]?.pressed;
-          if (isRecenterBtn && (now - lastRecenterTime > 300)) {
+          // Nút B (Tay phải): Cân bằng tâm góc nhìn
+          if (isRightHand && btns[5]?.pressed && (now - lastRecenterTime > 300)) {
             lastRecenterTime = now;
-            state.eyeLookYaw = 0;
-            state.eyeLookPitch = 0;
-            state.avatarYaw = 0;
-            if (cameraRig) {
-              cameraRig.position.set(0, 0, 0);
-              cameraRig.rotation.set(0, 0, 0);
+            if (typeof state !== 'undefined' && state) {
+              state.eyeLookYaw = 0;
+              state.eyeLookPitch = 0;
             }
-            if (typeof camera !== 'undefined' && camera) camera.rotation.set(0, 0, 0);
-            if (typeof autoCenterBalancePassengerView === 'function') {
-              autoCenterBalancePassengerView();
-            }
-            state.lastActionLog = '🎯 ĐÃ CÂN BẰNG TÂM GÓC NHÌN CHUẨN 100%!';
+            if (typeof autoCenterBalancePassengerView === 'function') autoCenterBalancePassengerView();
           }
 
-          // 4. NÚT A (Tay phải, btns[4]): BẤM CÒI XE (HORN) - KHÔNG XOAY CAMERA LỆCH TÂM!
+          // Nút A (Tay phải): Còi xe
           if (isRightHand && btns[4]?.pressed && (now - lastHornTime > 350)) {
             lastHornTime = now;
-            initAudio();
-            if (typeof playHonkSound === 'function') playHonkSound();
-            state.hornActive = true;
-            setTimeout(() => { state.hornActive = false; }, 200);
+            if (typeof playSmartVehicleHornSound === 'function') playSmartVehicleHornSound('CAR');
+            else if (typeof playHonkSound === 'function') playHonkSound();
           }
         }
       }
     }
 
-    // Nội suy mượt (Exponential Smoothing) giúp đánh lái và giữ ga đồng thời không bị giật cục
-    const hasActiveStickOrWheel = Math.abs(rawSteer) > 0.01 || Math.abs(rawThrottle) > 0.01 || isBraking;
+    // NẾU NGƯỜI CHƠI KHÔNG CÓ QUYỀN LÁI (KHÁCH GHẾ PHỤ / KÍNH 2):
+    // Khóa hoàn toàn ga/lái về 0 và bỏ qua bước tính vật lý xe / CAR_SYNC / ESP32!
+    if (!canDrive) {
+      smoothedSteerInput = 0;
+      smoothedThrottleInput = 0;
+      return;
+    }
+
+    // Nội suy mượt mà tín hiệu điều khiển của Tài Xế
+    const hasActiveInput = Math.abs(rawSteer) > 0.015 || Math.abs(rawThrottle) > 0.015 || isBraking;
     smoothedSteerInput = THREE.MathUtils.lerp(smoothedSteerInput, rawSteer, Math.min(1, dt * 14));
     smoothedThrottleInput = THREE.MathUtils.lerp(smoothedThrottleInput, rawThrottle, Math.min(1, dt * 10));
 
-    if (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING' && hasActiveStickOrWheel) {
-      // Cho phép vừa giữ ga tiến/lùi vừa xoay hướng xe liên tục theo hàm phi tuyến nhẹ để dễ căn góc cua
-      const curvedSteer = Math.sign(smoothedSteerInput) * Math.pow(Math.abs(smoothedSteerInput), 1.25);
-      const maxSpeedMs = 26.0;
-      const targetVel = isBraking ? 0 : smoothedThrottleInput * maxSpeedMs;
+    // ------------------------------------------------------------------------
+    // VẬT LÝ XE: TÍCH PHÂN VẬN TỐC, RẼ MƯỢT & NHÂN TỐC ĐỘ 5X TRÊN APP
+    // ------------------------------------------------------------------------
+    if (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING') {
+      if (hasActiveInput) {
+        state.engineRunning = true;
+        const curvedSteer = Math.sign(smoothedSteerInput) * Math.pow(Math.abs(smoothedSteerInput), 1.25);
+        const maxSpeedMs = 24.0; // ~86 km/h
 
-      state.velocityMs = THREE.MathUtils.lerp(state.velocityMs, targetVel, Math.min(1, dt * (isBraking ? 12 : 5.5)));
-      state.speedKmh = Math.abs(state.velocityMs) * 3.6;
+        if (isBraking) {
+          const decelAlpha = THREE.MathUtils.clamp(dt * 8.5, 0, 1.0);
+          state.velocityMs = THREE.MathUtils.lerp(state.velocityMs || 0, 0, decelAlpha);
+          if (Math.abs(state.velocityMs) < 0.06) {
+            state.velocityMs = 0;
+          }
+        } else {
+          const targetVel = smoothedThrottleInput * maxSpeedMs;
+          const accelAlpha = THREE.MathUtils.clamp(dt * 5.2, 0, 1.0);
+          state.velocityMs = THREE.MathUtils.lerp(state.velocityMs || 0, targetVel, accelAlpha);
+        }
 
-      // Đánh lái mượt ngay cả khi xe đang chạy nhanh, chạy chậm hoặc bắt đầu nhích bánh (Không cần dừng mới rẽ!)
-      const turnDirection = state.velocityMs >= -0.05 ? 1 : -1;
-      const speedFactor = Math.max(0.38, Math.min(1.15, Math.abs(state.velocityMs) / 7.5));
-      const yawDelta = -curvedSteer * 1.95 * speedFactor * turnDirection * dt;
+        // Tốc độ ảo hiển thị trên màn hình HUD tăng gấp 5 lần
+        state.speedKmh = Math.abs(state.velocityMs || 0) * 3.6 * VIRTUAL_APP_SPEED_SCALE;
 
-      state.headingRad += yawDelta;
-      if (typeof vehicleRoot !== 'undefined' && vehicleRoot) {
-        vehicleRoot.rotation.y = state.headingRad;
-        const step = state.velocityMs * dt;
-        vehicleRoot.position.x -= Math.sin(state.headingRad) * step;
-        vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
+        // Rẽ lái tự nhiên theo vận tốc
+        const turnDirection = state.velocityMs >= -0.05 ? 1 : -1;
+        const speedFactor = Math.max(0.35, Math.min(1.25, Math.abs(state.velocityMs) / 7.0));
+        const yawDelta = -curvedSteer * 1.90 * speedFactor * turnDirection * dt;
+        state.headingRad += yawDelta;
+
+        if (typeof vehicleRoot !== 'undefined' && vehicleRoot) {
+          vehicleRoot.rotation.y = state.headingRad;
+          // QUÃNG ĐƯỜNG DỊCH CHUYỂN 3D NHANH GẤP 5 LẦN TRÊN APP
+          const step = (state.velocityMs || 0) * VIRTUAL_APP_SPEED_SCALE * dt;
+          vehicleRoot.position.x -= Math.sin(state.headingRad) * step;
+          vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
+        }
+
+        if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
+          steeringWheelPivot.rotation.z = -curvedSteer * 1.35;
+        }
+        if (typeof state.wheelRotationRad === 'number') {
+          state.wheelRotationRad += (((state.velocityMs || 0) * VIRTUAL_APP_SPEED_SCALE * dt) / 0.38);
+        }
+      } else {
+        // Nhả bàn đạp -> Giảm tốc tự nhiên theo quán tính và DỪNG YÊN TẠI VỊ TRÍ MỚI
+        if (Math.abs(state.velocityMs || 0) > 0.03) {
+          state.velocityMs *= Math.pow(0.22, dt);
+          state.speedKmh = Math.abs(state.velocityMs || 0) * 3.6 * VIRTUAL_APP_SPEED_SCALE;
+          const step = (state.velocityMs || 0) * VIRTUAL_APP_SPEED_SCALE * dt;
+          if (typeof vehicleRoot !== 'undefined' && vehicleRoot) {
+            vehicleRoot.position.x -= Math.sin(state.headingRad) * step;
+            vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
+          }
+          if (typeof state.wheelRotationRad === 'number') {
+            state.wheelRotationRad += (step / 0.38);
+          }
+        } else {
+          state.velocityMs = 0;
+          state.speedKmh = 0;
+        }
       }
-      if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
-        steeringWheelPivot.rotation.z = -curvedSteer * 1.35;
+
+      // Phát CAR_SYNC ở tần số 20Hz để đồng bộ vị trí xe sang Kính Quest / Điện thoại / Server
+      if (now - lastCarSyncTime >= 50 && typeof vehicleRoot !== 'undefined' && vehicleRoot) {
+        lastCarSyncTime = now;
+        if (typeof mpSocket !== 'undefined' && mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+          mpSocket.send(JSON.stringify({
+            type: 'CAR_SYNC',
+            carId: state.activeCarId || 'car_host',
+            x: Number(vehicleRoot.position.x.toFixed(3)),
+            z: Number(vehicleRoot.position.z.toFixed(3)),
+            heading: Number(state.headingRad.toFixed(4)),
+            speedKmh: Number(state.speedKmh.toFixed(1)),
+            steerDeg: Number((state.steeringAngleDeg || 0).toFixed(1))
+          }));
+        }
       }
     }
 
-    // Tự động phóng lớn khung Cam Lùi kèm vạch dẫn đường khi xe đang lùi (velocityMs < -0.15)
-    if (typeof document !== 'undefined') {
-      const rearCard = document.getElementById('v250-rear-cam-card');
-      if (rearCard && typeof state !== 'undefined' && state) {
-        const reversingNow = state.velocityMs < -0.15 || smoothedThrottleInput < -0.15;
-        rearCard.classList.toggle('rear-active-reverse', reversingNow);
-      }
-    }
-
-    // 3. Truyền tín hiệu ra mạch ESP32 Controller ngoài đời thật ở tần số 25Hz (mỗi 40ms)
+    // Gửi lệnh điều khiển phần cứng xuống ESP32 ngoài đời (40ms ~ 25Hz) — GIỮ NGUYÊN 1X AN TOÀN
     if (now - lastEsp32SendTime >= 40) {
-      // Lấy giá trị từ Vô lăng / Tay cầm HOẶC từ vận tốc xe trên App (khi bấm nút cảm ứng / bàn phím)
       let outThrottlePwm = 0;
       let outSteerPercent = 0;
-
-      if (hasActiveStickOrWheel) {
+      if (hasActiveInput) {
         outThrottlePwm = isBraking ? 0 : Math.round(smoothedThrottleInput * 255);
         outSteerPercent = Math.round(smoothedSteerInput * 100);
-      } else if (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING') {
-        outThrottlePwm = Math.round(THREE.MathUtils.clamp(state.velocityMs / 22.0, -1, 1) * 255);
-        outSteerPercent = (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot)
-          ? Math.round(THREE.MathUtils.clamp(-steeringWheelPivot.rotation.z / 1.2, -1, 1) * 100)
-          : 0;
       }
-
       const changedEnough =
         Math.abs(outThrottlePwm - lastSentThrottle) >= 2 ||
         Math.abs(outSteerPercent - lastSentSteer) >= 2 ||
@@ -22108,21 +22435,344 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         lastSentThrottle = outThrottlePwm;
         lastSentSteer = outSteerPercent;
         const gearMode = outThrottlePwm < -5 ? 'R' : (outThrottlePwm > 5 ? 'D' : 'N');
-        sendHardwareControlToEsp32(outThrottlePwm, outSteerPercent, gearMode, isBraking, activeDeviceName || 'APP_DRIVE');
+        sendHardwareControlToEsp32(outThrottlePwm, outSteerPercent, gearMode, isBraking, activeDeviceName || 'APP');
       }
     }
   }
 
-  // --- 25.4. VẬT LÝ TÔNG HẤT TUNG / HẤT VĂNG (RAGDOLL KNOCKBACK) CHO TẤT CẢ NPC ĐI BỘ, ĐI DẠO & THÚ CƯNG (PET) ---
+  // --------------------------------------------------------------------------
+  // 25.6. BẢN ĐIỆN THOẠI: TỐI ƯU KHÔNG GIAN, VUỐT LƯỚT 360° & XOAY LẮC GYROSCOPE
+  // --------------------------------------------------------------------------
+  if (isMobilePhone && typeof window !== 'undefined') {
+    window.addEventListener('DOMContentLoaded', () => {
+      const funcPanel = document.getElementById('function-panel');
+      if (funcPanel) funcPanel.classList.add('mobile-compact-hidden');
+      const camHud = document.getElementById('v250-dual-cam-hud');
+      if (camHud) camHud.style.display = 'none';
+    });
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isTouching = false;
+
+    window.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1 && !e.target.closest('button, input, select, #liquid-gear-widget-container')) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        isTouching = true;
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+      if (!isTouching || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = t.clientX - touchStartX;
+      const dy = t.clientY - touchStartY;
+      touchStartX = t.clientX;
+      touchStartY = t.clientY;
+
+      if (typeof state !== 'undefined' && state) {
+        state.eyeLookYaw = (state.eyeLookYaw || 0) - dx * 0.006;
+        state.eyeLookPitch = THREE.MathUtils.clamp((state.eyeLookPitch || 0) - dy * 0.006, -1.0, 1.0);
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchend', () => {
+      isTouching = false;
+    }, { passive: true });
+
+    let initialBeta = null;
+    let initialGamma = null;
+
+    window.addEventListener('deviceorientation', (e) => {
+      if (e.beta === null || e.gamma === null) return;
+      if (initialBeta === null) {
+        initialBeta = e.beta;
+        initialGamma = e.gamma;
+      }
+      const dGamma = (e.gamma - initialGamma);
+      const dBeta = (e.beta - initialBeta);
+      if (typeof state !== 'undefined' && state && !isTouching) {
+        state.eyeLookYaw = THREE.MathUtils.degToRad(-dGamma * 0.75);
+        state.eyeLookPitch = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(-dBeta * 0.5, -45, 45));
+      }
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // 25.7. CHUẨN HÓA NỘI THẤT 3D & 3 MÀN HÌNH YOUTUBE (Z = 0.48M, DIRTY-CHECK 24FPS)
+  // --------------------------------------------------------------------------
+  function alignSteeringWheelAndCleanShaftOnly() {
+    if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
+      steeringWheelPivot.position.set(-0.41, 0.72, -0.42);
+      steeringWheelPivot.rotation.x = THREE.MathUtils.degToRad(-20);
+      steeringWheelPivot.visible = true;
+    }
+
+    if (typeof chassisGroup === 'undefined' || !chassisGroup) return;
+
+    chassisGroup.traverse((obj) => {
+      if (!obj) return;
+      if (obj.isMesh) {
+        // Chỉ ẩn đúng ống hình trụ dư thừa của trục lái cũ
+        if (obj.geometry && obj.geometry.type === 'CylinderGeometry' && obj.parent !== steeringWheelPivot) {
+          const p = obj.geometry.parameters || {};
+          if (p.radiusTop < 0.065 && p.height > 0.25 &&
+              Math.abs(obj.position.x - (-0.38)) < 0.14 &&
+              obj.position.y > 0.42 && obj.position.y < 1.05 &&
+              obj.position.z < -0.32 && obj.position.z > -0.78) {
+            obj.visible = false;
+          }
+        }
+      }
+      // Ẩn tuyệt đối mọi bảng tên / notice / speech bubble lơ lửng trong cabin xe chắn tầm nhìn kính hậu và kính chắn gió
+      if (obj.isSprite || (obj.material && obj.material.isSpriteMaterial)) {
+        if (obj.position.y > 0.8 && obj.position.z < 0.6) {
+          obj.visible = false;
+        }
+      }
+    });
+
+    if (typeof specializedInteriorGroup !== 'undefined' && specializedInteriorGroup) {
+      specializedInteriorGroup.traverse((obj) => {
+        if (obj && (obj.isSprite || (obj.material && obj.material.isSpriteMaterial))) {
+          obj.visible = false;
+        }
+      });
+    }
+
+    if (typeof roofBeaconGroup !== 'undefined' && roofBeaconGroup && typeof state !== 'undefined' && state && state.playerMode === 'DRIVING') {
+      roofBeaconGroup.visible = false;
+    }
+  }
+
+  const ytCanvas = (typeof document !== 'undefined') ? document.createElement('canvas') : null;
+  if (ytCanvas) {
+    ytCanvas.width = 640;
+    ytCanvas.height = 360;
+  }
+  const ytCtx = ytCanvas ? ytCanvas.getContext('2d') : null;
+  const ytTex = ytCanvas ? new THREE.CanvasTexture(ytCanvas) : null;
+  if (ytTex && THREE.SRGBColorSpace) ytTex.colorSpace = THREE.SRGBColorSpace;
+  let ytCanvasDirty = true;
+  let frameCounter = 0;
+
+  function setupSyncedThreeYouTubeScreens() {
+    const carGroup = (typeof chassisGroup !== 'undefined' && chassisGroup)
+      ? chassisGroup
+      : (typeof vehicleRoot !== 'undefined' ? vehicleRoot : null);
+    if (!carGroup || carGroup.userData.v260ScreensMounted) return;
+    carGroup.userData.v260ScreensMounted = true;
+
+    // Gắn màn hình táp-lô phía trước
+    carGroup.traverse((obj) => {
+      if (obj && obj.isMesh && obj.geometry?.type === 'PlaneGeometry' &&
+          obj.position.z < -0.15 && obj.position.y > 0.55 && obj.position.y < 0.96) {
+        obj.material = new THREE.MeshBasicMaterial({ map: ytTex, side: THREE.DoubleSide });
+      }
+    });
+
+    // Gắn 2 màn hình ghế phụ hàng sau tại z = 0.48m (Nổi hoàn toàn trên đệm ghế trước 0.38m)
+    const rearConfigs = [
+      { name: 'RearLeftYtV260', x: -0.41, y: 0.88, z: 0.48 },
+      { name: 'RearRightYtV260', x: 0.41, y: 0.88, z: 0.48 }
+    ];
+
+    rearConfigs.forEach((cfg) => {
+      const mount = new THREE.Group();
+      mount.name = cfg.name;
+      mount.position.set(cfg.x, cfg.y, cfg.z);
+      mount.rotation.x = THREE.MathUtils.degToRad(-5);
+
+      const bezel = new THREE.Mesh(
+        new THREE.BoxGeometry(0.34, 0.20, 0.014),
+        new THREE.MeshStandardMaterial({ color: 0x101726, roughness: 0.25, metalness: 0.85 })
+      );
+      mount.add(bezel);
+
+      const screen = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.32, 0.18),
+        new THREE.MeshBasicMaterial({ map: ytTex, side: THREE.DoubleSide })
+      );
+      screen.position.z = 0.009;
+      mount.add(screen);
+      carGroup.add(mount);
+    });
+  }
+
+  function updateSyncedYouTubeCanvas() {
+    if (!ytCtx) return;
+    const vid = document.getElementById('yt-direct-mp4-view') || document.getElementById('yt-html5-player');
+    const isPlaying = Boolean(vid && !vid.paused && vid.readyState >= 2);
+
+    if (!isPlaying && !ytCanvasDirty) return;
+    ytCanvasDirty = false;
+
+    ytCtx.fillStyle = '#070b14';
+    ytCtx.fillRect(0, 0, 640, 360);
+
+    if (isPlaying) {
+      try {
+        ytCtx.drawImage(vid, 0, 36, 640, 284);
+      } catch (e) {}
+    }
+
+    // Thanh Header
+    ytCtx.fillStyle = 'rgba(9, 14, 26, 0.88)';
+    ytCtx.fillRect(0, 0, 640, 36);
+    ytCtx.fillStyle = '#ff0033';
+    ytCtx.fillRect(10, 6, 88, 24);
+    ytCtx.fillStyle = '#ffffff';
+    ytCtx.font = 'bold 13.5px sans-serif';
+    ytCtx.fillText('▶ YouTube', 16, 23);
+
+    // Tiêu đề video
+    ytCtx.fillStyle = '#e2e8f0';
+    ytCtx.font = '13px sans-serif';
+    const titleText = (typeof state !== 'undefined' && state.nowPlayingTitle) ? state.nowPlayingTitle : 'YouTube Đa Màn Hình Buồng Lái Rolls-Royce';
+    ytCtx.fillText(titleText.slice(0, 52), 108, 23);
+
+    // Thanh Footer
+    ytCtx.fillStyle = 'rgba(9, 14, 26, 0.92)';
+    ytCtx.fillRect(0, 320, 640, 40);
+    ytCtx.fillStyle = '#00ff88';
+    ytCtx.font = 'bold 12.5px monospace';
+    const curTime = (vid && vid.currentTime) ? Number(vid.currentTime).toFixed(1) : '0.0';
+    const durTime = (vid && vid.duration && Number.isFinite(vid.duration)) ? Number(vid.duration).toFixed(1) : 'LIVE';
+    ytCtx.fillText(`▶ ${isPlaying ? 'ĐANG PHÁT' : 'TẠM DỪNG'}: ${curTime}s / ${durTime}s | ĐỒNG BỘ 3 MÀN HÌNH`, 14, 345);
+
+    if (ytTex) ytTex.needsUpdate = true;
+  }
+
+  // --------------------------------------------------------------------------
+  // 25.8. ĐỒNG BỘ 1 CHIỀU RA LIQUID GEAR WIDGET & ROLE SEAT BADGE
+  // --------------------------------------------------------------------------
+  function updateRoleSeatBadge() {
+    if (typeof document === 'undefined') return;
+    const badge = document.getElementById('v260-role-seat-badge');
+    if (!badge) return;
+
+    const isDriver = (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING' && (state.seatIndex === 0 || state.isHostPlayer === true));
+    const isDrivingMode = (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING');
+    const seat = (typeof state !== 'undefined' && state.seatIndex !== undefined) ? state.seatIndex : 0;
+
+    let deviceTag = isQuestHeadset ? '🥽 Quest 3' : (isMobilePhone ? '📱 Mobile' : '💻 Laptop Admin');
+
+    if (!isDrivingMode) {
+      badge.textContent = `${deviceTag} | 🚶 ĐI BỘ TỰ DO`;
+      badge.className = 'v260-role-badge role-foot';
+    } else if (isDriver) {
+      badge.textContent = `${deviceTag} | 🚗 TÀI XẾ (GHẾ 0) — ĐIỀU KHIỂN CHÍNH [5X SPEED]`;
+      badge.className = 'v260-role-badge role-driver';
+    } else {
+      const seatNames = ['Tài Xế', 'Ghế Phụ Trước', 'Ghế Sau Trái', 'Ghế Sau Phải'];
+      badge.textContent = `${deviceTag} | 🛋️ HÀNH KHÁCH (${seatNames[seat] || 'Ghế Phụ ' + seat}) — QUAN SÁT 360°`;
+      badge.className = 'v260-role-badge role-passenger';
+    }
+  }
+
+  function syncLiquidGearWidget() {
+    if (typeof document === 'undefined') return;
+    const sig = (typeof state !== 'undefined' && state.turnSignal) ? state.turnSignal : 'OFF';
+    const isHead = Boolean(typeof state !== 'undefined' && state.headlightsOn);
+    const seat = (typeof state !== 'undefined' && state.seatIndex !== undefined) ? state.seatIndex : 0;
+
+    const setItem = (cmd, active, badgeText) => {
+      const btn = document.querySelector(`[data-liquid-cmd="${cmd}"]`);
+      if (!btn) return;
+      btn.classList.toggle('active-true', Boolean(active));
+      const badge = btn.querySelector('.liquid-badge');
+      if (badge && badgeText !== undefined) badge.textContent = badgeText;
+    };
+
+    setItem('TOGGLE_HEADLIGHT', isHead, isHead ? 'BẬT' : 'TẮT');
+    setItem('TURN_LEFT', sig === 'LEFT', sig === 'LEFT' ? 'ĐANG CHỚP' : 'TẮT');
+    setItem('TURN_RIGHT', sig === 'RIGHT', sig === 'RIGHT' ? 'ĐANG CHỚP' : 'TẮT');
+    setItem('SWAP_SEAT', true, `GHẾ ${seat + 1}`);
+  }
+
+  function bindLiquidGearEvents() {
+    if (typeof document === 'undefined') return;
+    const trigger = document.getElementById('liquid-gear-trigger-btn');
+    const menu = document.getElementById('liquid-gear-menu-list');
+    if (trigger && menu && !trigger.getAttribute('data-bound')) {
+      trigger.setAttribute('data-bound', 'true');
+      trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = menu.classList.toggle('liquid-expanded');
+        trigger.classList.toggle('liquid-open', open);
+      });
+
+      menu.querySelectorAll('.liquid-item-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const cmd = btn.getAttribute('data-liquid-cmd');
+          switch (cmd) {
+            case 'DRIVE_RR':
+            case 'DRIVE_COUPE':
+            case 'DRIVE_MOTO': {
+              const k = cmd === 'DRIVE_RR' ? '4' : (cmd === 'DRIVE_COUPE' ? '5' : '6');
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
+              break;
+            }
+            case 'SWAP_SEAT':
+              if (typeof window.swapSeatOrTakeDriverControl === 'function') window.swapSeatOrTakeDriverControl();
+              else if (typeof cycleCabinSeatPosition === 'function') cycleCabinSeatPosition();
+              break;
+            case 'TOGGLE_HEADLIGHT':
+              if (typeof toggleHeadlights === 'function') toggleHeadlights();
+              break;
+            case 'TURN_LEFT':
+              if (typeof cycleTurnSignals === 'function') cycleTurnSignals('LEFT');
+              else if (typeof toggleTurnSignal === 'function') toggleTurnSignal('LEFT');
+              break;
+            case 'TURN_RIGHT':
+              if (typeof cycleTurnSignals === 'function') cycleTurnSignals('RIGHT');
+              else if (typeof toggleTurnSignal === 'function') toggleTurnSignal('RIGHT');
+              break;
+            case 'GARAGE_DOOR':
+              if (typeof window.toggleRollingShutterWithAudio === 'function') window.toggleRollingShutterWithAudio();
+              break;
+            case 'OPEN_YOUTUBE':
+              if (typeof openRealYouTubeApp === 'function') openRealYouTubeApp();
+              break;
+            case 'TOGGLE_REARCAM':
+              if (typeof toggleRearCamPiPModal === 'function') toggleRearCamPiPModal();
+              break;
+            case 'CALL_AMBULANCE':
+              if (typeof spawnEmergencyAmbulanceConvoy === 'function') spawnEmergencyAmbulanceConvoy();
+              break;
+            case 'TOGGLE_ALL_NPCS':
+              if (typeof toggleAllWorldCharactersAndVehicles === 'function') toggleAllWorldCharactersAndVehicles();
+              break;
+          }
+          syncLiquidGearWidget();
+        });
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('#liquid-gear-widget-container')) {
+          menu.classList.remove('liquid-expanded');
+          trigger.classList.remove('liquid-open');
+        }
+      });
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 25.9. VẬT LÝ TÔNG HẤT TUNG / HẤT VĂNG NPC & THÚ CƯNG (RAGDOLL LAUNCH)
+  // --------------------------------------------------------------------------
   const ragdollLaunchedEntities = new Set();
+  let cachedHitTargets = [];
+  let lastTargetScanTime = 0;
+  const _carWorldPos = new THREE.Vector3();
+  const _targetWorldPos = new THREE.Vector3();
 
   function collectAllPedestriansAndPetsInScene() {
     const targets = new Set();
     if (typeof sidewalkNpcs !== 'undefined' && Array.isArray(sidewalkNpcs)) {
       sidewalkNpcs.forEach((npc) => { if (npc) targets.add(npc); });
     }
-
-    // Quét thêm toàn bộ NPC đi dạo, Bảo mẫu, Trẻ em và các chú Chó / Pet trong scene
     if (typeof scene !== 'undefined' && scene && scene.children) {
       scene.children.forEach((obj) => {
         if (!obj || !obj.isGroup) return;
@@ -22132,46 +22782,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         if (typeof allTrafficVehicles !== 'undefined' && Array.isArray(allTrafficVehicles) && allTrafficVehicles.includes(obj)) return;
 
         const ud = obj.userData || {};
-        const isPedOrPet =
-          ud.isPedestrian ||
-          ud.isPet ||
-          ud.isDog ||
-          ud.walkSpeed !== undefined ||
-          ud.helloBubble !== undefined ||
-          ud.safeZoneCenter !== undefined ||
-          /npc|dog|pet|child|kid|walker/i.test(obj.name || '');
-
-        // Hoặc nhận diện qua hình học nhân vật/thú cưng (Capsule/Sphere nhỏ ở độ cao mặt đất)
-        let hasCharacterMesh = false;
-        if (!isPedOrPet && obj.children && obj.children.length >= 2 && obj.children.length <= 18 && obj.position && obj.position.y < 1.5) {
-          obj.traverse((c) => {
-            if (c.isMesh && (c.geometry?.type === 'CapsuleGeometry' || c.geometry?.type === 'SphereGeometry')) {
-              hasCharacterMesh = true;
-            }
-          });
-        }
-
-        if (isPedOrPet || hasCharacterMesh) {
-          targets.add(obj);
-          // Nếu bên trong Group NPC có chứa Group Thú cưng con (dogGroup / petGroup) thì tách hoặc đánh dấu để hất văng cả hai
-          if (obj.children) {
-            obj.children.forEach((sub) => {
-              if (sub.isGroup && sub.children && sub.children.length >= 2) {
-                sub.userData = sub.userData || {};
-                sub.userData.isSubPet = true;
-              }
-            });
-          }
-        }
+        const isPedOrPet = ud.isPedestrian || ud.isPet || ud.isDog || ud.walkSpeed !== undefined || /npc|dog|pet|child|walker/i.test(obj.name || '');
+        if (isPedOrPet) targets.add(obj);
       });
     }
     return Array.from(targets);
   }
-
-  let cachedHitTargets = [];
-  let lastTargetScanTime = 0;
-  const _carWorldPos = new THREE.Vector3();
-  const _targetWorldPos = new THREE.Vector3();
 
   function updateUniversalNpcAndPetRagdollCollisions(dt, elapsed) {
     if (typeof state === 'undefined' || !state || typeof vehicleRoot === 'undefined' || !vehicleRoot) return;
@@ -22183,210 +22799,136 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     vehicleRoot.getWorldPosition(_carWorldPos);
     const carSpeedAbs = Math.abs(state.velocityMs || 0);
-    const isPlayerDrivingMoving = state.playerMode === 'DRIVING' && carSpeedAbs > 1.1;
+    const isMovingFast = state.playerMode === 'DRIVING' && carSpeedAbs > 1.2;
 
-    const fwdX = -Math.sin(state.headingRad || 0) * Math.sign(state.velocityMs || 1);
-    const fwdZ = -Math.cos(state.headingRad || 0) * Math.sign(state.velocityMs || 1);
-
-    // 1. Kiểm tra va chạm giữa Xe đang chạy và mọi NPC đi bộ + Thú cưng (Pet)
-    if (isPlayerDrivingMoving) {
-      const hitRadius = 2.65; // Độ rộng mũi xe + lề va chạm
+    if (isMovingFast) {
+      const hitRadius = 2.65;
       for (let i = 0; i < cachedHitTargets.length; i++) {
         const entity = cachedHitTargets[i];
         if (!entity || !entity.visible) continue;
         const ud = entity.userData || (entity.userData = {});
-        if (ud.ragdollActive && ud.ragdollTimer > 2.2) continue; // Tránh kích hoạt trùng trong 0.8s đầu khi vừa bay lên
+        if (ud.ragdollActive && ud.ragdollTimer > 2.0) continue;
 
         entity.getWorldPosition(_targetWorldPos);
-        const dx = _targetWorldPos.x - _carWorldPos.x;
-        const dz = _targetWorldPos.z - _carWorldPos.z;
-        const distSq = dx * dx + dz * dz;
+        const distSq = _carWorldPos.distanceToSquared(_targetWorldPos);
 
         if (distSq < hitRadius * hitRadius) {
-          const dist = Math.max(0.2, Math.sqrt(distSq));
-          const launchPower = Math.max(9.5, Math.min(28.0, carSpeedAbs * 1.45));
-          const sideScatter = (Math.random() - 0.5) * 6.5;
+          const impactSpeed = Math.max(carSpeedAbs * VIRTUAL_APP_SPEED_SCALE, 10.0);
+          const fwdX = -Math.sin(state.headingRad || 0) * Math.sign(state.velocityMs || 1);
+          const fwdZ = -Math.cos(state.headingRad || 0) * Math.sign(state.velocityMs || 1);
 
           ud.ragdollActive = true;
-          ud.ragdollTimer = 3.2;
-          ud.groundY = (entity.position && entity.position.y > 0.5) ? 0.24 : ((entity.position && entity.position.y) || 0.24);
+          ud.ragdollTimer = 0;
+          ud.ragdollVelX = fwdX * (impactSpeed * 0.95) + (Math.random() - 0.5) * 5.0;
+          ud.ragdollVelY = 7.5 + Math.min(impactSpeed * 0.45, 14.0);
+          ud.ragdollVelZ = fwdZ * (impactSpeed * 0.95) + (Math.random() - 0.5) * 5.0;
+          ud.ragdollRotSpeedX = (Math.random() - 0.5) * 16.0;
+          ud.ragdollRotSpeedY = (Math.random() - 0.5) * 16.0;
+          ud.ragdollRotSpeedZ = (Math.random() - 0.5) * 16.0;
 
-          // Vector hất tung lên trời (vy) và hất văng về phía trước theo quán tính mũi xe (vx, vz)
-          ud.ragVelX = fwdX * launchPower + (dx / dist) * 4.5 + sideScatter;
-          ud.ragVelY = 7.2 + Math.min(10.0, carSpeedAbs * 0.55);
-          ud.ragVelZ = fwdZ * launchPower + (dz / dist) * 4.5 + sideScatter;
-
-          // Vận tốc xoay nhào lộn 3 chiều trên không trung giống hệt tông xe máy/xe đạp
-          ud.ragAngVelX = (Math.random() > 0.5 ? 1 : -1) * (10.0 + Math.random() * 8.0);
-          ud.ragAngVelY = (Math.random() - 0.5) * 12.0;
-          ud.ragAngVelZ = (Math.random() > 0.5 ? 1 : -1) * (9.0 + Math.random() * 7.0);
-
-          // Nếu NPC đang dắt theo Pet con bên trong Group, kích hoạt xoay văng cho cả Pet con!
-          if (entity.children) {
-            entity.children.forEach((child) => {
-              if (child.isGroup && child.userData?.isSubPet) {
-                child.userData.petSpinVel = 14.0;
-              }
-            });
-          }
-
-          if (ud.helloBubble) ud.helloBubble.visible = true;
           ragdollLaunchedEntities.add(entity);
 
-          state.crimeLog = `💥 BẠN VỪA TÔNG HẤT VĂNG NPC / PET Ở TỐC ĐỘ ${Math.round(carSpeedAbs * 3.6)} KM/H!`;
-          state.lastActionLog = state.crimeLog;
+          if (typeof playBicycleCrashSound === 'function') {
+            playBicycleCrashSound();
+          }
         }
       }
     }
 
-    // 2. Cập nhật quỹ đạo bay Parabol, nhào lộn 3D và nảy trên mặt đường cho các NPC & Pet bị tông
-    ragdollLaunchedEntities.forEach((entity) => {
-      if (!entity || !entity.userData || !entity.userData.ragdollActive) {
-        ragdollLaunchedEntities.delete(entity);
-        return;
-      }
-      const ud = entity.userData;
-      ud.ragdollTimer -= dt;
+    if (ragdollLaunchedEntities.size > 0) {
+      const gravity = 22.0;
+      for (const entity of Array.from(ragdollLaunchedEntities)) {
+        if (!entity) {
+          ragdollLaunchedEntities.delete(entity);
+          continue;
+        }
+        const ud = entity.userData;
+        if (!ud || !ud.ragdollActive) {
+          ragdollLaunchedEntities.delete(entity);
+          continue;
+        }
 
-      // Cập nhật vị trí theo vận tốc văng + trọng lực (g = 22 m/s^2)
-      entity.position.x += ud.ragVelX * dt;
-      entity.position.y += ud.ragVelY * dt;
-      entity.position.z += ud.ragVelZ * dt;
-      ud.ragVelY -= 22.0 * dt;
+        ud.ragdollTimer += dt;
+        ud.ragdollVelY -= gravity * dt;
 
-      // Xoay nhào lộn trên không
-      entity.rotation.x += ud.ragAngVelX * dt;
-      entity.rotation.y += ud.ragAngVelY * dt;
-      entity.rotation.z += ud.ragAngVelZ * dt;
+        entity.position.x += ud.ragdollVelX * dt;
+        entity.position.y += ud.ragdollVelY * dt;
+        entity.position.z += ud.ragdollVelZ * dt;
 
-      // Xoay văng cả thú cưng (Pet) đi kèm nếu có
-      if (entity.children) {
-        entity.children.forEach((child) => {
-          if (child.isGroup && child.userData?.petSpinVel) {
-            child.rotation.x += child.userData.petSpinVel * dt;
-            child.rotation.z += child.userData.petSpinVel * 0.8 * dt;
-            child.position.y = Math.max(0, Math.sin(ud.ragdollTimer * 6) * 0.8);
+        entity.rotation.x += ud.ragdollRotSpeedX * dt;
+        entity.rotation.y += ud.ragdollRotSpeedY * dt;
+        entity.rotation.z += ud.ragdollRotSpeedZ * dt;
+
+        const groundLevel = ud.baseY || 0;
+        if (entity.position.y <= groundLevel) {
+          entity.position.y = groundLevel;
+          ud.ragdollVelY = -ud.ragdollVelY * 0.35;
+          ud.ragdollVelX *= 0.65;
+          ud.ragdollVelZ *= 0.65;
+          ud.ragdollRotSpeedX *= 0.5;
+          ud.ragdollRotSpeedY *= 0.5;
+          ud.ragdollRotSpeedZ *= 0.5;
+
+          if (Math.abs(ud.ragdollVelY) < 1.0 && ud.ragdollTimer > 2.5) {
+            ud.ragdollActive = false;
+            ragdollLaunchedEntities.delete(entity);
+            entity.rotation.set(0, entity.rotation.y, 0);
           }
-        });
-      }
-
-      // Chạm đất và nảy lên (Bounce Physics)
-      const floorY = ud.groundY ?? 0.24;
-      if (entity.position.y <= floorY) {
-        entity.position.y = floorY;
-        if (Math.abs(ud.ragVelY) > 2.2) {
-          ud.ragVelY = -ud.ragVelY * 0.44; // Nảy lên lại
-          ud.ragVelX *= 0.68;
-          ud.ragVelZ *= 0.68;
-          ud.ragAngVelX *= 0.65;
-          ud.ragAngVelZ *= 0.65;
-        } else {
-          // Nằm văng trượt trên mặt đường trước khi đứng dậy
-          ud.ragVelY = 0;
-          ud.ragVelX *= 0.85;
-          ud.ragVelZ *= 0.85;
-          ud.ragAngVelX = 0;
-          ud.ragAngVelZ = 0;
-          entity.rotation.x = -Math.PI / 2;
-          entity.rotation.z = 0;
         }
       }
-
-      // Hết thời gian choáng -> Tự động đứng dậy đi tiếp để thế giới không bị mất NPC/Pet
-      if (ud.ragdollTimer <= 0) {
-        ud.ragdollActive = false;
-        entity.position.y = floorY;
-        entity.rotation.x = 0;
-        entity.rotation.z = 0;
-        if (entity.children) {
-          entity.children.forEach((child) => {
-            if (child.isGroup && child.userData?.petSpinVel) {
-              child.rotation.set(0, 0, 0);
-              child.position.y = 0;
-            }
-          });
-        }
-        ragdollLaunchedEntities.delete(entity);
-      }
-    });
+    }
   }
 
-  // --- 25.5. TÍCH HỢP VÀO VÒNG LẶP RENDER CHÍNH ---
+  // --------------------------------------------------------------------------
+  // 25.10. TÍCH HỢP DUY NHẤT VÀO VÒNG LẶP RENDER CHÍNH (SCENE.ONBEFORERENDER)
+  // --------------------------------------------------------------------------
   if (typeof scene !== 'undefined' && scene) {
-    // DEDICATED BACKGROUND TRANSMITTER: Đảm bảo ngay cả khi cửa sổ Laptop bị ẩn / mất focus / chạy ngầm,
-    // tín hiệu Vô Lăng GOG 808 vẫn được quét thẳng từ Gamepad API và phát 25Hz qua WebSocket sang kính Quest 3!
-    let lastBgSendWheelTime = 0;
-    setInterval(() => {
-      if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) return;
-      const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-      if (now - lastBgSendWheelTime < 38) return;
-
-      const gamepads = (typeof navigator !== 'undefined' && navigator.getGamepads) ? navigator.getGamepads() : [];
-      let bgWheel = null;
-      for (let i = 0; i < gamepads.length; i++) {
-        const gp = gamepads[i];
-        if (!gp || !gp.connected) continue;
-        const id = (gp.id || '').toLowerCase();
-        if (/r808|gog|wheel|steering|g29|g920|g923|thrustmaster|fanatec|pxn|racing/i.test(id) || gp.mapping === '') {
-          bgWheel = gp;
-          break;
-        }
-      }
-      if (!bgWheel) return;
-
-      const rawSteerAxis = bgWheel.axes[0] || 0;
-      const steerDeadband = Math.abs(rawSteerAxis) < 0.04 ? 0 : rawSteerAxis;
-
-      let gasVal = 0;
-      let brakeVal = 0;
-      let revVal = 0;
-      if (bgWheel.buttons[7] && bgWheel.buttons[7].value > 0.05) gasVal = bgWheel.buttons[7].value;
-      if (bgWheel.buttons[6] && bgWheel.buttons[6].value > 0.05) brakeVal = bgWheel.buttons[6].value;
-      if (bgWheel.axes[1] && bgWheel.axes[1] < -0.08) gasVal = -bgWheel.axes[1];
-      if (bgWheel.axes[1] && bgWheel.axes[1] > 0.08) revVal = bgWheel.axes[1];
-      if (bgWheel.buttons[0]?.pressed) gasVal = 1.0;
-      if (bgWheel.buttons[1]?.pressed) revVal = 0.8;
-
-      const steerNorm = THREE.MathUtils.clamp(steerDeadband, -1.0, 1.0);
-      const throttleNorm = gasVal > 0 ? gasVal : (revVal > 0 ? -revVal : 0);
-      const steerDeg = Math.round(90 - steerNorm * 45);
-      const throttlePulse = Math.round(1500 + throttleNorm * 350);
-
-      if (Math.abs(steerNorm) > 0.01 || Math.abs(throttleNorm) > 0.01 || brakeVal > 0.05) {
-        lastBgSendWheelTime = now;
-        mpSocket.send(JSON.stringify({
-          type: 'WHEEL_BRIDGE_INPUT',
-          connected: true,
-          deviceId: bgWheel.id.replace(/\(.*?\)/g, '').trim() || 'GOG R808',
-          steeringNorm: steerNorm,
-          steerAngleDeg: steerNorm * 540,
-          gasPercent: Math.round(gasVal * 100),
-          brakePercent: Math.round(brakeVal * 100),
-          reversePercent: Math.round(revVal * 100),
-          gear: revVal > 0.05 ? 'R' : 'D',
-          steer: steerDeg,
-          throttle: throttlePulse
-        }));
-      }
-    }, 40);
-
-    const prevOnBeforeRenderV250 = scene.onBeforeRender;
-    let lastV250Time = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const prevOnBeforeRenderV260 = scene.onBeforeRender;
+    let lastV260Time = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 
     scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
-      if (typeof prevOnBeforeRenderV250 === 'function') {
-        prevOnBeforeRenderV250.call(this, rendererInst, sceneInst, cameraInst);
+      if (typeof prevOnBeforeRenderV260 === 'function') {
+        prevOnBeforeRenderV260.call(this, rendererInst, sceneInst, cameraInst);
       }
       if (typeof camera !== 'undefined' && cameraInst !== camera && (!rendererInst || !rendererInst.xr || !rendererInst.xr.isPresenting)) return;
 
       const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-      const dt = Math.min((now - lastV250Time) / 1000, 0.1);
+      const dt = Math.min((now - lastV260Time) / 1000, 0.1);
       if (dt < 0.001) return;
-      lastV250Time = now;
+      lastV260Time = now;
       const elapsed = (typeof clock !== 'undefined' && clock) ? clock.getElapsedTime() : (now / 1000);
+      frameCounter++;
 
+      // Điều khiển xe bằng GOG R808 & Quest Touch (Nhân tốc độ ảo 5x, bảo toàn 1x phần cứng)
       pollAllGamepadsWheelGog808AndThumbsticks(dt);
+
+      // Vật lý tông hất tung NPC & Thú cưng
       updateUniversalNpcAndPetRagdollCollisions(dt, elapsed);
+
+      // Cập nhật 3 màn hình YouTube & UI ở tần số tiết kiệm VRAM 24 FPS (mỗi 3 frame)
+      if (frameCounter % 3 === 0) {
+        updateSyncedYouTubeCanvas();
+        syncLiquidGearWidget();
+        updateRoleSeatBadge();
+      }
     };
+  }
+
+  // Khởi tạo ban đầu
+  if (typeof window !== 'undefined') {
+    const initV260Dom = () => {
+      initRearMirrorDefaultBackdrop();
+      alignSteeringWheelAndCleanShaftOnly();
+      setupSyncedThreeYouTubeScreens();
+      bindLiquidGearEvents();
+      syncLiquidGearWidget();
+      updateRoleSeatBadge();
+      setTimeout(connectBothEsp32CamerasAndController, 600);
+    };
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initV260Dom);
+    } else {
+      initV260Dom();
+    }
   }
 })();

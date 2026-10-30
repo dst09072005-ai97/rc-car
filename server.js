@@ -738,6 +738,7 @@ app.get('/api/yt-stream-proxy', async (req, res) => {
 // ============================================================================
 const players = new Map();
 const cars = new Map();
+let latestEsp32CamFramePacket = null;
 
 // Khởi tạo sẵn Xe số 1 (Xe Chủ Phòng - Có kết nối ESP32) và Xe số 2 (Xe Khách/Bạn bè - Chỉ chạy 3D, không có ESP32)
 cars.set('car_host', {
@@ -878,36 +879,40 @@ function attachMultiplayerServer(serverInstance) {
       }
     }
 
-    // Ghế tài xế (seat 0) có trống không?
+    // Phân quyền thiết bị: Nhận diện Laptop Admin, Kính VR Meta Quest, Điện thoại Mobile
     const isQuestVR = /Quest|OculusBrowser|Pacific|VR|Headset/i.test(ua);
+    const isMobileDevice = !isQuestVR && /Mobile|Android|iPhone|iPad/i.test(ua);
+    const isLocalhostAdmin = Boolean(clientIp === '127.0.0.1' || clientIp === '::1' || clientIp.includes('127.0.0.1'));
+
+    // Kiểm tra ghế lái (Seat 0) có trống hoặc người giữ cũ đã mất kết nối không:
+    const isDriverSeatFree = (seat0OccupantId === null || !players.has(seat0OccupantId));
     let assignedSeat = 0;
-    if (isQuestVR) {
-      // Ưu tiên kính Meta Quest 3 luôn vào Ghế Lái (Seat 0) để người dùng trong VR lái được xe ngay lập tức!
+
+    if (isDriverSeatFree) {
+      // Ghế lái đang trống: Thiết bị đầu tiên kết nối (Kính Quest 1, Điện thoại hoặc Laptop) nhận Ghế Lái (Seat 0)
       assignedSeat = 0;
-      if (hostCar && hostCar.occupants[0] && hostCar.occupants[0] !== playerId) {
-        const prevDriverId = hostCar.occupants[0];
-        hostCar.occupants[1] = prevDriverId;
-        if (players.has(prevDriverId)) {
-          players.get(prevDriverId).seatIndex = 1;
-          players.get(prevDriverId).isHost = false;
-        }
-      }
     } else {
-      const isDriverSeatFree = (seat0OccupantId === null || !players.has(seat0OccupantId));
-      assignedSeat = isDriverSeatFree ? 0 : ([1, 2, 3].find((s) => !hostCar || !hostCar.occupants[s]) ?? 1);
+      // Ghế lái ĐÃ CÓ NGƯỜI ĐANG LÁI (Ví dụ: Kính Quest 1 hoặc Player chính):
+      // Khi có thêm Kính Meta Quest thứ 2 hoặc Điện thoại kết nối:
+      // TUYỆT ĐỐI KHÔNG CƯỚP GHẾ LÁI hoặc giáng chức tài xế! Phân bổ an toàn vào Ghế Phụ (Seat 1, 2, 3)
+      const openSeat = [1, 2, 3].find((s) => !hostCar || !hostCar.occupants[s]);
+      assignedSeat = (openSeat !== undefined) ? openSeat : 1;
     }
     const isHostPlayer = (assignedSeat === 0);
 
     const playerId = 'p_' + Math.random().toString(36).slice(2, 8);
-    // [HỢP NHẤT XE DUY NHẤT] Tất cả thiết bị (PC, Meta Quest 3, Mobile) mặc định CÙNG ĐỒNG BỘ 100% TRÊN 'car_host'
-    // Đảm bảo kính Quest 3 và Desktop luôn nhìn thấy 1 xe duy nhất, cùng vị trí, cùng góc lái và cùng xem FPV camera!
     const assignedOwnCarId = 'car_host';
 
     players.set(playerId, {
       playerId,
       ws,
       clientIp,
-      name: isHostPlayer ? 'Tài Xế Desktop' : `Kính VR / Người Lái #${players.size + 1}`,
+      isQuestVR,
+      isMobileDevice,
+      isLocalhostAdmin,
+      name: isHostPlayer
+        ? (isQuestVR ? 'Kính Meta Quest 3 [Tài Xế]' : (isMobileDevice ? 'Điện Thoại [Tài Xế]' : 'Laptop Admin [Tài Xế]'))
+        : (isQuestVR ? `Kính Quest Ghế Phụ #${assignedSeat}` : (isMobileDevice ? `Điện Thoại Ghế Phụ #${assignedSeat}` : `Khách Ghế #${assignedSeat}`)),
       ownCarId: 'car_host',
       inCarId: 'car_host',
       seatIndex: assignedSeat,
@@ -928,16 +933,47 @@ function attachMultiplayerServer(serverInstance) {
       ownCarId: assignedOwnCarId,
       isHost: isHostPlayer,
       seatIndex: assignedSeat,
+      isDriver: (assignedSeat === 0),
+      isQuestVR,
+      isMobileDevice,
+      isLocalhostAdmin,
       cars: Array.from(cars.values())
     }));
 
+    if (latestEsp32CamFramePacket && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(latestEsp32CamFramePacket); } catch (e) {}
+    }
+
     broadcastWorldState();
 
-    ws.on('message', (msg) => {
+    ws.on('message', (msg, isBinary) => {
+      if (isBinary || (msg instanceof Buffer && msg[0] === 0xff && msg[1] === 0xd8)) {
+        for (const client of activeMultiplayerSockets) {
+          if (client !== ws && client.readyState === WebSocket.OPEN && client.bufferedAmount < 512 * 1024) {
+            try { client.send(msg, { binary: true }); } catch (e) {}
+          }
+        }
+        return;
+      }
       try {
         const data = JSON.parse(msg.toString());
         const p = players.get(playerId);
         if (!p) return;
+
+                if (data.type === 'ESP32_CAM_FRAME_RELAY' && data.dataUrl) {
+          latestEsp32CamFramePacket = JSON.stringify({
+            type: 'ESP32_CAM_FRAME_RELAY',
+            role: data.role || 'front',
+            dataUrl: data.dataUrl,
+            timestamp: Date.now()
+          });
+          for (const client of activeMultiplayerSockets) {
+            if (client !== ws && client.readyState === WebSocket.OPEN && client.bufferedAmount < 512 * 1024) {
+              try { client.send(latestEsp32CamFramePacket); } catch (e) {}
+            }
+          }
+          return;
+        }
 
         if (data.type === 'PLAYER_SYNC') {
           p.x = clampFinite(data.x, -250, 250, p.x);
@@ -947,17 +983,22 @@ function attachMultiplayerServer(serverInstance) {
           p.seatIndex = data.seatIndex ?? p.seatIndex;
           p.leaningOut = Boolean(data.leaningOut);
         } else if (data.type === 'CAR_SYNC' && data.carId && cars.has(data.carId)) {
-          const c = cars.get(data.carId);
-          c.x = clampFinite(data.x, -250, 250, c.x);
-          c.z = clampFinite(data.z, -250, 250, c.z);
-          c.heading = clampFinite(data.heading, -Math.PI * 4, Math.PI * 4, c.heading);
-          c.speedKmh = clampFinite(data.speedKmh, -100, 350, c.speedKmh);
-          c.steerDeg = clampFinite(data.steerDeg, -540, 540, c.steerDeg);
-          c.doorsOpen = Boolean(data.doorsOpen);
-          c.roofOpen = Boolean(data.roofOpen);
-          c.turnSignal = data.turnSignal ?? c.turnSignal;
-          c.driverPlayerId = data.driverPlayerId || playerId;
-          broadcastWorldState();
+          // CHỈ TÀI XẾ (Seat 0) hoặc Laptop Admin MỚI ĐƯỢC ĐỒNG BỘ TỌA ĐỘ VỊ TRÍ XE:
+          // Người ngồi ghế phụ (Seat 1, 2, 3) tuyệt đối không được ghi đè tọa độ xe!
+          const canSyncCar = (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin);
+          if (canSyncCar) {
+            const c = cars.get(data.carId);
+            c.x = clampFinite(data.x, -250, 250, c.x);
+            c.z = clampFinite(data.z, -250, 250, c.z);
+            c.heading = clampFinite(data.heading, -Math.PI * 4, Math.PI * 4, c.heading);
+            c.speedKmh = clampFinite(data.speedKmh, -100, 350, c.speedKmh);
+            c.steerDeg = clampFinite(data.steerDeg, -540, 540, c.steerDeg);
+            c.doorsOpen = Boolean(data.doorsOpen);
+            c.roofOpen = Boolean(data.roofOpen);
+            c.turnSignal = data.turnSignal ?? c.turnSignal;
+            c.driverPlayerId = playerId;
+            broadcastWorldState();
+          }
         } else if (data.type === 'ENTER_CAR' && data.carId && cars.has(data.carId)) {
           const c = cars.get(data.carId);
           // Giải phóng ghế cũ nếu có
@@ -1083,6 +1124,12 @@ function computeSafeEscPulseUs(msg) {
 }
 
         } else if (data.type === 'CAR_CONTROL') {
+          // CHỈ TÀI XẾ (Seat 0) hoặc Laptop Admin MỚI ĐƯỢC PHÉP ĐIỀU KHIỂN XE THẬT:
+          const canControlHardware = (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin);
+          if (!canControlHardware) {
+            // Khách ngồi ghế phụ (Kính Quest 2, điện thoại khách) bị chặn lệnh lái/ga ra xe thật
+            return;
+          }
           // BỘ TRỌNG TÀI LÁI XE DUY NHẤT (Active Driver Arbitration):
           // Chỉ client đang chủ động cầm lái mới được quyền phát xung tới xe RC ESP32.
           // Các tab phụ / tab nền / spectator TUYỆT ĐỐI KHÔNG thể gửi xung 1500 đè lên người đang lái gây giật xe!
@@ -1133,6 +1180,7 @@ function computeSafeEscPulseUs(msg) {
             gear: data.gear || 'D',
             steer: steerVal,
             throttle: throttleVal,
+            buttonEvents: Array.isArray(data.buttonEvents) ? data.buttonEvents : [],
             sourcePlayer: playerId
           });
           for (const client of activeMultiplayerSockets) {
@@ -1142,10 +1190,19 @@ function computeSafeEscPulseUs(msg) {
           }
           // Bắn trực tiếp ra ESP32 Controller xe thật qua UDP nếu có tín hiệu ga/lái
           const isActivelyDriving = (throttleVal !== 1500 || steerVal !== 90);
+          const now = Date.now();
           if (isActivelyDriving) {
             activeDriverClient = ws;
-            activeDriverLastActiveTime = Date.now();
+            activeDriverLastActiveTime = now;
             sendUdpCarCommand(steerVal, throttleVal);
+          } else {
+            // Khi nhả vô lăng/bàn đạp: phát xung trung tính (90°, 1500µs) để dừng xe ngay lập tức!
+            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 350)) {
+              if (activeDriverClient === ws) {
+                activeDriverLastActiveTime = 0;
+              }
+              sendUdpCarCommand(90, 1500);
+            }
           }
         } else if (data.type === 'TEST_ESP32_PULSE') {
           // Lắc nhẹ bánh xe kiểm tra kết nối Servo & ESC thực tế
