@@ -2285,7 +2285,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     } catch (err) {}
   }
 
-  // 5. Trình đọc USB GOG R808 trên Windows
+  
+// 5. Trình đọc USB GOG R808 trên Windows với Bộ Quy Tắc Bàn Đạp Chuẩn Xác (Pedal Rules Engine)
   if (process.platform === 'win32') {
     const psScriptPath = path.join(__dirname, 'tools', 'winmm_multislot_reader.ps1');
     const actualPath = fs.existsSync(psScriptPath) ? psScriptPath : path.join(process.cwd(), 'tools', 'winmm_multislot_reader.ps1');
@@ -2333,17 +2334,17 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             if (p.length < 9) continue;
 
             const id = Number(p[1]);
-            const rx = Number(p[2]);
-            const ry = Number(p[3]);
-            const rz = Number(p[4]);
-            const rr = Number(p[5]);
+            const rx = Number(p[2]); // Vô lăng
+            const ry = Number(p[3]); // Bàn đạp Ga
+            const rz = Number(p[4]); // Bàn đạp Phanh
+            const rr = Number(p[5]); // Bàn đạp Lùi / Côn
             const btns = Number(p[8]) >>> 0;
 
             let st = slots.get(id);
             if (!st) {
               st = { samples: 0, restY: ry, restZ: rz, restR: rr, prevBtns: btns };
               slots.set(id, st);
-              console.log(`✅ [V501 USB] Đã kết nối Vô lăng GOG R808 tại ID=${id}`);
+              console.log(`✅ [V502 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=${id}`);
             }
 
             if (st.samples < 8) {
@@ -2361,29 +2362,110 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             }
             if (id !== activeSlot) continue;
 
+            // 1. Chuẩn hóa góc lái vô lăng [-1.0 .. +1.0]
             let steerNorm = (rx - 32767.5) / 32767.5;
             if (Math.abs(steerNorm) < 0.035) steerNorm = 0;
             steerNorm = Math.max(-1, Math.min(1, steerNorm));
 
-            let gasNorm = 0;
-            let brakeNorm = 0;
+            // 2. Đọc thô các tín hiệu Ga, Phanh, Lùi
+            let rawGas = 0;
+            let rawBrake = 0;
+            let rawReverse = 0;
 
-            const b6 = (btns & (1 << 6)) !== 0 ? 1 : 0;
-            const b7 = (btns & (1 << 7)) !== 0 ? 1 : 0;
-            const dy = st.restY - ry;
-            const dz = Math.abs(rz - st.restZ);
-            const dr = Math.abs(rr - st.restR);
+            const bGas = (btns & (1 << 7)) !== 0; // Nút Ga digital / Lẫy phải
+            const bBrake = (btns & (1 << 6)) !== 0; // Nút Phanh digital
+            const bReverse = (btns & (1 << 13)) !== 0 || (btns & (1 << 3)) !== 0 || (btns & (1 << 1)) !== 0; // Cần số Lùi / Nút R
 
-            if (dz > 2200 || dr > 2200) {
-              gasNorm = Math.min(1, Math.max(0, Math.abs(ry - st.restY) / (st.restY > 40000 ? 65535 : 32767)));
-              brakeNorm = Math.min(1, Math.max(0, Math.max(dz, dr) / (Math.max(st.restZ, st.restR) > 40000 ? 65535 : 32767)));
-            } else if (Math.abs(dy) > 1600) {
-              if (dy > 1600) gasNorm = Math.min(1, dy / 32767);
-              else brakeNorm = Math.min(1, (-dy) / 32767);
-            } else if (b6 || b7) {
-              gasNorm = b6;
-              brakeNorm = b7;
+            const deltaY = Math.abs(ry - st.restY);
+            const deltaZ = Math.abs(rz - st.restZ);
+            const deltaR = Math.abs(rr - st.restR);
+
+            // Xử lý 3 bàn đạp độc lập (Chuẩn HID GOG R808: Y=Ga, Z=Phanh, R=Lùi)
+            if (deltaZ > 2000 || deltaR > 2000) {
+              rawGas = Math.min(1, Math.max(0, deltaY / (st.restY > 40000 ? 65535 : 32767)));
+              rawBrake = Math.min(1, Math.max(0, deltaZ / (st.restZ > 40000 ? 65535 : 32767)));
+              rawReverse = Math.min(1, Math.max(0, deltaR / (st.restR > 40000 ? 65535 : 32767)));
             }
+            // Trường hợp 2 bàn đạp chung trục Y
+            else if (deltaY > 1800) {
+              if (ry > st.restY + 1800) {
+                rawGas = Math.min(1, (ry - st.restY) / 32767);
+              } else if (ry < st.restY - 1800) {
+                rawBrake = Math.min(1, (st.restY - ry) / 32767);
+              }
+            }
+
+            if (bGas) rawGas = Math.max(rawGas, 1.0);
+            if (bBrake) rawBrake = Math.max(rawBrake, 1.0);
+            if (bReverse) rawReverse = Math.max(rawReverse, 1.0);
+
+            // ================================================================
+            // 3. BỘ QUY TẮC ĐIỀU KHIỂN BÀN ĐẠP CHUẨN XÁC (PEDAL RULES MATRIX)
+            // ================================================================
+            let effectiveGas = 0;
+            let effectiveBrake = 0;
+            let effectiveReverse = 0;
+            let targetGear = wheelState.gear || 'D';
+
+            // RULE 1: Vừa Ga Vừa Phanh -> ƯU TIÊN PHANH (Brake Overrides Gas)
+            if (rawBrake > 0.05 && rawGas > 0.05) {
+              effectiveGas = 0;
+              effectiveBrake = rawBrake;
+              effectiveReverse = 0;
+            }
+            // RULE 2: Vừa Lùi Vừa Phanh -> ƯU TIÊN PHANH (Brake Overrides Reverse)
+            else if (rawBrake > 0.05 && rawReverse > 0.05) {
+              effectiveGas = 0;
+              effectiveBrake = rawBrake;
+              effectiveReverse = 0;
+            }
+            // RULE 3: Vừa Ga Vừa Lùi -> ƯU TIÊN GIẢM TỐC TRƯỚC RỒI MỚI LÙI
+            else if (rawGas > 0.05 && rawReverse > 0.05) {
+              effectiveGas = 0;
+              effectiveBrake = 0.85; // Tự động hãm tốc độ về 0 trước
+              effectiveReverse = 0;
+            }
+            // RULE 4: Đạp Ga Tiến (Gas Alone) -> TIẾN TỚI!
+            else if (rawGas > 0.04) {
+              effectiveGas = rawGas;
+              effectiveBrake = 0;
+              effectiveReverse = 0;
+              targetGear = 'D';
+            }
+            // RULE 5: Đạp Phanh (Brake Alone) -> PHANH DỪNG XE!
+            else if (rawBrake > 0.04) {
+              effectiveGas = 0;
+              effectiveBrake = rawBrake;
+              effectiveReverse = 0;
+            }
+            // RULE 6: Đạp Lùi (Reverse Alone) -> LÙI XE!
+            else if (rawReverse > 0.04) {
+              effectiveGas = 0;
+              effectiveBrake = 0;
+              effectiveReverse = rawReverse;
+              targetGear = 'R';
+            }
+            // RULE 7: Nhả toàn bộ chân -> Trung tính
+            else {
+              effectiveGas = 0;
+              effectiveBrake = 0;
+              effectiveReverse = 0;
+            }
+
+            // 4. Tính toán Drive Norm và Xung ESC cho xe RC thật
+            let driveNorm = 0;
+            if (effectiveBrake > 0.04) {
+              driveNorm = 0; // Phanh triệt tiêu hoàn toàn lực kéo, xe dừng hẳn!
+            } else if (effectiveGas > 0.04) {
+              driveNorm = effectiveGas; // Lực kéo tiến [0..+1.0]
+              targetGear = 'D';
+            } else if (effectiveReverse > 0.04) {
+              driveNorm = -effectiveReverse; // Lực kéo lùi [-1.0..0]
+              targetGear = 'R';
+            }
+
+            wheelState.gear = targetGear;
+            wheelState.reverseNorm = Number(effectiveReverse.toFixed(4));
 
             const currentButtonEvents = [];
             for (const item of BTN_MAP) {
@@ -2394,7 +2476,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             st.prevBtns = btns;
             global.buttonEvents = currentButtonEvents;
 
-            pushWheelUpdateThrottled(steerNorm, gasNorm, brakeNorm, currentButtonEvents);
+            pushWheelUpdateThrottled(steerNorm, effectiveGas, effectiveBrake, currentButtonEvents);
           }
         } catch (err) {}
       });
