@@ -3923,7 +3923,11 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     );
 
     if (isApkEnvironment) {
-      const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.32';
+      let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
+      if (!pcIp || pcIp === 'localhost' || pcIp === '127.0.0.1' || pcIp === 'null' || pcIp === 'undefined') {
+        pcIp = '192.168.1.32';
+        if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
+      }
       hostTarget = `${pcIp}:8080`;
       wsProto = 'ws:';
     }
