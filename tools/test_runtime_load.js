@@ -24,6 +24,7 @@ const mockElement = (id = '') => {
     removeEventListener: () => {},
     appendChild: (c) => c,
     removeChild: (c) => c,
+    remove: function() { if (this.parentNode && typeof this.parentNode.removeChild === 'function') this.parentNode.removeChild(this); },
     replaceChild: (n, o) => n,
     parentNode: { replaceChild: () => {}, removeChild: () => {} },
     cloneNode: () => mockElement(),

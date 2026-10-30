@@ -2035,35 +2035,37 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   }
 })();
 
+
 // ============================================================================
-// [PATCH V501 - SERVER] CHỐNG SẬP SERVER KHI LÁI LIÊN TỤC (ANTI-CRASH GUARD),
-// KHÓA LỖI BUTTONEVENTS & ĐIỀU TIẾT LUỒNG TÍN HIỆU 30Hz MƯỢT MÀ KHÔNG NGHẼN MẠNG
+// [PATCH V503 - SERVER] PHÁT SÓNG LIÊN TỤC 50Hz KHÔNG KHỰNG, FLUSH TỨC THÌ,
+// KHÓA LỖI SẬP VÀ THỰC THI BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC TRÊN SERVER & LOCALHOST
 // ============================================================================
-(function attachV501StableWheelBridge() {
+(function attachV503ContinuousWheelBridge() {
   'use strict';
 
-  // 1. Khóa cứng biến toàn cục & Bẫy lỗi để Server KHÔNG BAO GIỜ bị văng (Crash)
   global.buttonEvents = [];
   global.btnEvents = [];
 
   if (!global.__V501_CRASH_GUARD_INSTALLED__) {
     global.__V501_CRASH_GUARD_INSTALLED__ = true;
     process.on('uncaughtException', (err) => {
-      console.error('⚠️ [ANTI-CRASH GUARD] Đã chặn 1 lỗi phát sinh:', err ? err.message : err);
+      console.error('⚠️ [ANTI-CRASH GUARD] Đã chặn 1 lỗi:', err ? err.message : err);
     });
     process.on('unhandledRejection', (reason) => {
       console.error('⚠️ [ANTI-CRASH GUARD] Unhandled Rejection:', reason);
     });
   }
 
-  if (global.__V501_WHEEL_BRIDGE_ACTIVE__) return;
-  global.__V501_WHEEL_BRIDGE_ACTIVE__ = true;
+  if (global.__V503_SERVER_ACTIVE__) return;
+  global.__V503_SERVER_ACTIVE__ = true;
 
   const os = require('os');
   const http = require('http');
   const https = require('https');
   const { spawn } = require('child_process');
   const WebSocket = require('ws');
+  const path = require('path');
+  const fs = require('fs');
 
   const connectedClients = new Set();
 
@@ -2073,6 +2075,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     steerNorm: 0,
     gasNorm: 0,
     brakeNorm: 0,
+    reverseNorm: 0,
     driveNorm: 0,
     gear: 'D',
     buttonEvents: [],
@@ -2094,7 +2097,6 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     return ips.length > 0 ? ips : ['127.0.0.1'];
   }
 
-  // 2. HTTP Endpoint cho kính Quest 3 kiểm tra kết nối & đồng bộ góc lái dự phòng
   function handlePingAndWheelHttp(req, res) {
     if (!req || !res || !req.url) return false;
     if (req.url.startsWith('/api/bridge-ping') || req.url.startsWith('/api/wheel-state')) {
@@ -2123,8 +2125,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   }
 
   [http.Server, https.Server].forEach((SrvClass) => {
-    if (!SrvClass || !SrvClass.prototype || SrvClass.prototype.__v501HttpHooked) return;
-    SrvClass.prototype.__v501HttpHooked = true;
+    if (!SrvClass || !SrvClass.prototype || SrvClass.prototype.__v503HttpHooked) return;
+    SrvClass.prototype.__v503HttpHooked = true;
     const origEmit = SrvClass.prototype.emit;
     SrvClass.prototype.emit = function (event, req, res, ...rest) {
       if (event === 'request' && handlePingAndWheelHttp(req, res)) return true;
@@ -2132,10 +2134,9 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     };
   });
 
-  // 3. Quản lý kết nối WebSocket an toàn 100%
   const WssProto = WebSocket.Server ? WebSocket.Server.prototype : null;
-  if (WssProto && !WssProto.__v501EmitHooked) {
-    WssProto.__v501EmitHooked = true;
+  if (WssProto && !WssProto.__v503EmitHooked) {
+    WssProto.__v503EmitHooked = true;
     const origWssEmit = WssProto.emit;
     WssProto.emit = function (event, ws, req, ...rest) {
       if (event === 'connection' && ws) {
@@ -2160,11 +2161,13 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             if (data && data.type === 'WHEEL_BRIDGE_INPUT') {
               const src = data.payload || data;
               const safeBtnList = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
-              pushWheelUpdateThrottled(
+              resolveAndBroadcastPedalRules(
                 Number(src.steerNorm ?? src.steer ?? 0) || 0,
-                Number(src.gasNorm ?? 0) || 0,
-                Number(src.brakeNorm ?? src.brake ?? 0) || 0,
-                safeBtnList
+                Number(src.gasNorm ?? (src.gasPercent ? src.gasPercent / 100 : 0)) || 0,
+                Number(src.brakeNorm ?? (src.brakePercent ? src.brakePercent / 100 : 0)) || 0,
+                Number(src.reverseNorm ?? 0) || 0,
+                safeBtnList,
+                src.gear || 'D'
               );
             }
           } catch (e) {}
@@ -2174,57 +2177,115 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     };
   }
 
-  // 4. BỘ ĐIỀU TIẾT LUỒNG TÍN HIỆU 30Hz & CHỐNG TRÀN BỘ ĐỆM MẠNG
+  // --------------------------------------------------------------------------
+  // BỘ ĐIỀU TIẾT PHÁT SÓNG 50Hz LIÊN TỤC (KHÔNG BỊ DỪNG / KHỰNG KHI ĐANG GIỮ CHÂN GA)
+  // --------------------------------------------------------------------------
   let lastBroadcastMs = 0;
-  let lastSentSteer = 0;
-  let lastSentGas = 0;
-  let lastSentBrake = 0;
   let lastUdpSendMs = 0;
   let lastTerminalLogMs = 0;
+  let neutralSendCount = 0;
 
-  function pushWheelUpdateThrottled(steerNorm, gasNorm, brakeNorm, btnEventsList) {
+  function resolveAndBroadcastPedalRules(steerNorm, rawGas, rawBrake, rawReverse, safeButtons, requestedGear) {
     try {
-      const safeButtons = Array.isArray(btnEventsList) ? btnEventsList : [];
-      const driveNorm = Math.max(-1, Math.min(1, gasNorm - brakeNorm));
-      const gear = brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : 'D';
       const now = Date.now();
+
+      // ======================================================================
+      // BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC (STRICT PEDAL RULES ENGINE)
+      // ======================================================================
+      let effectiveGas = 0;
+      let effectiveBrake = 0;
+      let effectiveReverse = 0;
+      let gear = requestedGear || 'D';
+
+      // RULE 1: Vừa Ga vừa Phanh -> Ưu tiên PHANH DỪNG XE (Brake Overrides Gas)
+      if (rawBrake > 0.05 && rawGas > 0.05) {
+        effectiveGas = 0;
+        effectiveBrake = rawBrake;
+        effectiveReverse = 0;
+      }
+      // RULE 2: Vừa Lùi vừa Phanh -> Ưu tiên PHANH DỪNG XE (Brake Overrides Reverse)
+      else if (rawBrake > 0.05 && (rawReverse > 0.05 || gear === 'R')) {
+        effectiveGas = 0;
+        effectiveBrake = rawBrake;
+        effectiveReverse = 0;
+      }
+      // RULE 3: Vừa Ga vừa Lùi -> Ưu tiên GIẢM TỐC VỀ 0 TRƯỚC RỒI MỚI LÙI
+      else if (rawGas > 0.05 && (rawReverse > 0.05 || gear === 'R')) {
+        effectiveGas = 0;
+        effectiveBrake = 0.85; // Hãm tốc độ về 0 an toàn
+        effectiveReverse = 0;
+      }
+      // RULE 4: Đạp Ga Tiến (Gas Alone) -> TIẾN TỚI (Số D)
+      else if (rawGas > 0.03 && gear !== 'R') {
+        effectiveGas = rawGas;
+        effectiveBrake = 0;
+        effectiveReverse = 0;
+        gear = 'D';
+      }
+      // RULE 5: Đạp Phanh (Brake Alone) -> PHANH DỪNG XE (KHÔNG BAO GIỜ LÙI KHI PHANH!)
+      else if (rawBrake > 0.03) {
+        effectiveGas = 0;
+        effectiveBrake = rawBrake;
+        effectiveReverse = 0;
+      }
+      // RULE 6: Đạp Lùi (Reverse Alone) -> LÙI XE (Số R)
+      else if (rawReverse > 0.03 || gear === 'R') {
+        effectiveGas = 0;
+        effectiveBrake = 0;
+        effectiveReverse = rawReverse > 0.03 ? rawReverse : rawGas;
+        gear = 'R';
+      }
+      // RULE 7: Nhả toàn bộ chân -> Trung tính
+      else {
+        effectiveGas = 0;
+        effectiveBrake = 0;
+        effectiveReverse = 0;
+      }
+
+      let driveNorm = 0;
+      if (effectiveBrake > 0.04) {
+        driveNorm = 0;
+      } else if (effectiveGas > 0.04) {
+        driveNorm = effectiveGas;
+        gear = 'D';
+      } else if (effectiveReverse > 0.04) {
+        driveNorm = -effectiveReverse;
+        gear = 'R';
+      }
 
       wheelState.connected = true;
       wheelState.steerNorm = Number(steerNorm.toFixed(4));
-      wheelState.gasNorm = Number(gasNorm.toFixed(4));
-      wheelState.brakeNorm = Number(brakeNorm.toFixed(4));
+      wheelState.gasNorm = Number(effectiveGas.toFixed(4));
+      wheelState.brakeNorm = Number(effectiveBrake.toFixed(4));
+      wheelState.reverseNorm = Number(effectiveReverse.toFixed(4));
       wheelState.driveNorm = Number(driveNorm.toFixed(4));
       wheelState.gear = gear;
       wheelState.buttonEvents = safeButtons;
       wheelState.updatedAt = now;
 
-      const deltaChange =
-        Math.abs(wheelState.steerNorm - lastSentSteer) +
-        Math.abs(wheelState.gasNorm - lastSentGas) +
-        Math.abs(wheelState.brakeNorm - lastSentBrake);
+      // KIỂM TRA ĐANG ĐIỀU KHIỂN:
+      // Khi người lái đang giữ chân ga hoặc đang giữ vô lăng, PHẢI PHÁT SÓNG LIÊN TỤC 50Hz (mỗi 20ms)!
+      // Tuyệt đối không dừng phát chỉ vì deltaChange == 0!
+      const isActiveInput = (
+        Math.abs(wheelState.steerNorm) > 0.02 ||
+        wheelState.gasNorm > 0.02 ||
+        wheelState.brakeNorm > 0.02 ||
+        wheelState.reverseNorm > 0.02 ||
+        safeButtons.length > 0
+      );
 
-      const isActiveInput =
-        Math.abs(wheelState.steerNorm) > 0.025 ||
-        wheelState.gasNorm > 0.025 ||
-        wheelState.brakeNorm > 0.025 ||
-        safeButtons.length > 0;
+      const shouldBroadcastWs = (now - lastBroadcastMs >= 20) && (isActiveInput || neutralSendCount < 8 || safeButtons.length > 0);
 
-      // Điều tiết phát WebSocket tối đa 30Hz (~33ms/gói)
-      const shouldSendWs =
-        safeButtons.length > 0 ||
-        (now - lastBroadcastMs >= 33 && (deltaChange > 0.004 || isActiveInput));
-
-      if (shouldSendWs) {
+      if (shouldBroadcastWs) {
         lastBroadcastMs = now;
-        lastSentSteer = wheelState.steerNorm;
-        lastSentGas = wheelState.gasNorm;
-        lastSentBrake = wheelState.brakeNorm;
+        if (!isActiveInput) neutralSendCount++;
+        else neutralSendCount = 0;
         wheelState.seq++;
 
         if (isActiveInput && now - lastTerminalLogMs > 600) {
           lastTerminalLogMs = now;
           console.log(
-            `🛞 [GOG808 MƯỢT 30Hz] Lái: ${wheelState.steerNorm.toFixed(2)} | Ga: ${wheelState.gasNorm.toFixed(2)} | Phanh/Lùi: ${wheelState.brakeNorm.toFixed(2)} | Kính đang nối: ${connectedClients.size}`
+            `🛞 [GOG808 50Hz MƯỢT] Lái: ${wheelState.steerNorm.toFixed(2)} | Ga: ${wheelState.gasNorm.toFixed(2)} | Phanh: ${wheelState.brakeNorm.toFixed(2)} | Số ${wheelState.gear} | Kính: ${connectedClients.size}`
           );
         }
 
@@ -2233,6 +2294,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
           steerNorm: wheelState.steerNorm,
           gasNorm: wheelState.gasNorm,
           brakeNorm: wheelState.brakeNorm,
+          reverseNorm: wheelState.reverseNorm,
           driveNorm: wheelState.driveNorm,
           gear: wheelState.gear,
           buttonEvents: safeButtons,
@@ -2241,6 +2303,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             steerNorm: wheelState.steerNorm,
             gasNorm: wheelState.gasNorm,
             brakeNorm: wheelState.brakeNorm,
+            reverseNorm: wheelState.reverseNorm,
             driveNorm: wheelState.driveNorm,
             gear: wheelState.gear,
             buttonEvents: safeButtons,
@@ -2249,21 +2312,25 @@ app.get('/api/sc-search', handleSoundCloudSearch);
           timestamp: now
         });
 
-        // Kiểm tra chống tràn bộ đệm (bufferedAmount < 64KB)
         for (const client of connectedClients) {
           if (client.readyState === 1 && client.bufferedAmount < 65536) {
-            try {
-              client.send(packetStr);
-            } catch (err) {}
+            try { client.send(packetStr); } catch (err) {}
           }
         }
       }
 
-      // Điều tiết gửi UDP xuống mạch ESP32 ở mức 25Hz (40ms) chống quá tải Wi-Fi ESP32
-      if (now - lastUdpSendMs >= 40) {
+      // Phát lệnh UDP xuống xe RC ESP32 ở tần số 33Hz (30ms)
+      if (now - lastUdpSendMs >= 30) {
         lastUdpSendMs = now;
         const steerDeg = Math.round(90 + wheelState.steerNorm * 45);
-        const escUs = Math.round(1500 + wheelState.driveNorm * 220);
+        let escUs = 1500;
+        if (wheelState.brakeNorm > 0.04) {
+          escUs = 1500; // Phanh dừng xe
+        } else if (wheelState.driveNorm > 0.04) {
+          escUs = Math.round(1500 + wheelState.driveNorm * 260); // Tiến
+        } else if (wheelState.driveNorm < -0.04) {
+          escUs = Math.round(1500 + wheelState.driveNorm * 220); // Lùi
+        }
 
         if (typeof sendSafeEsp32Udp === 'function') {
           try { sendSafeEsp32Udp(steerDeg, escUs); } catch (e) {}
@@ -2277,7 +2344,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               throttle: escUs,
               steeringNorm: wheelState.steerNorm,
               throttleNorm: wheelState.driveNorm,
-              gear
+              gear: wheelState.gear
             });
           } catch (e) {}
         }
@@ -2285,8 +2352,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     } catch (err) {}
   }
 
-  
-// 5. Trình đọc USB GOG R808 trên Windows với Bộ Quy Tắc Bàn Đạp Chuẩn Xác (Pedal Rules Engine)
+  // Khởi chạy trình đọc USB WinMM trực tiếp từ Windows
   if (process.platform === 'win32') {
     const psScriptPath = path.join(__dirname, 'tools', 'winmm_multislot_reader.ps1');
     const actualPath = fs.existsSync(psScriptPath) ? psScriptPath : path.join(process.cwd(), 'tools', 'winmm_multislot_reader.ps1');
@@ -2322,9 +2388,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       ps.stdout.on('data', (chunk) => {
         try {
           stdoutBuffer += chunk.toString();
-          if (stdoutBuffer.length > 16384) {
-            stdoutBuffer = stdoutBuffer.slice(-4096);
-          }
+          if (stdoutBuffer.length > 16384) stdoutBuffer = stdoutBuffer.slice(-4096);
           const lines = stdoutBuffer.split(/\r?\n/);
           stdoutBuffer = lines.pop() || '';
 
@@ -2344,7 +2408,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             if (!st) {
               st = { samples: 0, restY: ry, restZ: rz, restR: rr, prevBtns: btns };
               slots.set(id, st);
-              console.log(`✅ [V502 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=${id}`);
+              console.log(`✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=${id}`);
             }
 
             if (st.samples < 8) {
@@ -2362,32 +2426,29 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             }
             if (id !== activeSlot) continue;
 
-            // 1. Chuẩn hóa góc lái vô lăng [-1.0 .. +1.0]
+            // Góc lái
             let steerNorm = (rx - 32767.5) / 32767.5;
             if (Math.abs(steerNorm) < 0.035) steerNorm = 0;
             steerNorm = Math.max(-1, Math.min(1, steerNorm));
 
-            // 2. Đọc thô các tín hiệu Ga, Phanh, Lùi
             let rawGas = 0;
             let rawBrake = 0;
             let rawReverse = 0;
 
-            const bGas = (btns & (1 << 7)) !== 0; // Nút Ga digital / Lẫy phải
+            const bGas = (btns & (1 << 7)) !== 0; // Nút Ga digital
             const bBrake = (btns & (1 << 6)) !== 0; // Nút Phanh digital
-            const bReverse = (btns & (1 << 13)) !== 0 || (btns & (1 << 3)) !== 0 || (btns & (1 << 1)) !== 0; // Cần số Lùi / Nút R
+            const bReverse = (btns & (1 << 13)) !== 0 || (btns & (1 << 3)) !== 0 || (btns & (1 << 1)) !== 0; // Nút R
 
             const deltaY = Math.abs(ry - st.restY);
             const deltaZ = Math.abs(rz - st.restZ);
             const deltaR = Math.abs(rr - st.restR);
 
-            // Xử lý 3 bàn đạp độc lập (Chuẩn HID GOG R808: Y=Ga, Z=Phanh, R=Lùi)
+            // Xử lý 3 bàn đạp độc lập
             if (deltaZ > 2000 || deltaR > 2000) {
               rawGas = Math.min(1, Math.max(0, deltaY / (st.restY > 40000 ? 65535 : 32767)));
               rawBrake = Math.min(1, Math.max(0, deltaZ / (st.restZ > 40000 ? 65535 : 32767)));
               rawReverse = Math.min(1, Math.max(0, deltaR / (st.restR > 40000 ? 65535 : 32767)));
-            }
-            // Trường hợp 2 bàn đạp chung trục Y
-            else if (deltaY > 1800) {
+            } else if (deltaY > 1800) {
               if (ry > st.restY + 1800) {
                 rawGas = Math.min(1, (ry - st.restY) / 32767);
               } else if (ry < st.restY - 1800) {
@@ -2399,73 +2460,454 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             if (bBrake) rawBrake = Math.max(rawBrake, 1.0);
             if (bReverse) rawReverse = Math.max(rawReverse, 1.0);
 
-            // ================================================================
-            // 3. BỘ QUY TẮC ĐIỀU KHIỂN BÀN ĐẠP CHUẨN XÁC (PEDAL RULES MATRIX)
-            // ================================================================
-            let effectiveGas = 0;
-            let effectiveBrake = 0;
-            let effectiveReverse = 0;
-            let targetGear = wheelState.gear || 'D';
+            const currentButtonEvents = [];
+            for (const item of BTN_MAP) {
+              const isDown = (btns & (1 << item.bit)) !== 0;
+              const wasDown = (st.prevBtns & (1 << item.bit)) !== 0;
+              if (isDown && !wasDown) currentButtonEvents.push(item.act);
+            }
+            st.prevBtns = btns;
+            global.buttonEvents = currentButtonEvents;
 
-            // RULE 1: Vừa Ga Vừa Phanh -> ƯU TIÊN PHANH (Brake Overrides Gas)
-            if (rawBrake > 0.05 && rawGas > 0.05) {
-              effectiveGas = 0;
-              effectiveBrake = rawBrake;
-              effectiveReverse = 0;
+            const reqGear = rawReverse > 0.05 || bReverse ? 'R' : 'D';
+            resolveAndBroadcastPedalRules(steerNorm, rawGas, rawBrake, rawReverse, currentButtonEvents, reqGear);
+          }
+        } catch (err) {}
+      });
+
+      const killPs = () => {
+        try { ps.kill(); } catch (e) {}
+      };
+      process.on('exit', killPs);
+      process.on('SIGINT', () => { killPs(); process.exit(0); });
+      process.on('SIGTERM', () => { killPs(); process.exit(0); });
+    }
+  }
+})();
+
+// ============================================================================
+// [PATCH V503 - SERVER] PHÁT SÓNG LIÊN TỤC 50Hz KHÔNG KHỰNG, FLUSH TỨC THÌ,
+// KHÓA LỖI SẬP VÀ THỰC THI BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC TRÊN SERVER & LOCALHOST
+// ============================================================================
+(function attachV503ContinuousWheelBridge() {
+  'use strict';
+
+  global.buttonEvents = [];
+  global.btnEvents = [];
+
+  if (!global.__V501_CRASH_GUARD_INSTALLED__) {
+    global.__V501_CRASH_GUARD_INSTALLED__ = true;
+    process.on('uncaughtException', (err) => {
+      console.error('⚠️ [ANTI-CRASH GUARD] Đã chặn 1 lỗi:', err ? err.message : err);
+    });
+    process.on('unhandledRejection', (reason) => {
+      console.error('⚠️ [ANTI-CRASH GUARD] Unhandled Rejection:', reason);
+    });
+  }
+
+  if (global.__V503_SERVER_ACTIVE__) return;
+  global.__V503_SERVER_ACTIVE__ = true;
+
+  const os = require('os');
+  const http = require('http');
+  const https = require('https');
+  const { spawn } = require('child_process');
+  const WebSocket = require('ws');
+  const path = require('path');
+  const fs = require('fs');
+
+  const connectedClients = new Set();
+
+  const wheelState = {
+    connected: false,
+    slotId: -1,
+    steerNorm: 0,
+    gasNorm: 0,
+    brakeNorm: 0,
+    reverseNorm: 0,
+    driveNorm: 0,
+    gear: 'D',
+    buttonEvents: [],
+    seq: 0,
+    updatedAt: 0
+  };
+
+  function getLaptopLanIps() {
+    const ips = [];
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      if (/vmware|vbox|vethernet|wsl|tailscale|loopback|tun|tap/i.test(name)) continue;
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('100.') && !net.address.startsWith('169.254.')) {
+          ips.push(net.address);
+        }
+      }
+    }
+    return ips.length > 0 ? ips : ['127.0.0.1'];
+  }
+
+  function handlePingAndWheelHttp(req, res) {
+    if (!req || !res || !req.url) return false;
+    if (req.url.startsWith('/api/bridge-ping') || req.url.startsWith('/api/wheel-state')) {
+      try {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Cache-Control': 'no-store'
+        });
+        if (req.method === 'OPTIONS') {
+          res.end();
+          return true;
+        }
+        res.end(JSON.stringify({
+          ok: true,
+          ips: getLaptopLanIps(),
+          wheel: wheelState,
+          timestamp: Date.now()
+        }));
+      } catch (e) {}
+      return true;
+    }
+    return false;
+  }
+
+  [http.Server, https.Server].forEach((SrvClass) => {
+    if (!SrvClass || !SrvClass.prototype || SrvClass.prototype.__v503HttpHooked) return;
+    SrvClass.prototype.__v503HttpHooked = true;
+    const origEmit = SrvClass.prototype.emit;
+    SrvClass.prototype.emit = function (event, req, res, ...rest) {
+      if (event === 'request' && handlePingAndWheelHttp(req, res)) return true;
+      return origEmit.call(this, event, req, res, ...rest);
+    };
+  });
+
+  const WssProto = WebSocket.Server ? WebSocket.Server.prototype : null;
+  if (WssProto && !WssProto.__v503EmitHooked) {
+    WssProto.__v503EmitHooked = true;
+    const origWssEmit = WssProto.emit;
+    WssProto.emit = function (event, ws, req, ...rest) {
+      if (event === 'connection' && ws) {
+        connectedClients.add(ws);
+        ws.on('close', () => connectedClients.delete(ws));
+        ws.on('error', () => connectedClients.delete(ws));
+
+        try {
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'WHEEL_BRIDGE_STATE',
+              ...wheelState,
+              payload: wheelState
+            }));
+          }
+        } catch (e) {}
+
+        ws.on('message', (raw, isBinary) => {
+          if (isBinary) return;
+          try {
+            const data = JSON.parse(raw.toString());
+            if (data && data.type === 'WHEEL_BRIDGE_INPUT') {
+              const src = data.payload || data;
+              const safeBtnList = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
+              resolveAndBroadcastPedalRules(
+                Number(src.steerNorm ?? src.steer ?? 0) || 0,
+                Number(src.gasNorm ?? (src.gasPercent ? src.gasPercent / 100 : 0)) || 0,
+                Number(src.brakeNorm ?? (src.brakePercent ? src.brakePercent / 100 : 0)) || 0,
+                Number(src.reverseNorm ?? 0) || 0,
+                safeBtnList,
+                src.gear || 'D'
+              );
             }
-            // RULE 2: Vừa Lùi Vừa Phanh -> ƯU TIÊN PHANH (Brake Overrides Reverse)
-            else if (rawBrake > 0.05 && rawReverse > 0.05) {
-              effectiveGas = 0;
-              effectiveBrake = rawBrake;
-              effectiveReverse = 0;
-            }
-            // RULE 3: Vừa Ga Vừa Lùi -> ƯU TIÊN GIẢM TỐC TRƯỚC RỒI MỚI LÙI
-            else if (rawGas > 0.05 && rawReverse > 0.05) {
-              effectiveGas = 0;
-              effectiveBrake = 0.85; // Tự động hãm tốc độ về 0 trước
-              effectiveReverse = 0;
-            }
-            // RULE 4: Đạp Ga Tiến (Gas Alone) -> TIẾN TỚI!
-            else if (rawGas > 0.04) {
-              effectiveGas = rawGas;
-              effectiveBrake = 0;
-              effectiveReverse = 0;
-              targetGear = 'D';
-            }
-            // RULE 5: Đạp Phanh (Brake Alone) -> PHANH DỪNG XE!
-            else if (rawBrake > 0.04) {
-              effectiveGas = 0;
-              effectiveBrake = rawBrake;
-              effectiveReverse = 0;
-            }
-            // RULE 6: Đạp Lùi (Reverse Alone) -> LÙI XE!
-            else if (rawReverse > 0.04) {
-              effectiveGas = 0;
-              effectiveBrake = 0;
-              effectiveReverse = rawReverse;
-              targetGear = 'R';
-            }
-            // RULE 7: Nhả toàn bộ chân -> Trung tính
-            else {
-              effectiveGas = 0;
-              effectiveBrake = 0;
-              effectiveReverse = 0;
+          } catch (e) {}
+        });
+      }
+      return origWssEmit.call(this, event, ws, req, ...rest);
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // BỘ ĐIỀU TIẾT PHÁT SÓNG 50Hz LIÊN TỤC (KHÔNG BỊ DỪNG / KHỰNG KHI ĐANG GIỮ CHÂN GA)
+  // --------------------------------------------------------------------------
+  let lastBroadcastMs = 0;
+  let lastUdpSendMs = 0;
+  let lastTerminalLogMs = 0;
+  let neutralSendCount = 0;
+
+  function resolveAndBroadcastPedalRules(steerNorm, rawGas, rawBrake, rawReverse, safeButtons, requestedGear) {
+    try {
+      const now = Date.now();
+
+      // ======================================================================
+      // BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC (STRICT PEDAL RULES ENGINE)
+      // ======================================================================
+      let effectiveGas = 0;
+      let effectiveBrake = 0;
+      let effectiveReverse = 0;
+      let gear = requestedGear || 'D';
+
+      // RULE 1: Vừa Ga vừa Phanh -> Ưu tiên PHANH DỪNG XE (Brake Overrides Gas)
+      if (rawBrake > 0.05 && rawGas > 0.05) {
+        effectiveGas = 0;
+        effectiveBrake = rawBrake;
+        effectiveReverse = 0;
+      }
+      // RULE 2: Vừa Lùi vừa Phanh -> Ưu tiên PHANH DỪNG XE (Brake Overrides Reverse)
+      else if (rawBrake > 0.05 && (rawReverse > 0.05 || gear === 'R')) {
+        effectiveGas = 0;
+        effectiveBrake = rawBrake;
+        effectiveReverse = 0;
+      }
+      // RULE 3: Vừa Ga vừa Lùi -> Ưu tiên GIẢM TỐC VỀ 0 TRƯỚC RỒI MỚI LÙI
+      else if (rawGas > 0.05 && (rawReverse > 0.05 || gear === 'R')) {
+        effectiveGas = 0;
+        effectiveBrake = 0.85; // Hãm tốc độ về 0 an toàn
+        effectiveReverse = 0;
+      }
+      // RULE 4: Đạp Ga Tiến (Gas Alone) -> TIẾN TỚI (Số D)
+      else if (rawGas > 0.03 && gear !== 'R') {
+        effectiveGas = rawGas;
+        effectiveBrake = 0;
+        effectiveReverse = 0;
+        gear = 'D';
+      }
+      // RULE 5: Đạp Phanh (Brake Alone) -> PHANH DỪNG XE (KHÔNG BAO GIỜ LÙI KHI PHANH!)
+      else if (rawBrake > 0.03) {
+        effectiveGas = 0;
+        effectiveBrake = rawBrake;
+        effectiveReverse = 0;
+      }
+      // RULE 6: Đạp Lùi (Reverse Alone) -> LÙI XE (Số R)
+      else if (rawReverse > 0.03 || gear === 'R') {
+        effectiveGas = 0;
+        effectiveBrake = 0;
+        effectiveReverse = rawReverse > 0.03 ? rawReverse : rawGas;
+        gear = 'R';
+      }
+      // RULE 7: Nhả toàn bộ chân -> Trung tính
+      else {
+        effectiveGas = 0;
+        effectiveBrake = 0;
+        effectiveReverse = 0;
+      }
+
+      let driveNorm = 0;
+      if (effectiveBrake > 0.04) {
+        driveNorm = 0;
+      } else if (effectiveGas > 0.04) {
+        driveNorm = effectiveGas;
+        gear = 'D';
+      } else if (effectiveReverse > 0.04) {
+        driveNorm = -effectiveReverse;
+        gear = 'R';
+      }
+
+      wheelState.connected = true;
+      wheelState.steerNorm = Number(steerNorm.toFixed(4));
+      wheelState.gasNorm = Number(effectiveGas.toFixed(4));
+      wheelState.brakeNorm = Number(effectiveBrake.toFixed(4));
+      wheelState.reverseNorm = Number(effectiveReverse.toFixed(4));
+      wheelState.driveNorm = Number(driveNorm.toFixed(4));
+      wheelState.gear = gear;
+      wheelState.buttonEvents = safeButtons;
+      wheelState.updatedAt = now;
+
+      // KIỂM TRA ĐANG ĐIỀU KHIỂN:
+      // Khi người lái đang giữ chân ga hoặc đang giữ vô lăng, PHẢI PHÁT SÓNG LIÊN TỤC 50Hz (mỗi 20ms)!
+      // Tuyệt đối không dừng phát chỉ vì deltaChange == 0!
+      const isActiveInput = (
+        Math.abs(wheelState.steerNorm) > 0.02 ||
+        wheelState.gasNorm > 0.02 ||
+        wheelState.brakeNorm > 0.02 ||
+        wheelState.reverseNorm > 0.02 ||
+        safeButtons.length > 0
+      );
+
+      const shouldBroadcastWs = (now - lastBroadcastMs >= 20) && (isActiveInput || neutralSendCount < 8 || safeButtons.length > 0);
+
+      if (shouldBroadcastWs) {
+        lastBroadcastMs = now;
+        if (!isActiveInput) neutralSendCount++;
+        else neutralSendCount = 0;
+        wheelState.seq++;
+
+        if (isActiveInput && now - lastTerminalLogMs > 600) {
+          lastTerminalLogMs = now;
+          console.log(
+            `🛞 [GOG808 50Hz MƯỢT] Lái: ${wheelState.steerNorm.toFixed(2)} | Ga: ${wheelState.gasNorm.toFixed(2)} | Phanh: ${wheelState.brakeNorm.toFixed(2)} | Số ${wheelState.gear} | Kính: ${connectedClients.size}`
+          );
+        }
+
+        const packetStr = JSON.stringify({
+          type: 'WHEEL_BRIDGE_STATE',
+          steerNorm: wheelState.steerNorm,
+          gasNorm: wheelState.gasNorm,
+          brakeNorm: wheelState.brakeNorm,
+          reverseNorm: wheelState.reverseNorm,
+          driveNorm: wheelState.driveNorm,
+          gear: wheelState.gear,
+          buttonEvents: safeButtons,
+          seq: wheelState.seq,
+          payload: {
+            steerNorm: wheelState.steerNorm,
+            gasNorm: wheelState.gasNorm,
+            brakeNorm: wheelState.brakeNorm,
+            reverseNorm: wheelState.reverseNorm,
+            driveNorm: wheelState.driveNorm,
+            gear: wheelState.gear,
+            buttonEvents: safeButtons,
+            seq: wheelState.seq
+          },
+          timestamp: now
+        });
+
+        for (const client of connectedClients) {
+          if (client.readyState === 1 && client.bufferedAmount < 65536) {
+            try { client.send(packetStr); } catch (err) {}
+          }
+        }
+      }
+
+      // Phát lệnh UDP xuống xe RC ESP32 ở tần số 33Hz (30ms)
+      if (now - lastUdpSendMs >= 30) {
+        lastUdpSendMs = now;
+        const steerDeg = Math.round(90 + wheelState.steerNorm * 45);
+        let escUs = 1500;
+        if (wheelState.brakeNorm > 0.04) {
+          escUs = 1500; // Phanh dừng xe
+        } else if (wheelState.driveNorm > 0.04) {
+          escUs = Math.round(1500 + wheelState.driveNorm * 260); // Tiến
+        } else if (wheelState.driveNorm < -0.04) {
+          escUs = Math.round(1500 + wheelState.driveNorm * 220); // Lùi
+        }
+
+        if (typeof sendSafeEsp32Udp === 'function') {
+          try { sendSafeEsp32Udp(steerDeg, escUs); } catch (e) {}
+        } else if (typeof sendUdpCarCommand === 'function') {
+          try { sendUdpCarCommand(steerDeg, escUs); } catch (e) {}
+        } else if (typeof processIncomingControl === 'function') {
+          try {
+            processIncomingControl({
+              type: 'CAR_CONTROL',
+              steer: steerDeg,
+              throttle: escUs,
+              steeringNorm: wheelState.steerNorm,
+              throttleNorm: wheelState.driveNorm,
+              gear: wheelState.gear
+            });
+          } catch (e) {}
+        }
+      }
+    } catch (err) {}
+  }
+
+  // Khởi chạy trình đọc USB WinMM trực tiếp từ Windows
+  if (process.platform === 'win32') {
+    const psScriptPath = path.join(__dirname, 'tools', 'winmm_multislot_reader.ps1');
+    const actualPath = fs.existsSync(psScriptPath) ? psScriptPath : path.join(process.cwd(), 'tools', 'winmm_multislot_reader.ps1');
+
+    if (fs.existsSync(actualPath)) {
+      const ps = spawn('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', actualPath
+      ], { stdio: ['ignore', 'pipe', 'ignore'] });
+
+      ps.on('error', () => {});
+
+      const slots = new Map();
+      let activeSlot = -1;
+
+      const BTN_MAP = [
+        { bit: 4, act: 'TURN_LEFT' },
+        { bit: 14, act: 'TURN_LEFT' },
+        { bit: 5, act: 'TURN_RIGHT' },
+        { bit: 15, act: 'TURN_RIGHT' },
+        { bit: 0, act: 'HORN' },
+        { bit: 8, act: 'HORN' },
+        { bit: 9, act: 'HORN' },
+        { bit: 2, act: 'ENTER_EXIT_CAR' },
+        { bit: 3, act: 'ENTER_EXIT_CAR' },
+        { bit: 1, act: 'CYCLE_SEAT' },
+        { bit: 12, act: 'CYCLE_SEAT' }
+      ];
+
+      let stdoutBuffer = '';
+      ps.stdout.on('data', (chunk) => {
+        try {
+          stdoutBuffer += chunk.toString();
+          if (stdoutBuffer.length > 16384) stdoutBuffer = stdoutBuffer.slice(-4096);
+          const lines = stdoutBuffer.split(/\r?\n/);
+          stdoutBuffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('W500:')) continue;
+            const p = line.split(':');
+            if (p.length < 9) continue;
+
+            const id = Number(p[1]);
+            const rx = Number(p[2]); // Vô lăng
+            const ry = Number(p[3]); // Bàn đạp Ga
+            const rz = Number(p[4]); // Bàn đạp Phanh
+            const rr = Number(p[5]); // Bàn đạp Lùi / Côn
+            const btns = Number(p[8]) >>> 0;
+
+            let st = slots.get(id);
+            if (!st) {
+              st = { samples: 0, restY: ry, restZ: rz, restR: rr, prevBtns: btns };
+              slots.set(id, st);
+              console.log(`✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=${id}`);
             }
 
-            // 4. Tính toán Drive Norm và Xung ESC cho xe RC thật
-            let driveNorm = 0;
-            if (effectiveBrake > 0.04) {
-              driveNorm = 0; // Phanh triệt tiêu hoàn toàn lực kéo, xe dừng hẳn!
-            } else if (effectiveGas > 0.04) {
-              driveNorm = effectiveGas; // Lực kéo tiến [0..+1.0]
-              targetGear = 'D';
-            } else if (effectiveReverse > 0.04) {
-              driveNorm = -effectiveReverse; // Lực kéo lùi [-1.0..0]
-              targetGear = 'R';
+            if (st.samples < 8) {
+              st.restY = Math.round((st.restY + ry) * 0.5);
+              st.restZ = Math.round((st.restZ + rz) * 0.5);
+              st.restR = Math.round((st.restR + rr) * 0.5);
+              st.samples++;
+              if (activeSlot === -1) activeSlot = id;
+              continue;
             }
 
-            wheelState.gear = targetGear;
-            wheelState.reverseNorm = Number(effectiveReverse.toFixed(4));
+            const motion = Math.abs(rx - 32767) + Math.abs(ry - st.restY) + Math.abs(rz - st.restZ) + (btns !== 0 ? 10000 : 0);
+            if (motion > 2500 && activeSlot !== id) {
+              activeSlot = id;
+            }
+            if (id !== activeSlot) continue;
+
+            // Góc lái
+            let steerNorm = (rx - 32767.5) / 32767.5;
+            if (Math.abs(steerNorm) < 0.035) steerNorm = 0;
+            steerNorm = Math.max(-1, Math.min(1, steerNorm));
+
+            let rawGas = 0;
+            let rawBrake = 0;
+            let rawReverse = 0;
+
+            const bGas = (btns & (1 << 7)) !== 0; // Nút Ga digital
+            const bBrake = (btns & (1 << 6)) !== 0; // Nút Phanh digital
+            const bReverse = (btns & (1 << 13)) !== 0 || (btns & (1 << 3)) !== 0 || (btns & (1 << 1)) !== 0; // Nút R
+
+            const deltaY = Math.abs(ry - st.restY);
+            const deltaZ = Math.abs(rz - st.restZ);
+            const deltaR = Math.abs(rr - st.restR);
+
+            // Xử lý 3 bàn đạp độc lập
+            if (deltaZ > 2000 || deltaR > 2000) {
+              rawGas = Math.min(1, Math.max(0, deltaY / (st.restY > 40000 ? 65535 : 32767)));
+              rawBrake = Math.min(1, Math.max(0, deltaZ / (st.restZ > 40000 ? 65535 : 32767)));
+              rawReverse = Math.min(1, Math.max(0, deltaR / (st.restR > 40000 ? 65535 : 32767)));
+            } else if (deltaY > 1800) {
+              if (ry > st.restY + 1800) {
+                rawGas = Math.min(1, (ry - st.restY) / 32767);
+              } else if (ry < st.restY - 1800) {
+                rawBrake = Math.min(1, (st.restY - ry) / 32767);
+              }
+            }
+
+            if (bGas) rawGas = Math.max(rawGas, 1.0);
+            if (bBrake) rawBrake = Math.max(rawBrake, 1.0);
+            if (bReverse) rawReverse = Math.max(rawReverse, 1.0);
 
             const currentButtonEvents = [];
             for (const item of BTN_MAP) {
@@ -2476,7 +2918,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             st.prevBtns = btns;
             global.buttonEvents = currentButtonEvents;
 
-            pushWheelUpdateThrottled(steerNorm, effectiveGas, effectiveBrake, currentButtonEvents);
+            const reqGear = rawReverse > 0.05 || bReverse ? 'R' : 'D';
+            resolveAndBroadcastPedalRules(steerNorm, rawGas, rawBrake, rawReverse, currentButtonEvents, reqGear);
           }
         } catch (err) {}
       });

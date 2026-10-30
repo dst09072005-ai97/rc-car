@@ -33,9 +33,10 @@ public class MultiSlotWheelReader {
             for (uint id = 0; id < 16; id++) {
                 if (joyGetPosEx(id, ref info) == 0) {
                     Console.WriteLine("W500:" + id + ":" + info.dwXpos + ":" + info.dwYpos + ":" + info.dwZpos + ":" + info.dwRpos + ":" + info.dwUpos + ":" + info.dwVpos + ":" + info.dwButtons);
+                    Console.Out.Flush(); // BẮT BUỘC ĐẨY TỨC THỜI — KHÔNG ĐỆM ĐƯỜNG ỐNG
                 }
             }
-            Thread.Sleep(20); // 50Hz
+            Thread.Sleep(20); // 50Hz mượt mà
         }
     }
 }

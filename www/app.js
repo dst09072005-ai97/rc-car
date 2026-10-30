@@ -23196,19 +23196,27 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
 
 
+
 // ============================================================================
-// [PATCH V502 - CLIENT] BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC & HỖ TRỢ GÁN GA QUA WI-FI
-// ƯU TIÊN PHANH ĐÈ GA, PHANH ĐÈ LÙI, HÃM TỐC TRƯỚC KHI LÙI, KHÔNG BAO GIỜ LÙI KHI PHANH
+// [PATCH V503 - CLIENT] TÍCH HỢP BẢNG CHỨC NĂNG GỌN GÀNG (KHÔNG VƯỚNG MENU TRÊN CÙNG),
+// HỖ TRỢ ĐẦY ĐỦ CÁC NÚT GÁN BÀN ĐẠP QUA WI-FI & CHẠY MƯỢT 50Hz KHÔNG KHỰNG
 // ============================================================================
-(function setupV502PerfectPedalsQuestWheel() {
-  if (typeof window === 'undefined' || window.__V502_PERFECT_PEDALS_ACTIVE__) return;
-  window.__V502_PERFECT_PEDALS_ACTIVE__ = true;
+(function setupV503SmoothQuestWheel() {
+  if (typeof window === 'undefined' || window.__V503_SMOOTH_WHEEL_ACTIVE__) return;
+  window.__V503_SMOOTH_WHEEL_ACTIVE__ = true;
 
   window.__V200_DEVICE_ROLE__ = 'META_QUEST';
   window.__DETECTED_DEVICE_TYPE__ = 'META_QUEST';
 
-  const oldBanner = document.getElementById('v400-wifi-status-banner');
-  if (oldBanner) oldBanner.style.display = 'none';
+  // 1. GỠ BỎ TRIỆT ĐỂ MỌI BANNER NỔI LƠ LỬNG TRÊN CÙNG LÀM VƯỚNG NÚT MENU
+  const purgeOldBanners = () => {
+    ['v500-quest-bridge-banner', 'v400-wifi-status-banner', 'v300-apk-top-bridge-bar'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    });
+  };
+  purgeOldBanners();
+  setInterval(purgeOldBanners, 2000);
 
   const bakedIps = Array.isArray(window.__BAKED_LAPTOP_IPS__) ? window.__BAKED_LAPTOP_IPS__ : ['192.168.1.32'];
   let activeLaptopIp = localStorage.getItem('V500_LAPTOP_IP') || localStorage.getItem('pc_server_ip') || bakedIps[0] || '';
@@ -23230,72 +23238,33 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     updatedAt: 0
   };
 
-  // 1. THANH TRẠNG THÁI HIỂN THỊ KÈM NÚT ĐỔI CHIỀU GA & ĐỔI IP
-  function getOrCreateV502Banner() {
-    let el = document.getElementById('v500-quest-bridge-banner');
-    if (el) return el;
+  // 2. CẬP NHẬT TRẠNG THÁI VÀO BẢNG CHỨC NĂNG (FUNCTION PANEL) THAY VÌ NỔI TRÊN MENU
+  function updateStatusInsideFunctionPanel(ok, text) {
+    // Cập nhật ô input IP trong bảng chức năng
+    const pcIpInput = document.getElementById('pc-server-ip-input');
+    if (pcIpInput && activeLaptopIp && !pcIpInput.matches(':focus')) {
+      pcIpInput.value = activeLaptopIp;
+    }
 
-    el = document.createElement('div');
-    el.id = 'v500-quest-bridge-banner';
-    el.style.cssText =
-      'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;display:flex;align-items:center;gap:8px;padding:6px 16px;border-radius:999px;background:rgba(15,23,42,0.95);border:2px solid #38bdf8;color:#38bdf8;font-family:Segoe UI,sans-serif;font-size:12px;font-weight:700;box-shadow:0 6px 24px rgba(0,0,0,0.75);backdrop-filter:blur(6px);user-select:none;';
+    // Cập nhật nhãn trạng thái mạch lái hoặc thông tin trong bảng chức năng
+    const hostStatusEl = document.getElementById('vr-host-status-badge') || document.getElementById('esp32-car-status');
+    if (hostStatusEl) {
+      hostStatusEl.textContent = ok ? `● Laptop: ${activeLaptopIp} (OK)` : '● Đang tìm Laptop...';
+      hostStatusEl.style.color = ok ? '#00ff88' : '#ff9500';
+    }
 
-    const label = document.createElement('span');
-    label.id = 'v500-quest-bridge-label';
-    label.textContent = `📡 Đang kết nối Laptop (${activeLaptopIp || 'dò tự động'} : 8080)...`;
+    const pulseInfo = document.getElementById('esp32-car-pulse-info');
+    if (pulseInfo && ok) {
+      pulseInfo.textContent = `Lái: ${(liveWheel.steerNorm * 45 + 90).toFixed(0)}° | Ga: ${(liveWheel.gasNorm * 100).toFixed(0)}% [Số ${liveWheel.gear}]`;
+      pulseInfo.style.color = '#00ff88';
+    }
 
-    const btnInvert = document.createElement('button');
-    btnInvert.id = 'v502-btn-toggle-invert';
-    btnInvert.textContent = invertGasDrive ? '🔄 Chiều Ga: ĐẢO' : '🔄 Chiều Ga: CHUẨN';
-    btnInvert.style.cssText =
-      'background:#1e293b;color:#facc15;border:1px solid #facc15;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;';
-    btnInvert.onclick = () => {
-      invertGasDrive = !invertGasDrive;
-      localStorage.setItem('V502_INVERT_GAS', String(invertGasDrive));
-      btnInvert.textContent = invertGasDrive ? '🔄 Chiều Ga: ĐẢO' : '🔄 Chiều Ga: CHUẨN';
-    };
-
-    const btnIp = document.createElement('button');
-    btnIp.textContent = 'Đổi IP';
-    btnIp.style.cssText =
-      'background:#0284c7;color:#fff;border:none;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;';
-    btnIp.onclick = () => {
-      const hint = activeLaptopIp || bakedIps.join(', ') || '192.168.1.32';
-      const inp = prompt('Nhập IP Wi-Fi của Laptop đang chạy node server.js:', hint);
-      if (inp && inp.trim()) {
-        const cleanIp = inp.trim().replace(/^https?:\/\//, '').replace(/:\d+$/, '');
-        activeLaptopIp = cleanIp;
-        localStorage.setItem('V500_LAPTOP_IP', cleanIp);
-        localStorage.setItem('pc_server_ip', cleanIp);
-        connectWebSocketToIp(cleanIp);
-      }
-    };
-
-    el.appendChild(label);
-    el.appendChild(btnInvert);
-    el.appendChild(btnIp);
-    document.body.appendChild(el);
-    return el;
-  }
-
-  function updateV502Banner(ok, text) {
-    getOrCreateV502Banner();
-    const banner = document.getElementById('v500-quest-bridge-banner');
-    const label = document.getElementById('v500-quest-bridge-label');
-    if (!banner || !label) return;
-    label.textContent = text;
-    if (ok) {
-      banner.style.borderColor = '#10b981';
-      banner.style.color = '#34d399';
-      banner.style.background = 'rgba(6, 40, 28, 0.95)';
-    } else {
-      banner.style.borderColor = '#f59e0b';
-      banner.style.color = '#fbbf24';
-      banner.style.background = 'rgba(15, 23, 42, 0.95)';
+    if (typeof state !== 'undefined' && state) {
+      state.lastActionLog = text;
     }
   }
 
-  // 2. NẠP DỮ LIỆU VÔ LĂNG TỪ LAPTOP VÀ KÍCH HOẠT HỖ TRỢ GÁN GA
+  // 3. XỬ LÝ DỮ LIỆU TÍN HIỆU VÀ KẾT NỐI TOÀN BỘ CÁC NÚT GÁN BÀN ĐẠP (CALIBRATION)
   function ingestWheelData(w) {
     if (!w) return;
     liveWheel.steerNorm = Number(w.steerNorm ?? w.steer ?? 0) || 0;
@@ -23306,29 +23275,31 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     liveWheel.gear = w.gear || (liveWheel.driveNorm < -0.05 ? 'R' : 'D');
     liveWheel.updatedAt = performance.now();
 
-    // Hỗ trợ nút "🎯 Gán Ga" trên giao diện Kính hoạt động qua sóng Wi-Fi
+    // HỖ TRỢ TẤT CẢ CÁC NÚT GÁN BÀN ĐẠP TRONG BẢNG QUA WI-FI (GÁN GA, GÁN PHANH, GÁN LÙI, GÁN LÁI)
     if (typeof racingWheel !== 'undefined' && racingWheel && racingWheel.calibratingTarget) {
       const target = racingWheel.calibratingTarget;
-      let detectedVal = 0;
-      if (target === 'gas') detectedVal = liveWheel.gasNorm;
-      else if (target === 'brake') detectedVal = liveWheel.brakeNorm;
-      else if (target === 'reverse') detectedVal = liveWheel.reverseNorm;
+      let detectedActivity = false;
 
-      if (detectedVal > 0.25) {
+      if (target === 'gas' && liveWheel.gasNorm > 0.25) detectedActivity = true;
+      else if (target === 'brake' && liveWheel.brakeNorm > 0.25) detectedActivity = true;
+      else if (target === 'reverse' && liveWheel.reverseNorm > 0.25) detectedActivity = true;
+      else if (target === 'steer' && Math.abs(liveWheel.steerNorm) > 0.3) detectedActivity = true;
+
+      if (detectedActivity) {
         racingWheel.calibratingTarget = null;
-        const btn = document.getElementById('btn-calib-pedal-' + target);
+        const btn = document.getElementById('btn-calib-pedal-' + target) || document.getElementById('btn-calib-' + target);
         if (btn) {
           btn.textContent = '✅ Đã Gán Xong!';
           btn.style.background = '#00ff88';
           btn.style.color = '#000';
           setTimeout(() => {
-            btn.textContent = target === 'gas' ? '🎯 Gán Ga' : (target === 'brake' ? '🎯 Gán Phanh' : '🎯 Gán Lùi');
+            btn.textContent = target === 'gas' ? '🎯 Gán Ga' : (target === 'brake' ? '🎯 Gán Phanh' : (target === 'reverse' ? '🎯 Gán Lùi' : '🎯 Gán Lái'));
             btn.style.background = '#1f3354';
-            btn.style.color = target === 'gas' ? '#00ff88' : (target === 'brake' ? '#ff3b30' : '#ffd60a');
+            btn.style.color = target === 'gas' ? '#00ff88' : (target === 'brake' ? '#ff3b30' : (target === 'reverse' ? '#ffd60a' : '#00e5ff'));
           }, 2500);
         }
         if (typeof state !== 'undefined' && state) {
-          state.lastActionLog = `🎯 Đã nhận diện thành công bàn đạp: ${target.toUpperCase()} qua Wi-Fi!`;
+          state.lastActionLog = `🎯 Đã nhận diện & gán thành công ${target.toUpperCase()} qua Wi-Fi!`;
         }
       }
     }
@@ -23356,6 +23327,22 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     rw.gear = liveWheel.gear;
     rw.lastInputTime = performance.now();
 
+    // Cập nhật thanh hiển thị bàn đạp trong bảng chức năng nếu có
+    const barGas = document.getElementById('pedal-gas-bar');
+    if (barGas) barGas.style.width = `${rw.gasPercent}%`;
+    const txtGas = document.getElementById('pedal-gas-txt');
+    if (txtGas) txtGas.textContent = `${rw.gasPercent}%`;
+
+    const barBrake = document.getElementById('pedal-brake-bar');
+    if (barBrake) barBrake.style.width = `${rw.brakePercent}%`;
+    const txtBrake = document.getElementById('pedal-brake-txt');
+    if (txtBrake) txtBrake.textContent = `${rw.brakePercent}%`;
+
+    const barRev = document.getElementById('pedal-reverse-bar');
+    if (barRev) barRev.style.width = `${rw.reversePercent}%`;
+    const txtRev = document.getElementById('pedal-reverse-txt');
+    if (txtRev) txtRev.textContent = `${rw.reversePercent}%`;
+
     if (typeof w.seq === 'number' && w.seq !== lastProcessedSeq) {
       lastProcessedSeq = w.seq;
       if (Array.isArray(w.buttonEvents) && w.buttonEvents.length > 0) {
@@ -23364,7 +23351,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  // 3. TỰ ĐỘNG DÒ TÌM IP LAPTOP QUA WI-FI
+  // 4. TỰ ĐỘNG DÒ TÌM IP LAPTOP
   function getCandidateIps() {
     const list = [];
     if (activeLaptopIp && !list.includes(activeLaptopIp)) list.push(activeLaptopIp);
@@ -23423,10 +23410,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         activeLaptopIp = ip;
         localStorage.setItem('V500_LAPTOP_IP', ip);
         localStorage.setItem('pc_server_ip', ip);
-        updateV502Banner(
-          true,
-          `🟢 ĐÃ KẾT NỐI (${ip}:8080) | LÁI: ${(liveWheel.steerNorm * 100).toFixed(0)}% | SỐ ${liveWheel.gear}`
-        );
+        updateStatusInsideFunctionPanel(true, `🟢 Đã kết nối Laptop (${ip}:8080) — Sẵn sàng lái GOG R808`);
         sock.send(JSON.stringify({ type: 'PLAYER_HELLO', deviceType: 'META_QUEST' }));
       };
 
@@ -23436,10 +23420,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           const msg = JSON.parse(ev.data);
           if (msg && (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT')) {
             ingestWheelData(msg.payload || msg);
-            updateV502Banner(
-              true,
-              `🟢 ĐÃ KẾT NỐI (${ip}:8080) | LÁI: ${(liveWheel.steerNorm * 100).toFixed(0)}% | GA: ${(liveWheel.gasNorm * 100).toFixed(0)}% | SỐ ${liveWheel.gear}`
-            );
           }
         } catch (e) {}
       };
@@ -23467,7 +23447,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         }
       }
 
-      updateV502Banner(false, '🔍 Đang tự động quét Wi-Fi tìm Laptop...');
       const subnets = ['192.168.1', '192.168.0', '192.168.2', '192.168.4', '10.0.0', '172.20.10'];
       for (const prefix of subnets) {
         const batch = [];
@@ -23476,7 +23455,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         for (let i = 0; i < batch.length; i += batchSize) {
           if (isConnected) { isScanningSubnet = false; return; }
           const chunk = batch.slice(i, i + batchSize);
-          const results = await Promise.all(chunk.map(ip => checkHostAlive(ip, 320)));
+          const results = await Promise.all(chunk.map(ip => checkHostAlive(ip, 300)));
           const hit = results.find(Boolean);
           if (hit) {
             activeLaptopIp = hit;
@@ -23492,7 +23471,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     isScanningSubnet = false;
   }
 
-  // 4. HTTP POLLING DỰ PHÒNG 150MS
+  // 5. HTTP POLLING DỰ PHÒNG 150MS
   let pollCandidateIdx = 0;
   setInterval(async () => {
     const ips = getCandidateIps();
@@ -23515,10 +23494,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
             localStorage.setItem('V500_LAPTOP_IP', testIp);
             localStorage.setItem('pc_server_ip', testIp);
             if (data.wheel) ingestWheelData(data.wheel);
-            updateV502Banner(
-              true,
-              `🟢 ĐÃ KẾT NỐI (${testIp}:8080) | LÁI: ${(liveWheel.steerNorm * 100).toFixed(0)}% | SỐ ${liveWheel.gear}`
-            );
+            updateStatusInsideFunctionPanel(true, `🟢 Đã kết nối Laptop (${testIp}:8080)`);
             connectWebSocketToIp(testIp);
           }
         }
@@ -23526,7 +23502,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }, 150);
 
-  // 5. ĐIỀU KHIỂN XE THEO BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC
+  // 6. ĐIỀU KHIỂN XE THEO BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC VÀ MƯỢT MÀ
   function ensureSeatedInDriverChair() {
     if (typeof state === 'undefined' || !state) return;
     if (state.playerMode !== 'DRIVING' || state.seatIndex !== 0) {
@@ -23562,7 +23538,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
-  const carStateV502 = {
+  const carStateV503 = {
     ready: false,
     x: -3.2,
     z: -14.0,
@@ -23571,7 +23547,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   };
 
   setTimeout(() => {
-    getOrCreateV502Banner();
     ensureSeatedInDriverChair();
     const ips = getCandidateIps();
     if (ips[0]) connectWebSocketToIp(ips[0]);
@@ -23608,12 +23583,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     if (state.playerMode === 'DRIVING' && state.seatIndex === 0) {
-      if (!carStateV502.ready) {
-        carStateV502.x = vehicleRoot.position.x;
-        carStateV502.z = vehicleRoot.position.z;
-        carStateV502.heading = state.headingRad || vehicleRoot.rotation.y || 0;
-        carStateV502.velMs = state.velocityMs || 0;
-        carStateV502.ready = true;
+      if (!carStateV503.ready) {
+        carStateV503.x = vehicleRoot.position.x;
+        carStateV503.z = vehicleRoot.position.z;
+        carStateV503.heading = state.headingRad || vehicleRoot.rotation.y || 0;
+        carStateV503.velMs = state.velocityMs || 0;
+        carStateV503.ready = true;
       }
 
       state.engineRunning = true;
@@ -23622,48 +23597,46 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(state.steeringAngleDeg);
       }
 
-      // ======================================================================
-      // THỰC THI BỘ QUY TẮC BÀN ĐẠP (RULES ENGINE CHO XE ẢO)
-      // ======================================================================
+      // THỰC THI BỘ QUY TẮC BÀN ĐẠP (RULES ENGINE XE ẢO)
       // RULE 1: Vừa Ga vừa Phanh -> Ưu tiên Phanh dừng xe!
       if (brake > 0.04 && gas > 0.04) {
         state.throttlePercent = 0;
         state.brakePercent = Math.round(brake * 100);
-        carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 10.0);
-        if (Math.abs(carStateV502.velMs) < 0.05) carStateV502.velMs = 0;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
       }
       // RULE 2: Vừa Lùi vừa Phanh -> Ưu tiên Phanh dừng xe!
       else if (brake > 0.04 && (reverse > 0.04 || isReverseGear)) {
         state.throttlePercent = 0;
         state.brakePercent = Math.round(brake * 100);
-        carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 10.0);
-        if (Math.abs(carStateV502.velMs) < 0.05) carStateV502.velMs = 0;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
       }
       // RULE 3: Vừa Ga vừa Lùi -> Ưu tiên giảm tốc về 0 trước!
       else if (gas > 0.04 && (reverse > 0.04 || isReverseGear)) {
         state.throttlePercent = 0;
         state.brakePercent = 90;
-        carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 8.0);
-        if (Math.abs(carStateV502.velMs) < 0.05) carStateV502.velMs = 0;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 8.0);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
       }
       // RULE 4: Đạp Ga Tiến (Gas Alone) -> TIẾN TỚI!
       else if (gas > 0.03 && !isReverseGear) {
         state.gearIndex = 3; // D (Tiến)
         state.throttlePercent = Math.round(gas * 100);
         state.brakePercent = 0;
-        if (carStateV502.velMs < -0.1) {
-          carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 10.0);
+        if (carStateV503.velMs < -0.1) {
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
         } else {
           const targetForwardVel = gas * 24.0;
-          carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, targetForwardVel, dt * 4.5);
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, targetForwardVel, dt * 5.0);
         }
       }
       // RULE 5: Đạp Phanh (Brake Alone) -> PHANH DỪNG XE (KHÔNG BAO GIỜ LÙI KHI PHANH!)
       else if (brake > 0.03) {
         state.throttlePercent = 0;
         state.brakePercent = Math.round(brake * 100);
-        carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 8.5);
-        if (Math.abs(carStateV502.velMs) < 0.05) carStateV502.velMs = 0;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 8.5);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
       }
       // RULE 6: Đạp Lùi (Reverse Alone) -> LÙI XE VỀ SAU!
       else if (reverse > 0.03 || isReverseGear) {
@@ -23671,37 +23644,520 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         state.gearIndex = 1; // R (Lùi)
         state.throttlePercent = Math.round(revVal * 100);
         state.brakePercent = 0;
-        if (carStateV502.velMs > 0.1) {
-          carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 10.0);
+        if (carStateV503.velMs > 0.1) {
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
         } else {
           const targetRevVel = -revVal * 11.0;
-          carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, targetRevVel, dt * 5.0);
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, targetRevVel, dt * 5.5);
         }
       }
       // RULE 7: Nhả toàn bộ chân ga/phanh -> Giảm tốc tự nhiên theo quán tính
       else {
         state.throttlePercent = 0;
         state.brakePercent = 0;
-        carStateV502.velMs = THREE.MathUtils.lerp(carStateV502.velMs, 0, dt * 3.5);
-        if (Math.abs(carStateV502.velMs) < 0.03) carStateV502.velMs = 0;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 3.5);
+        if (Math.abs(carStateV503.velMs) < 0.03) carStateV503.velMs = 0;
       }
 
-      // Xoay bánh lái
-      if (Math.abs(steer) > 0.025 && Math.abs(carStateV502.velMs) > 0.03) {
-        const sign = carStateV502.velMs < -0.03 ? -1 : 1;
-        carStateV502.heading -= steer * 1.95 * sign * dt;
+      if (Math.abs(steer) > 0.025 && Math.abs(carStateV503.velMs) > 0.03) {
+        const sign = carStateV503.velMs < -0.03 ? -1 : 1;
+        carStateV503.heading -= steer * 1.95 * sign * dt;
       }
 
-      carStateV502.x -= Math.sin(carStateV502.heading) * carStateV502.velMs * dt;
-      carStateV502.z -= Math.cos(carStateV502.heading) * carStateV502.velMs * dt;
+      carStateV503.x -= Math.sin(carStateV503.heading) * carStateV503.velMs * dt;
+      carStateV503.z -= Math.cos(carStateV503.heading) * carStateV503.velMs * dt;
 
-      vehicleRoot.position.x = carStateV502.x;
-      vehicleRoot.position.z = carStateV502.z;
-      vehicleRoot.rotation.y = carStateV502.heading;
+      vehicleRoot.position.x = carStateV503.x;
+      vehicleRoot.position.z = carStateV503.z;
+      vehicleRoot.rotation.y = carStateV503.heading;
 
-      state.headingRad = carStateV502.heading;
-      state.velocityMs = carStateV502.velMs;
-      state.speedKmh = carStateV502.velMs * 3.6;
+      state.headingRad = carStateV503.heading;
+      state.velocityMs = carStateV503.velMs;
+      state.speedKmh = carStateV503.velMs * 3.6;
+    }
+  };
+})();
+
+// ============================================================================
+// [PATCH V503 - CLIENT] TÍCH HỢP BẢNG CHỨC NĂNG GỌN GÀNG (KHÔNG VƯỚNG MENU TRÊN CÙNG),
+// HỖ TRỢ ĐẦY ĐỦ CÁC NÚT GÁN BÀN ĐẠP QUA WI-FI & CHẠY MƯỢT 50Hz KHÔNG KHỰNG
+// ============================================================================
+(function setupV503SmoothQuestWheel() {
+  if (typeof window === 'undefined' || window.__V503_SMOOTH_WHEEL_ACTIVE__) return;
+  window.__V503_SMOOTH_WHEEL_ACTIVE__ = true;
+
+  window.__V200_DEVICE_ROLE__ = 'META_QUEST';
+  window.__DETECTED_DEVICE_TYPE__ = 'META_QUEST';
+
+  // 1. GỠ BỎ TRIỆT ĐỂ MỌI BANNER NỔI LƠ LỬNG TRÊN CÙNG LÀM VƯỚNG NÚT MENU
+  const purgeOldBanners = () => {
+    ['v500-quest-bridge-banner', 'v400-wifi-status-banner', 'v300-apk-top-bridge-bar'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        if (typeof el.remove === 'function') el.remove();
+        else if (el.parentNode && typeof el.parentNode.removeChild === 'function') el.parentNode.removeChild(el);
+      }
+    });
+  };
+  purgeOldBanners();
+  setInterval(purgeOldBanners, 2000);
+
+  const bakedIps = Array.isArray(window.__BAKED_LAPTOP_IPS__) ? window.__BAKED_LAPTOP_IPS__ : ['192.168.1.32'];
+  let activeLaptopIp = localStorage.getItem('V500_LAPTOP_IP') || localStorage.getItem('pc_server_ip') || bakedIps[0] || '';
+  if (activeLaptopIp === 'localhost' || activeLaptopIp === '127.0.0.1') activeLaptopIp = '192.168.1.32';
+
+  let wsConn = null;
+  let isConnected = false;
+  let lastProcessedSeq = -1;
+  let isScanningSubnet = false;
+  let invertGasDrive = localStorage.getItem('V502_INVERT_GAS') === 'true';
+
+  const liveWheel = {
+    steerNorm: 0,
+    gasNorm: 0,
+    brakeNorm: 0,
+    reverseNorm: 0,
+    driveNorm: 0,
+    gear: 'D',
+    updatedAt: 0
+  };
+
+  // 2. CẬP NHẬT TRẠNG THÁI VÀO BẢNG CHỨC NĂNG (FUNCTION PANEL) THAY VÌ NỔI TRÊN MENU
+  function updateStatusInsideFunctionPanel(ok, text) {
+    // Cập nhật ô input IP trong bảng chức năng
+    const pcIpInput = document.getElementById('pc-server-ip-input');
+    if (pcIpInput && activeLaptopIp && !(typeof pcIpInput.matches === 'function' && pcIpInput.matches(':focus'))) {
+      pcIpInput.value = activeLaptopIp;
+    }
+
+    // Cập nhật nhãn trạng thái mạch lái hoặc thông tin trong bảng chức năng
+    const hostStatusEl = document.getElementById('vr-host-status-badge') || document.getElementById('esp32-car-status');
+    if (hostStatusEl) {
+      hostStatusEl.textContent = ok ? `● Laptop: ${activeLaptopIp} (OK)` : '● Đang tìm Laptop...';
+      hostStatusEl.style.color = ok ? '#00ff88' : '#ff9500';
+    }
+
+    const pulseInfo = document.getElementById('esp32-car-pulse-info');
+    if (pulseInfo && ok) {
+      pulseInfo.textContent = `Lái: ${(liveWheel.steerNorm * 45 + 90).toFixed(0)}° | Ga: ${(liveWheel.gasNorm * 100).toFixed(0)}% [Số ${liveWheel.gear}]`;
+      pulseInfo.style.color = '#00ff88';
+    }
+
+    if (typeof state !== 'undefined' && state) {
+      state.lastActionLog = text;
+    }
+  }
+
+  // 3. XỬ LÝ DỮ LIỆU TÍN HIỆU VÀ KẾT NỐI TOÀN BỘ CÁC NÚT GÁN BÀN ĐẠP (CALIBRATION)
+  function ingestWheelData(w) {
+    if (!w) return;
+    liveWheel.steerNorm = Number(w.steerNorm ?? w.steer ?? 0) || 0;
+    liveWheel.gasNorm = Number(w.gasNorm ?? 0) || 0;
+    liveWheel.brakeNorm = Number(w.brakeNorm ?? w.brake ?? 0) || 0;
+    liveWheel.reverseNorm = Number(w.reverseNorm ?? (w.gear === 'R' ? w.brakeNorm : 0)) || 0;
+    liveWheel.driveNorm = Number(w.driveNorm ?? (liveWheel.gasNorm - liveWheel.brakeNorm)) || 0;
+    liveWheel.gear = w.gear || (liveWheel.driveNorm < -0.05 ? 'R' : 'D');
+    liveWheel.updatedAt = performance.now();
+
+    // HỖ TRỢ TẤT CẢ CÁC NÚT GÁN BÀN ĐẠP TRONG BẢNG QUA WI-FI (GÁN GA, GÁN PHANH, GÁN LÙI, GÁN LÁI)
+    if (typeof racingWheel !== 'undefined' && racingWheel && racingWheel.calibratingTarget) {
+      const target = racingWheel.calibratingTarget;
+      let detectedActivity = false;
+
+      if (target === 'gas' && liveWheel.gasNorm > 0.25) detectedActivity = true;
+      else if (target === 'brake' && liveWheel.brakeNorm > 0.25) detectedActivity = true;
+      else if (target === 'reverse' && liveWheel.reverseNorm > 0.25) detectedActivity = true;
+      else if (target === 'steer' && Math.abs(liveWheel.steerNorm) > 0.3) detectedActivity = true;
+
+      if (detectedActivity) {
+        racingWheel.calibratingTarget = null;
+        const btn = document.getElementById('btn-calib-pedal-' + target) || document.getElementById('btn-calib-' + target);
+        if (btn) {
+          btn.textContent = '✅ Đã Gán Xong!';
+          btn.style.background = '#00ff88';
+          btn.style.color = '#000';
+          setTimeout(() => {
+            btn.textContent = target === 'gas' ? '🎯 Gán Ga' : (target === 'brake' ? '🎯 Gán Phanh' : (target === 'reverse' ? '🎯 Gán Lùi' : '🎯 Gán Lái'));
+            btn.style.background = '#1f3354';
+            btn.style.color = target === 'gas' ? '#00ff88' : (target === 'brake' ? '#ff3b30' : (target === 'reverse' ? '#ffd60a' : '#00e5ff'));
+          }, 2500);
+        }
+        if (typeof state !== 'undefined' && state) {
+          state.lastActionLog = `🎯 Đã nhận diện & gán thành công ${target.toUpperCase()} qua Wi-Fi!`;
+        }
+      }
+    }
+
+    if (!window._racingWheel) {
+      window._racingWheel = {
+        connected: true,
+        deviceName: 'GOG R808 Native Bridge',
+        steerAngleDeg: 0,
+        rawSteer: 0,
+        gasPercent: 0,
+        brakePercent: 0,
+        reversePercent: 0,
+        gear: 'D',
+        lastInputTime: performance.now()
+      };
+    }
+    const rw = window._racingWheel;
+    rw.connected = true;
+    rw.rawSteer = liveWheel.steerNorm;
+    rw.steerAngleDeg = liveWheel.steerNorm * 540;
+    rw.gasPercent = Math.round(liveWheel.gasNorm * 100);
+    rw.brakePercent = Math.round(liveWheel.brakeNorm * 100);
+    rw.reversePercent = Math.round(liveWheel.reverseNorm * 100);
+    rw.gear = liveWheel.gear;
+    rw.lastInputTime = performance.now();
+
+    // Cập nhật thanh hiển thị bàn đạp trong bảng chức năng nếu có
+    const barGas = document.getElementById('pedal-gas-bar');
+    if (barGas) barGas.style.width = `${rw.gasPercent}%`;
+    const txtGas = document.getElementById('pedal-gas-txt');
+    if (txtGas) txtGas.textContent = `${rw.gasPercent}%`;
+
+    const barBrake = document.getElementById('pedal-brake-bar');
+    if (barBrake) barBrake.style.width = `${rw.brakePercent}%`;
+    const txtBrake = document.getElementById('pedal-brake-txt');
+    if (txtBrake) txtBrake.textContent = `${rw.brakePercent}%`;
+
+    const barRev = document.getElementById('pedal-reverse-bar');
+    if (barRev) barRev.style.width = `${rw.reversePercent}%`;
+    const txtRev = document.getElementById('pedal-reverse-txt');
+    if (txtRev) txtRev.textContent = `${rw.reversePercent}%`;
+
+    if (typeof w.seq === 'number' && w.seq !== lastProcessedSeq) {
+      lastProcessedSeq = w.seq;
+      if (Array.isArray(w.buttonEvents) && w.buttonEvents.length > 0) {
+        w.buttonEvents.forEach((act) => triggerWheelAction(act));
+      }
+    }
+  }
+
+  // 4. TỰ ĐỘNG DÒ TÌM IP LAPTOP
+  function getCandidateIps() {
+    const list = [];
+    if (activeLaptopIp && !list.includes(activeLaptopIp)) list.push(activeLaptopIp);
+    const saved = localStorage.getItem('V500_LAPTOP_IP') || localStorage.getItem('pc_server_ip');
+    if (saved && saved !== 'localhost' && saved !== '127.0.0.1' && !list.includes(saved)) list.push(saved);
+    bakedIps.forEach(ip => {
+      if (ip && ip !== 'localhost' && ip !== '127.0.0.1' && !list.includes(ip)) list.push(ip);
+    });
+    if (location.hostname && location.hostname !== 'localhost' && !list.includes(location.hostname)) {
+      list.push(location.hostname);
+    }
+    return list;
+  }
+
+  async function checkHostAlive(ip, timeoutMs = 450) {
+    if (!ip || ip === 'localhost' || ip === '127.0.0.1') return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`http://${ip}:8080/api/bridge-ping`, {
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ok) {
+          if (data.wheel) ingestWheelData(data.wheel);
+          return ip;
+        }
+      }
+    } catch (e) {
+      clearTimeout(timer);
+    }
+    return null;
+  }
+
+  function connectWebSocketToIp(ip) {
+    if (!ip || ip === 'localhost' || ip === '127.0.0.1') return;
+    if (wsConn && wsConn.readyState === WebSocket.OPEN && activeLaptopIp === ip) return;
+    if (wsConn) {
+      try { wsConn.close(); } catch (e) {}
+    }
+
+    try {
+      const sock = new WebSocket(`ws://${ip}:8080`);
+      wsConn = sock;
+      window.__v200Socket = sock;
+      window.multiplayerWs = sock;
+      window.rcSocket = sock;
+
+      sock.onopen = () => {
+        isConnected = true;
+        activeLaptopIp = ip;
+        localStorage.setItem('V500_LAPTOP_IP', ip);
+        localStorage.setItem('pc_server_ip', ip);
+        updateStatusInsideFunctionPanel(true, `🟢 Đã kết nối Laptop (${ip}:8080) — Sẵn sàng lái GOG R808`);
+        sock.send(JSON.stringify({ type: 'PLAYER_HELLO', deviceType: 'META_QUEST' }));
+      };
+
+      sock.onmessage = (ev) => {
+        if (typeof ev.data !== 'string') return;
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg && (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT')) {
+            ingestWheelData(msg.payload || msg);
+          }
+        } catch (e) {}
+      };
+
+      sock.onclose = () => { isConnected = false; };
+      sock.onerror = () => { try { sock.close(); } catch (e) {} };
+    } catch (e) {}
+  }
+
+  async function performDeepNetworkDiscovery() {
+    if (isScanningSubnet || isConnected) return;
+    isScanningSubnet = true;
+
+    try {
+      const candidates = getCandidateIps();
+      for (const ip of candidates) {
+        const found = await checkHostAlive(ip, 500);
+        if (found) {
+          activeLaptopIp = found;
+          localStorage.setItem('V500_LAPTOP_IP', found);
+          localStorage.setItem('pc_server_ip', found);
+          connectWebSocketToIp(found);
+          isScanningSubnet = false;
+          return;
+        }
+      }
+
+      const subnets = ['192.168.1', '192.168.0', '192.168.2', '192.168.4', '10.0.0', '172.20.10'];
+      for (const prefix of subnets) {
+        const batch = [];
+        for (let i = 1; i <= 254; i++) batch.push(`${prefix}.${i}`);
+        const batchSize = 35;
+        for (let i = 0; i < batch.length; i += batchSize) {
+          if (isConnected) { isScanningSubnet = false; return; }
+          const chunk = batch.slice(i, i + batchSize);
+          const results = await Promise.all(chunk.map(ip => checkHostAlive(ip, 300)));
+          const hit = results.find(Boolean);
+          if (hit) {
+            activeLaptopIp = hit;
+            localStorage.setItem('V500_LAPTOP_IP', hit);
+            localStorage.setItem('pc_server_ip', hit);
+            connectWebSocketToIp(hit);
+            isScanningSubnet = false;
+            return;
+          }
+        }
+      }
+    } catch (e) {}
+    isScanningSubnet = false;
+  }
+
+  // 5. HTTP POLLING DỰ PHÒNG 150MS
+  let pollCandidateIdx = 0;
+  setInterval(async () => {
+    const ips = getCandidateIps();
+    if (ips.length === 0) return;
+
+    const testIp = isConnected && activeLaptopIp ? activeLaptopIp : ips[pollCandidateIdx % ips.length];
+    if (!isConnected) {
+      pollCandidateIdx++;
+      connectWebSocketToIp(testIp);
+    }
+
+    if (!wsConn || wsConn.readyState !== WebSocket.OPEN) {
+      try {
+        const res = await fetch(`http://${testIp}:8080/api/bridge-ping`, { mode: 'cors', cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.ok) {
+            isConnected = true;
+            activeLaptopIp = testIp;
+            localStorage.setItem('V500_LAPTOP_IP', testIp);
+            localStorage.setItem('pc_server_ip', testIp);
+            if (data.wheel) ingestWheelData(data.wheel);
+            updateStatusInsideFunctionPanel(true, `🟢 Đã kết nối Laptop (${testIp}:8080)`);
+            connectWebSocketToIp(testIp);
+          }
+        }
+      } catch (e) {}
+    }
+  }, 150);
+
+  // 6. ĐIỀU KHIỂN XE THEO BỘ QUY TẮC BÀN ĐẠP CHUẨN XÁC VÀ MƯỢT MÀ
+  function ensureSeatedInDriverChair() {
+    if (typeof state === 'undefined' || !state) return;
+    if (state.playerMode !== 'DRIVING' || state.seatIndex !== 0) {
+      state.playerMode = 'DRIVING';
+      state.seatIndex = 0;
+      state.engineRunning = true;
+      if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
+      if (typeof chassisGroup !== 'undefined' && typeof cameraRig !== 'undefined' && chassisGroup && cameraRig) {
+        chassisGroup.add(cameraRig);
+        cameraRig.position.set(-0.38, 0.88, 0.08);
+        cameraRig.rotation.set(0, 0, 0);
+      }
+    }
+  }
+
+  function triggerWheelAction(act) {
+    if (typeof state === 'undefined' || !state) return;
+    if (act === 'TURN_LEFT') {
+      state.turnSignal = state.turnSignal === 'LEFT' ? 'OFF' : 'LEFT';
+      state.turnSignalLeft = state.turnSignal === 'LEFT';
+      if (state.turnSignalLeft) state.turnSignalRight = false;
+    } else if (act === 'TURN_RIGHT') {
+      state.turnSignal = state.turnSignal === 'RIGHT' ? 'OFF' : 'RIGHT';
+      state.turnSignalRight = state.turnSignal === 'RIGHT';
+      if (state.turnSignalRight) state.turnSignalLeft = false;
+    } else if (act === 'HORN') {
+      if (typeof playSmartVehicleHornSound === 'function') playSmartVehicleHornSound('CAR');
+      else if (typeof playHornSound === 'function') playHornSound();
+    } else if (act === 'ENTER_EXIT_CAR') {
+      ensureSeatedInDriverChair();
+    } else if (act === 'CYCLE_SEAT' && state.playerMode === 'DRIVING') {
+      state.seatIndex = ((state.seatIndex || 0) + 1) % 4;
+    }
+  }
+
+  const carStateV503 = {
+    ready: false,
+    x: -3.2,
+    z: -14.0,
+    heading: 0,
+    velMs: 0
+  };
+
+  setTimeout(() => {
+    ensureSeatedInDriverChair();
+    const ips = getCandidateIps();
+    if (ips[0]) connectWebSocketToIp(ips[0]);
+    performDeepNetworkDiscovery();
+  }, 400);
+
+  setInterval(() => {
+    if (!isConnected) performDeepNetworkDiscovery();
+  }, 3500);
+
+  const prevBeforeRender = scene.onBeforeRender;
+  let lastFrameMs = performance.now();
+
+  scene.onBeforeRender = function (rendererInst, sceneInst, cameraInst) {
+    if (typeof prevBeforeRender === 'function') {
+      prevBeforeRender(rendererInst, sceneInst, cameraInst);
+    }
+
+    const now = performance.now();
+    const dt = Math.min(Math.max((now - lastFrameMs) / 1000, 0.001), 0.05);
+    lastFrameMs = now;
+
+    if (now - liveWheel.updatedAt > 800) return;
+    if (typeof state === 'undefined' || !state || typeof vehicleRoot === 'undefined' || !vehicleRoot) return;
+
+    let steer = liveWheel.steerNorm;
+    let gas = invertGasDrive ? liveWheel.brakeNorm : liveWheel.gasNorm;
+    let brake = invertGasDrive ? liveWheel.gasNorm : liveWheel.brakeNorm;
+    let reverse = liveWheel.reverseNorm || (liveWheel.gear === 'R' ? Math.max(0, -liveWheel.driveNorm) : 0);
+    const isReverseGear = (liveWheel.gear === 'R' || liveWheel.driveNorm < -0.05);
+
+    if (Math.abs(steer) > 0.02 || gas > 0.02 || brake > 0.02 || reverse > 0.02) {
+      ensureSeatedInDriverChair();
+    }
+
+    if (state.playerMode === 'DRIVING' && state.seatIndex === 0) {
+      if (!carStateV503.ready) {
+        carStateV503.x = vehicleRoot.position.x;
+        carStateV503.z = vehicleRoot.position.z;
+        carStateV503.heading = state.headingRad || vehicleRoot.rotation.y || 0;
+        carStateV503.velMs = state.velocityMs || 0;
+        carStateV503.ready = true;
+      }
+
+      state.engineRunning = true;
+      state.steeringAngleDeg = steer * 540;
+      if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
+        steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(state.steeringAngleDeg);
+      }
+
+      // THỰC THI BỘ QUY TẮC BÀN ĐẠP (RULES ENGINE XE ẢO)
+      // RULE 1: Vừa Ga vừa Phanh -> Ưu tiên Phanh dừng xe!
+      if (brake > 0.04 && gas > 0.04) {
+        state.throttlePercent = 0;
+        state.brakePercent = Math.round(brake * 100);
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
+      }
+      // RULE 2: Vừa Lùi vừa Phanh -> Ưu tiên Phanh dừng xe!
+      else if (brake > 0.04 && (reverse > 0.04 || isReverseGear)) {
+        state.throttlePercent = 0;
+        state.brakePercent = Math.round(brake * 100);
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
+      }
+      // RULE 3: Vừa Ga vừa Lùi -> Ưu tiên giảm tốc về 0 trước!
+      else if (gas > 0.04 && (reverse > 0.04 || isReverseGear)) {
+        state.throttlePercent = 0;
+        state.brakePercent = 90;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 8.0);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
+      }
+      // RULE 4: Đạp Ga Tiến (Gas Alone) -> TIẾN TỚI!
+      else if (gas > 0.03 && !isReverseGear) {
+        state.gearIndex = 3; // D (Tiến)
+        state.throttlePercent = Math.round(gas * 100);
+        state.brakePercent = 0;
+        if (carStateV503.velMs < -0.1) {
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
+        } else {
+          const targetForwardVel = gas * 24.0;
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, targetForwardVel, dt * 5.0);
+        }
+      }
+      // RULE 5: Đạp Phanh (Brake Alone) -> PHANH DỪNG XE (KHÔNG BAO GIỜ LÙI KHI PHANH!)
+      else if (brake > 0.03) {
+        state.throttlePercent = 0;
+        state.brakePercent = Math.round(brake * 100);
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 8.5);
+        if (Math.abs(carStateV503.velMs) < 0.05) carStateV503.velMs = 0;
+      }
+      // RULE 6: Đạp Lùi (Reverse Alone) -> LÙI XE VỀ SAU!
+      else if (reverse > 0.03 || isReverseGear) {
+        const revVal = reverse > 0.03 ? reverse : Math.abs(liveWheel.driveNorm);
+        state.gearIndex = 1; // R (Lùi)
+        state.throttlePercent = Math.round(revVal * 100);
+        state.brakePercent = 0;
+        if (carStateV503.velMs > 0.1) {
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 10.0);
+        } else {
+          const targetRevVel = -revVal * 11.0;
+          carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, targetRevVel, dt * 5.5);
+        }
+      }
+      // RULE 7: Nhả toàn bộ chân ga/phanh -> Giảm tốc tự nhiên theo quán tính
+      else {
+        state.throttlePercent = 0;
+        state.brakePercent = 0;
+        carStateV503.velMs = THREE.MathUtils.lerp(carStateV503.velMs, 0, dt * 3.5);
+        if (Math.abs(carStateV503.velMs) < 0.03) carStateV503.velMs = 0;
+      }
+
+      if (Math.abs(steer) > 0.025 && Math.abs(carStateV503.velMs) > 0.03) {
+        const sign = carStateV503.velMs < -0.03 ? -1 : 1;
+        carStateV503.heading -= steer * 1.95 * sign * dt;
+      }
+
+      carStateV503.x -= Math.sin(carStateV503.heading) * carStateV503.velMs * dt;
+      carStateV503.z -= Math.cos(carStateV503.heading) * carStateV503.velMs * dt;
+
+      vehicleRoot.position.x = carStateV503.x;
+      vehicleRoot.position.z = carStateV503.z;
+      vehicleRoot.rotation.y = carStateV503.heading;
+
+      state.headingRad = carStateV503.heading;
+      state.velocityMs = carStateV503.velMs;
+      state.speedKmh = carStateV503.velMs * 3.6;
     }
   };
 })();
