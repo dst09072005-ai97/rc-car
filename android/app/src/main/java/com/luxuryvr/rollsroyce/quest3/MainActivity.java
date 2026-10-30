@@ -10,6 +10,11 @@ import android.widget.Toast;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
+    @Override
+    public void onStart() {
+        super.onStart();
+        setupVrBridge();
+    }
     private boolean isVrBridgeRegistered = false;
 
     @Override

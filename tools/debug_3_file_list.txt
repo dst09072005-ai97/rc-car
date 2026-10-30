@@ -1315,6 +1315,7 @@ D:\XE_RC_FPV_V10\server\tests\test_contract.js	server/tests/test_contract.js
 D:\XE_RC_FPV_V10\server.js	server.js
 D:\XE_RC_FPV_V10\start_all.bat	start_all.bat
 D:\XE_RC_FPV_V10\tools\apply_patch_v400.js	tools/apply_patch_v400.js
+D:\XE_RC_FPV_V10\tools\apply_patch_v500.js	tools/apply_patch_v500.js
 D:\XE_RC_FPV_V10\tools\apply_systemic_fix.js	tools/apply_systemic_fix.js
 D:\XE_RC_FPV_V10\tools\apply_v190_cabin_rules.js	tools/apply_v190_cabin_rules.js
 D:\XE_RC_FPV_V10\tools\apply_v300_perfect_hybrid.js	tools/apply_v300_perfect_hybrid.js
@@ -1352,6 +1353,7 @@ D:\XE_RC_FPV_V10\tools\test_v190_cabin_rules.js	tools/test_v190_cabin_rules.js
 D:\XE_RC_FPV_V10\tools\test_winmm.ps1	tools/test_winmm.ps1
 D:\XE_RC_FPV_V10\tools\v260_master_module.js	tools/v260_master_module.js
 D:\XE_RC_FPV_V10\tools\verify_glb_metrics.js	tools/verify_glb_metrics.js
+D:\XE_RC_FPV_V10\tools\winmm_multislot_reader.ps1	tools/winmm_multislot_reader.ps1
 D:\XE_RC_FPV_V10\tools\winmm_wheel_reader.ps1	tools/winmm_wheel_reader.ps1
 D:\XE_RC_FPV_V10\tools\xr-doctor.js	tools/xr-doctor.js
 D:\XE_RC_FPV_V10\v0_baseline\esp32cam\esp32cam.ino	v0_baseline/esp32cam/esp32cam.ino
