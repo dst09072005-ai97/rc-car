@@ -3,125 +3,271 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Rolls-Royce VR V100 - True WebXR 360, Draggable HUD/YouTube, Dual ESP32 Cam & Multi-Car</title>
+  <title>Rolls-Royce VR V95 - Quest Controller 3D Raycast, Real YouTube App & 3D/2D Switcher</title>
   <style>
     body { margin: 0; overflow: hidden; background: #03060c; font-family: 'Segoe UI', sans-serif; color: #fff; user-select: none; }
 
+    /* Hiệu ứng Chớp Mắt khi Mở cửa lên/xuống xe */
     #eyelid-top, #eyelid-bottom {
       position: fixed; left: 0; width: 100vw; height: 0vh;
       background: #000; z-index: 9999; pointer-events: none;
-      transition: height 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     #eyelid-top { top: 0; border-bottom: 2px solid #222; }
     #eyelid-bottom { bottom: 0; border-top: 2px solid #222; }
     body.blinking #eyelid-top, body.blinking #eyelid-bottom { height: 52vh; }
 
-    /* Thanh công cụ cố định phía trên */
+    /* Thanh công cụ nổi ở mép trên */
     #top-bar {
-      position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
-      z-index: 150; display: flex; gap: 6px; background: rgba(6, 10, 18, 0.92);
-      padding: 6px 12px; border-radius: 28px; border: 1px solid #d4af37;
-      backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.8);
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 120; display: flex; gap: 8px; background: rgba(6, 10, 18, 0.90);
+      padding: 6px 14px; border-radius: 30px; border: 1px solid #d4af37;
+      backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.75);
       white-space: nowrap;
     }
     .bar-btn {
-      padding: 6px 11px; border-radius: 18px; border: none; font-size: 11.5px;
+      padding: 7px 13px; border-radius: 20px; border: none; font-size: 12px;
       font-weight: bold; cursor: pointer; transition: 0.15s;
     }
     .btn-guide-toggle { background: #00e5ff; color: #000; }
     .btn-func-toggle { background: #d4af37; color: #000; }
     .btn-yt-open { background: #ff0000; color: #fff; }
-    .btn-hud-toggle { background: #4cd964; color: #000; }
-    .btn-lean-toggle { background: #9b5de5; color: #fff; }
+    .btn-hud3d-toggle { background: #2b3548; color: #fff; border: 1px solid #00e5ff; }
     .btn-enter-360vr {
       background: linear-gradient(135deg, #00ff88, #00b4d8); color: #000;
-      font-size: 12px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.55);
+      font-size: 12.5px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+    }
+    .btn-exit-2d {
+      background: linear-gradient(135deg, #ff9500, #ff3b30); color: #fff;
+      font-size: 12.5px; box-shadow: 0 0 15px rgba(255, 59, 48, 0.5);
     }
 
-    /* Các cửa sổ nổi (HUD, Hướng dẫn, Chức năng, YouTube) đều có thanh kéo thả (Drag Bar) */
+    /* Hai bảng Hướng Dẫn & Chức Năng */
     .floating-panel {
-      position: fixed; z-index: 40;
-      background: rgba(8, 12, 22, 0.93); border: 1px solid #00e5ff;
-      padding: 10px 12px; border-radius: 10px; width: 375px; max-height: 76vh;
+      position: fixed; top: 56px; z-index: 30;
+      background: rgba(8, 12, 22, 0.92); border: 1px solid #00e5ff;
+      padding: 12px 14px; border-radius: 10px; width: 380px; max-height: 78vh;
       overflow-y: auto; backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(0,0,0,0.85);
     }
-    #guide-panel { top: 52px; left: 10px; }
-    #function-panel { top: 52px; right: 10px; border-color: #d4af37; width: 415px; }
+    #guide-panel { left: 12px; }
+    #function-panel { right: 12px; border-color: #d4af37; width: 410px; }
     .panel-hidden { display: none !important; }
 
-    /* BẢNG HUD DIGITAL TWIN KÉO THẢ ĐƯỢC (Và tự reset về vị trí gốc khi Ẩn -> Hiện lại) */
-    #draggable-hud-window {
-      position: fixed; left: 16px; bottom: 130px; width: 420px; z-index: 60;
-      background: rgba(6, 12, 24, 0.92); border: 2px solid #00e5ff;
-      border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.85); overflow: hidden;
-    }
-    .drag-handle-bar {
-      background: linear-gradient(90deg, #00d2ff, #0066ff); color: #000;
-      padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: grab;
-      display: flex; justify-content: space-between; align-items: center;
-      touch-action: none;
-    }
-    .drag-handle-bar:active { cursor: grabbing; }
-    .hud-content { padding: 10px 12px; font-size: 12px; line-height: 1.45; }
-    .hud-speed-row {
-      font-size: 22px; font-weight: bold; color: #00ff88; font-family: monospace;
-      margin: 6px 0; padding: 6px; background: #0b1628; border-radius: 6px; border: 1px solid #1e3a5f;
-    }
-
-    /* CỬA SỔ YOUTUBE KÉO THẢ ĐƯỢC (Dùng Internet mở YouTube thật + Tự reset vị trí khi Ẩn -> Hiện) */
-    #youtube-app-modal {
-      position: fixed; top: 90px; left: calc(50% - 370px);
-      width: 740px; max-width: 94vw; background: #0f0f0f; border: 2px solid #ff0000;
-      border-radius: 12px; z-index: 200; box-shadow: 0 15px 60px rgba(0,0,0,0.95);
-      overflow: hidden; display: flex; flex-direction: column;
-    }
-    .yt-drag-header {
-      background: #1c1c1c; padding: 8px 14px; display: flex; justify-content: space-between;
-      align-items: center; border-bottom: 1px solid #333; cursor: grab; touch-action: none;
-    }
-    .yt-logo {
-      background: #ff0000; color: #fff; font-weight: bold; padding: 3px 9px;
-      border-radius: 5px; font-size: 13px; margin-right: 8px;
-    }
-    .yt-search-bar { display: flex; gap: 6px; flex: 1; max-width: 410px; }
-    .yt-search-bar input {
-      flex: 1; background: #121212; border: 1px solid #444; color: #fff;
-      padding: 5px 10px; border-radius: 16px; font-size: 12px;
-    }
-    .yt-body { display: flex; height: 390px; }
-    .yt-player-area { flex: 1.75; background: #000; position: relative; }
-    #yt-iframe { width: 100%; height: 100%; border: none; background: #000; }
-    .yt-playlist-side {
-      flex: 1; background: #161616; border-left: 1px solid #2c2c2c;
-      padding: 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
-    }
-    .yt-card {
-      background: #222; border: 1px solid #383838; border-radius: 7px; padding: 7px 9px;
-      cursor: pointer; transition: 0.15s; font-size: 11.5px;
-    }
-    .yt-card:hover, .yt-card.active { border-color: #ff0000; background: #2c1616; }
-    .yt-card b { color: #fff; display: block; margin-bottom: 2px; }
-    .yt-card span { color: #aaa; font-size: 10px; }
-
     .floating-panel h2 {
-      margin: 0 0 8px 0; font-size: 12.5px; color: #00e5ff;
+      margin: 0 0 8px 0; font-size: 13px; color: #00e5ff;
       display: flex; justify-content: space-between; align-items: center;
-      border-bottom: 1px solid #223046; padding-bottom: 5px;
+      border-bottom: 1px solid #223046; padding-bottom: 6px;
     }
-    .guide-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 6px; }
-    .guide-table th, .guide-table td { border: 1px solid #223046; padding: 4px 6px; text-align: left; }
+    #function-panel h2 { color: #dfcba8; }
+    .guide-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 8px; }
+    .guide-table th, .guide-table td { border: 1px solid #223046; padding: 5px 6px; text-align: left; }
     .guide-table th { background: #121d30; color: #ffd60a; }
-    .row { display: flex; gap: 5px; margin-bottom: 5px; align-items: center; font-size: 11px; }
+    .status-box {
+      background: #101a2b; border-left: 4px solid #00ff88; padding: 7px 9px;
+      font-size: 11.5px; color: #e0ecff; margin-bottom: 8px; border-radius: 4px;
+    }
+
+    .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; font-size: 11.5px; }
     .row label { width: 115px; color: #c5d0e0; font-weight: 600; }
     input[type="text"], select {
-      flex: 1; padding: 4px 7px; border-radius: 4px; border: 1px solid #3a4454;
-      background: #141923; color: #00e5ff; font-size: 11px;
+      flex: 1; padding: 5px 8px; border-radius: 4px; border: 1px solid #3a4454;
+      background: #141923; color: #00e5ff; font-size: 11.5px;
     }
+    input[type="range"] { flex: 1; accent-color: #d4af37; cursor: pointer; }
     button.act-btn {
-      padding: 5px 8px; border-radius: 5px; border: none;
-      background: #d4af37; color: #000; font-weight: bold; cursor: pointer; font-size: 10.8px; flex: 1;
+      padding: 6px 9px; border-radius: 5px; border: none;
+      background: #d4af37; color: #000; font-weight: bold; cursor: pointer; font-size: 11px; flex: 1;
     }
-    .section-title { font-size: 10.5px; color: #ffd60a; font-weight: bold; margin: 6px 0 3px 0; text-transform: uppercase; }
+    button.act-btn:hover { filter: brightness(1.12); }
+    .section-title { font-size: 11px; color: #ffd60a; font-weight: bold; margin: 8px 0 4px 0; text-transform: uppercase; }
+
+    /* ====================================================================== */
+    /* CỤM ĐIỀU KHIỂN TRỰC QUAN CHO TIA LASER TAY CẦM META QUEST 3            */
+    /* ====================================================================== */
+    #quest-laser-cockpit {
+      position: fixed; bottom: 14px; left: 14px; right: 14px;
+      z-index: 50; display: flex; justify-content: space-between; align-items: flex-end;
+      pointer-events: none;
+    }
+    #quest-laser-cockpit {
+      bottom: 8px !important; left: 8px !important; right: 8px !important;
+    }
+    .cockpit-pad {
+      transform: scale(0.84);
+      transform-origin: bottom center;
+      opacity: 0.88;
+    }
+    #rear-cam-app-modal {
+      position: fixed; top: 52%; left: 50%; transform: translate(-50%, -50%);
+      width: 560px; max-width: 90vw; background: #0b111e; border: 2px solid #00e5ff;
+      border-radius: 14px; z-index: 195; box-shadow: 0 15px 50px rgba(0,0,0,0.92);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    #rear-cam-modal-canvas {
+      width: 100%; height: 300px; background: #000; display: block;
+    }
+    .cockpit-pad {
+      pointer-events: auto; background: rgba(8, 14, 26, 0.86);
+      border: 2px solid #00e5ff; border-radius: 14px; padding: 10px;
+      backdrop-filter: blur(8px); box-shadow: 0 6px 24px rgba(0,0,0,0.8);
+    }
+    .dpad-grid {
+      display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 48px); gap: 6px;
+    }
+    .pad-btn {
+      border-radius: 8px; border: 1px solid #3a506b; background: #162438;
+      color: #fff; font-weight: bold; font-size: 12px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      transition: 0.1s; user-select: none;
+    }
+    .pad-btn:active, .pad-btn.active-hold {
+      background: #00e5ff; color: #000; transform: scale(0.95);
+    }
+    .pedal-grid { display: flex; gap: 8px; align-items: stretch; }
+    .pedal-btn {
+      width: 82px; height: 96px; border-radius: 10px; border: 2px solid #fff;
+      font-weight: bold; font-size: 13px; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    }
+    .pedal-gas { background: linear-gradient(180deg, #28cd41, #157a24); color: #000; border-color: #a3ffac; }
+    .pedal-brake { background: linear-gradient(180deg, #ff3b30, #9e160f); color: #fff; border-color: #ff9f99; }
+    .action-col { display: flex; flex-direction: column; gap: 6px; width: 118px; }
+
+    /* ====================================================================== */
+    /* GIAO DIỆN ỨNG DỤNG YOUTUBE THẬT (XEM PHIM / NGHE NHẠC TRONG XE)        */
+    /* ====================================================================== */
+    #youtube-app-modal {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 780px; max-width: 94vw; background: #0f0f0f; border: 2px solid #ff0000;
+      border-radius: 14px; z-index: 200; box-shadow: 0 15px 60px rgba(0,0,0,0.95);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .yt-header {
+      background: #181818; padding: 10px 16px; display: flex; justify-content: space-between;
+      align-items: center; border-bottom: 1px solid #303030;
+    }
+    .yt-logo {
+      background: #ff0000; color: #fff; font-weight: bold; padding: 4px 10px;
+      border-radius: 6px; font-size: 14px; margin-right: 10px;
+    }
+    .yt-search-bar { display: flex; gap: 6px; flex: 1; max-width: 420px; }
+    .yt-search-bar input {
+      flex: 1; background: #121212; border: 1px solid #383838; color: #fff;
+      padding: 6px 10px; border-radius: 18px; font-size: 12px;
+    }
+    .yt-body { display: flex; height: 410px; }
+    .yt-player-area { flex: 1.7; background: #000; position: relative; display: flex; flex-direction: column; }
+    #yt-iframe, #yt-html5-player { width: 100%; height: 100%; border: none; background: #000; }
+    .yt-playlist-side {
+      flex: 1; background: #161616; border-left: 1px solid #2c2c2c;
+      padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+    }
+    .yt-card {
+      background: #222; border: 1px solid #383838; border-radius: 8px; padding: 8px 10px;
+      cursor: pointer; transition: 0.15s; font-size: 12px;
+    }
+    .yt-card:hover, .yt-card.active { border-color: #ff0000; background: #2c1616; }
+    .yt-card b { color: #fff; display: block; margin-bottom: 3px; }
+    .yt-card span { color: #aaa; font-size: 10.5px; }
+
+    /* Giữ phát âm thanh liên tục khi Thu Nhỏ (ẩn khỏi tầm nhìn thay vì display:none làm tắt iframe/audio) */
+    #youtube-app-modal.panel-hidden {
+      display: flex !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      position: fixed !important;
+      top: -9999px !important;
+      left: -9999px !important;
+      transform: none !important;
+      visibility: visible !important;
+    }
+
+    /* Khóa cứng khung YouTube, phóng to chỉ nằm gọn trong khung đã fit */
+    #youtube-app-modal {
+      resize: none;
+      contain: layout paint;
+      user-select: none;
+    }
+    #youtube-app-modal.yt-inframe-full .yt-playlist-side {
+      display: none !important;
+    }
+    #youtube-app-modal.yt-inframe-full .yt-player-area {
+      flex: 1 1 100% !important;
+      width: 100% !important;
+    }
+    .yt-header {
+      cursor: grab;
+    }
+    .yt-header:active {
+      cursor: grabbing;
+    }
+
+    /* Vòng tròn Map Radar hiển thị vị trí người chơi, Điểm Spawn Nhà & Xe Rolls-Royce */
+    #circular-minimap-widget {
+      position: fixed; bottom: 18px; left: 18px; width: 186px; height: 186px;
+      border-radius: 50%; background: rgba(6, 12, 24, 0.92);
+      border: 3px solid #00ff88; box-shadow: 0 0 25px rgba(0, 255, 136, 0.45), inset 0 0 18px rgba(0, 229, 255, 0.25);
+      z-index: 140; overflow: hidden; pointer-events: auto; cursor: pointer;
+    }
+    #minimap-canvas {
+      width: 100%; height: 100%; display: block; border-radius: 50%;
+    }
+    #minimap-legend {
+      position: fixed; bottom: 210px; left: 18px; z-index: 140;
+      background: rgba(6, 12, 24, 0.88); border: 1px solid #00e5ff;
+      border-radius: 12px; padding: 5px 10px; font-size: 10.5px; color: #e0f2fe;
+      pointer-events: auto; display: flex; flex-direction: column; gap: 3px;
+    }
+
+    /* Tự động co giãn linh hoạt cho cả iPhone/Android khi xoay dọc (9:16) lẫn xoay ngang (16:9) */
+    @media screen and (max-width: 920px) {
+      #top-bar {
+        top: 6px; padding: 4px 8px; gap: 4px; max-width: 96vw;
+        overflow-x: auto; justify-content: flex-start;
+      }
+      .bar-btn { padding: 5px 9px; font-size: 10.5px; flex-shrink: 0; }
+      .floating-panel {
+        width: 88vw !important; max-width: 360px !important;
+        max-height: 62vh !important; top: 46px !important;
+        left: 50% !important; right: auto !important;
+        transform: translateX(-50%); font-size: 11px;
+      }
+      #circular-minimap-widget { width: 124px; height: 124px; bottom: 10px; left: 10px; }
+      #minimap-legend { bottom: 140px; left: 10px; font-size: 9.5px; padding: 4px 7px; }
+    }
+    @media screen and (max-height: 520px) and (orientation: landscape) {
+      .floating-panel { max-height: 74vh !important; top: 42px !important; width: 340px !important; }
+      #circular-minimap-widget { width: 110px; height: 110px; bottom: 8px; left: 8px; }
+      #minimap-legend { display: none; }
+    }
+
+    /* Cho phép vuốt 360° đa điểm mượt trên Chrome Mobile mà không bị cuộn trang */
+    html, body, canvas {
+      touch-action: none !important;
+      overscroll-behavior: none !important;
+      -webkit-user-select: none !important;
+      user-select: none !important;
+    }
+
+    /* Giao diện tối giản trên Điện thoại: Ẩn toàn bộ bảng & map vướng tầm nhìn, chỉ hiện khi bấm nút Menu */
+    body.mobile-clean-ui #top-bar,
+    body.mobile-clean-ui #minimap-legend,
+    body.mobile-clean-ui #circular-minimap-widget,
+    body.mobile-clean-ui #quest-laser-cockpit {
+      display: none !important;
+    }
+    body.mobile-clean-ui.show-mobile-map #circular-minimap-widget {
+      display: block !important;
+      width: 115px !important; height: 115px !important;
+      top: 48px !important; bottom: auto !important; left: 10px !important;
+    }
+    body.mobile-clean-ui.show-mobile-topbar #top-bar {
+      display: flex !important;
+      top: 46px !important; left: 50% !important;
+      transform: translateX(-50%) !important;
+      flex-wrap: wrap !important; width: 92vw !important;
+      justify-content: center !important;
+    }
   </style>
 
   <script type="importmap">
@@ -137,369 +283,1447 @@
   <div id="eyelid-top"></div>
   <div id="eyelid-bottom"></div>
 
-  <!-- THANH ĐIỀU KHIỂN TRÊN CÙNG -->
   <div id="top-bar">
+    <span id="realtime-clock-badge" style="background:#101a2b;color:#00ff88;border:1px solid #00e5ff;padding:5px 11px;border-radius:16px;font-family:monospace;font-size:12px;font-weight:bold;">🕒 --:--:-- | --/--/----</span>
+    <button id="btn-toggle-cam-road" class="bar-btn" style="background:#00e5ff;color:#000;font-weight:bold;box-shadow:0 0 10px rgba(0,229,255,0.6);border:1px solid #fff;">🛣️ Xem: ĐƯỜNG 3D (Phím V/K)</button>
+    <button id="btn-open-qr-multiplayer" class="bar-btn" style="background:#9b5de5;color:#fff;">📱 Mã QR Ghế Phụ (9:16) &amp; Pair Quest 3</button>
     <button id="btn-toggle-guide" class="bar-btn btn-guide-toggle">📘 Ẩn/Hiện Hướng Dẫn</button>
     <button id="btn-toggle-func" class="bar-btn btn-func-toggle">⚙ Ẩn/Hiện Chức Năng</button>
-    <button id="btn-toggle-hud" class="bar-btn btn-hud-toggle">📊 Ẩn/Hiện HUD (Reset Vị Trí)</button>
-    <button id="btn-open-yt-modal" class="bar-btn btn-yt-open">▶ Mở/Đóng YouTube [Nút Y]</button>
-    <button id="btn-lean-head" class="bar-btn btn-lean-toggle">👱 Thò Đầu Ra Ngoài Xe [Phím L]</button>
-    <button id="smart-vr-btn" class="bar-btn btn-enter-360vr">🥽 ENTER VR 360° (NHƯ DMNSHD.GG)</button>
+    <button id="btn-open-yt-modal" class="bar-btn btn-yt-open">▶ Mở App YouTube (Xem Phim/Nhạc)</button>
+    <button id="btn-toggle-hud3d" class="bar-btn btn-hud3d-toggle">🖥 Ẩn/Hiện HUD 3D</button>
+    <button id="smart-vr-btn" class="bar-btn btn-enter-360vr">🥽 VÀO THẾ GIỚI 3D (FULLSCREEN)</button>
+  </div>
+
+  <!-- VÒNG TRÒN MAP RADAR (HIỂN THỊ VỊ TRÍ HIỆN TẠI, ĐIỂM SPAWN NHÀ & VỊ TRÍ XE) -->
+  <div id="minimap-legend">
+    <div>🟢 <b>Chấm Xanh:</b> Vị trí của bạn | 🏠 <b>Nhà:</b> Điểm Spawn</div>
+    <div>🚘 <b>Chấm Vàng:</b> Xe của bạn | 🚓 <b>Đỏ/Xanh:</b> Xe NPC</div>
+  </div>
+  <div id="circular-minimap-widget" title="Bấm vào Map để về Điểm Spawn Nhà Của Tôi">
+    <canvas id="minimap-canvas" width="220" height="220"></canvas>
   </div>
 
   <!-- ====================================================================== -->
-  <!-- BẢNG HUD DIGITAL TWIN (KÉO THẢ TRÁI/PHẢI/LÊN/XUỐNG & RESET KHI ẨN/HIỆN) -->
-  <!-- ====================================================================== -->
-  <div id="draggable-hud-window">
-    <div id="hud-drag-bar" class="drag-handle-bar">
-      <span>✥ BẢNG HUD DIGITAL TWIN (GIỮ CÒ KÉO THẢ DI CHUYỂN)</span>
-      <span id="hud-car-owner" style="background:#000;color:#00ff88;padding:2px 6px;border-radius:4px;font-size:10px;">XE CỦA BẠN</span>
-    </div>
-    <div class="hud-content">
-      <div id="hud-twin-state" style="color:#ffd60a;font-weight:bold;">
-        🛑 TRẠNG THÁI XE RC: CHƯA BẬT ĐỘNG CƠ (ĐANG ĐỖ - 0 KM/H)
-      </div>
-      <div id="hud-speed-display" class="hud-speed-row">
-        SPEED: 0 KM/H | GEAR: [P] | 0 RPM
-      </div>
-      <div id="hud-cam-front-status" style="color:#00e5ff;">
-        • CAM TRƯỚC (KÍNH CHẮN GIÓ): CHƯA KẾT NỐI ESP32 (Chặn chạy xuyên địa hình)
-      </div>
-      <div id="hud-cam-rear-status" style="color:#4cd964;">
-        • CAM HẬU (GƯƠNG LÙI): ĐANG HIỂN THỊ GÓC NHÌN 3D PHÍA SAU XE
-      </div>
-      <div id="hud-turn-signal-status" style="color:#ff9f1c;">
-        • ĐÈN XI-NHAN [Nút A]: ĐANG TẮT | THÒ ĐẦU [Phím L]: TRONG KHOANG LÁI
-      </div>
-      <div id="hud-action-log" style="margin-top:4px;color:#cbd5e1;font-size:11px;border-top:1px solid #1e293b;padding-top:4px;">
-        ▶ Đẩy nút xoay (Thumbstick) để Tiến/Lùi/Rẽ trái/phải. Cò tay cầm chỉ dùng để Chọn!
-      </div>
-    </div>
-  </div>
-
-  <!-- ====================================================================== -->
-  <!-- CỬA SỔ YOUTUBE KÉO THẢ ĐƯỢC (DÙNG INTERNET MỞ YOUTUBE THẬT)            -->
+  <!-- ỨNG DỤNG YOUTUBE THẬT (MỞ KHI BẤM VÀO MÀN HÌNH YOUTUBE TRONG XE)       -->
   <!-- ====================================================================== -->
   <div id="youtube-app-modal" class="panel-hidden">
-    <div id="yt-drag-bar" class="yt-drag-header">
+    <div class="yt-header">
       <div style="display:flex;align-items:center;">
         <span class="yt-logo">▶ YouTube</span>
-        <b style="font-size:12.5px;color:#dfcba8;">✥ Giữ Thanh Này Để Kéo Thả Cửa Sổ YouTube</b>
+        <b style="font-size:13px;color:#dfcba8;">Rạp Giải Trí Trên Xe Rolls-Royce</b>
       </div>
       <div class="yt-search-bar">
-        <input id="yt-custom-input" type="text" placeholder="Nhập từ khóa hoặc dán link YouTube..." />
-        <button id="btn-yt-load-url" class="bar-btn" style="background:#ff0000;color:#fff;padding:4px 10px;">Mở Video</button>
-        <button id="btn-yt-open-native" class="bar-btn" style="background:#383838;color:#fff;padding:4px 10px;" title="Mở tab YouTube.com đầy đủ">🌐 YouTube.com</button>
+        <input id="yt-custom-input" type="text" placeholder="Nhập từ khóa tìm kiếm YouTube hoặc dán link..." />
+        <button id="btn-yt-load-url" class="bar-btn" style="background:#ff0000;color:#fff;padding:5px 10px;">🔍 Tìm / Phát</button>
+        <button id="btn-yt-open-home" class="bar-btn" style="background:#282828;color:#fff;border:1px solid #555;padding:5px 8px;">🌐 Trang Chủ YT</button>
       </div>
-      <button id="btn-close-yt-modal" class="bar-btn" style="background:#00e5ff;color:#000;">✖ Ẩn [Nút Y]</button>
+      <div style="display:flex;gap:5px;">
+        <button id="btn-yt-inframe-full" class="bar-btn" style="background:#ffd60a;color:#000;padding:5px 10px;">⛶ Full Trong Khung</button>
+        <button id="btn-close-yt-modal" class="bar-btn" style="background:#00e5ff;color:#000;">🗕 Thu Nhỏ</button>
+      </div>
     </div>
 
     <div class="yt-body">
       <div class="yt-player-area">
-        <iframe
-          id="yt-iframe"
-          src="https://www.youtube-nocookie.com/embed/jfKfPfyJRdk?autoplay=1&rel=0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-          allowfullscreen>
-        </iframe>
+        <video id="yt-html5-player" controls playsinline crossorigin="anonymous" controlsList="nofullscreen" loop></video>
+        <iframe id="yt-iframe" class="panel-hidden" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
       </div>
       <div class="yt-playlist-side">
-        <div style="font-size:10.5px;color:#ffd60a;font-weight:bold;">🔥 KÊNH YOUTUBE TRỰC TUYẾN (INTERNET):</div>
-        <div class="yt-card active" data-vid="jfKfPfyJRdk" data-title="Lofi Hip Hop Radio - Beats to Drive">
-          <b>1. 🎵 Lofi Girl - Nhạc Chill Lái Xe Đêm (Live)</b>
-          <span>YouTube Internet Stream chính thức</span>
+        <div style="font-size:11px;color:#ffd60a;font-weight:bold;">🎬 CHỌN PHIM / NHẠC ĐỂ PHÁT:</div>
+        <div class="yt-card active" data-type="mp4" data-src="https://vjs.zencdn.net/v/oceans.mp4" data-title="Phim Đại Dương Hoang Dã (Oceans 4K)">
+          <b>1. 🎬 Phim Đại Dương Hoang Dã 4K (Có Tiếng)</b>
+          <span>Đồng bộ trực tiếp lên cả màn hình 3D trên táp-lô</span>
         </div>
-        <div class="yt-card" data-vid="4xDzrJKXOOY" data-title="Synthwave Radio - Night City Drive">
-          <b>2. 🌆 Synthwave Radio - Nhạc Điện Tử Đô Thị</b>
-          <span>Phát trực tiếp qua kết nối Internet</span>
+        <div class="yt-card" data-type="mp4" data-src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" data-title="Vẻ Đẹp Thiên Nhiên (Flower Full HD)">
+          <b>2. 🌸 Vẻ Đẹp Thiên Nhiên (Flower Full HD)</b>
+          <span>Âm thanh vòm sống động trong khoang lái</span>
         </div>
-        <div class="yt-card" data-vid="5qap5aO4i9A" data-title="Chillhop Music - Jazz & Lofi Beats">
-          <b>3. 🎷 Jazz &amp; Bossanova Lái Xe Siêu Sang</b>
-          <span>Âm thanh nổi chất lượng cao</span>
+        <div class="yt-card" data-type="mp4" data-src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/friday.mp4" data-title="Hành Trình Cuối Tuần (Friday Chill)">
+          <b>3. 🍿 Hành Trình Cuối Tuần (Friday Chill)</b>
+          <span>Phim rạp chiếu trực tiếp trong khoang Rolls-Royce</span>
         </div>
-        <div class="yt-card" data-vid="DWcJFNfaw9c" data-title="Ambient Space & Night Sky Music">
-          <b>4. 🌌 Nhạc Hòa Tấu Bầu Trời Sao Rolls-Royce</b>
-          <span>Thư giãn ở hàng ghế thương gia</span>
+        <div class="yt-card" data-type="iframe" data-src="https://www.youtube.com/embed/0sfDth4lMLc?autoplay=1" data-title="Lofi Hip Hop Radio - Beats to Drive">
+          <b>4. 🎵 YouTube Live: Lofi Chill Radio (Night Drive)</b>
+          <span>Trình phát YouTube Embed trực tiếp</span>
         </div>
-        <div class="yt-card" data-vid="21qNxnCS8WU" data-title="Tokyo Night Drive 4K POV">
-          <b>5. 🎬 Video Lái Xe Đêm Thành Phố 4K</b>
-          <span>Trải nghiệm góc nhìn đường phố</span>
+        <div class="yt-card" data-type="iframe" data-src="https://www.youtube.com/embed/4xDzrJKXOOY?autoplay=1" data-title="Synthwave Radio - Chill Synth / Retro">
+          <b>5. 🌆 YouTube Live: Synthwave Cyberpunk Radio</b>
+          <span>Nhạc điện tử lái xe ban đêm</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CỬA SỔ CAM LÙI & GƯƠNG HẬU NỔI (MỞ LÊN KHI BẤM VÀO MÀN HÌNH PHỤ BÊN GHẾ PHỤ) -->
+  <div id="rear-cam-app-modal" class="panel-hidden">
+    <div class="yt-header" id="rear-cam-modal-header" style="background:#101b2d;border-bottom:1px solid #00e5ff;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="background:#00e5ff;color:#000;font-weight:bold;padding:3px 9px;border-radius:6px;font-size:13px;">🎥 CAM LÙI &amp; GƯƠNG HẬU</span>
+        <b style="font-size:12.5px;color:#ffd60a;">Màn Hình Quan Sát Phía Sau Xe (Ghế Phụ &amp; Tài Xế)</b>
+      </div>
+      <button id="btn-close-rearcam-modal" class="bar-btn" style="background:#ff3b30;color:#fff;">✖ Thu Nhỏ Về Táp-lô</button>
+    </div>
+  </div>
+
+  <!-- CỬA SỔ MÃ QR MULTIPLAYER CHO ĐIỆN THOẠI (9:16 GHẾ PHỤ) & PAIR KÍNH META QUEST 3 -->
+  <div id="qr-multiplayer-modal" class="panel-hidden" style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:520px;max-width:92vw;background:rgba(8,14,26,0.96);border:2px solid #9b5de5;border-radius:14px;z-index:220;padding:16px;box-shadow:0 15px 50px rgba(0,0,0,0.95);color:#fff;">
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2b394f;padding-bottom:8px;margin-bottom:12px;">
+      <b style="color:#00ff88;font-size:14px;">🌐 KẾT NỐI MULTIPLAYER: GHẾ PHỤ (9:16) &amp; META QUEST 3 (16:9)</b>
+      <button id="btn-close-qr-modal" class="bar-btn" style="background:#ff3b30;color:#fff;">✖ Đóng</button>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;">
+      <div style="background:#fff;padding:8px;border-radius:10px;text-align:center;">
+        <img id="qr-code-img" src="" alt="QR Passenger" style="width:150px;height:150px;display:block;" />
+        <span style="color:#000;font-size:10px;font-weight:bold;">Quét bằng Camera ĐT (9:16)</span>
+      </div>
+      <div style="flex:1;font-size:11.5px;line-height:1.5;">
+        <div style="color:#ffd60a;font-weight:bold;margin-bottom:4px;">📱 1. Điện thoại Join Ghế Phụ (Khung 9:16 Mượt 60FPS):</div>
+        <input id="passenger-url-input" type="text" readonly style="width:95%;margin-bottom:8px;font-size:11px;color:#00ff88;" />
+        <div style="color:#00e5ff;font-weight:bold;margin-bottom:4px;">🥽 2. Kính Meta Quest 3 Thứ 2 (Khung 16:9 VR):</div>
+        <input id="quest-pair-url-input" type="text" readonly style="width:95%;margin-bottom:8px;font-size:11px;color:#00e5ff;" />
+        <div style="display:flex;gap:6px;">
+          <button id="btn-pair-quest-bt" class="act-btn" style="background:#00bbf9;color:#000;">📶 Ghép Đôi Quest 3 (Bluetooth / Wi-Fi)</button>
+          <button id="btn-copy-join-link" class="act-btn" style="background:#4cd964;color:#000;">📋 Copy Link</button>
         </div>
       </div>
     </div>
   </div>
 
   <!-- ====================================================================== -->
-  <!-- BẢNG 1: HƯỚNG DẪN NÚT TAY CẦM QUEST 3 (CÒ = CHỌN, NÚT XOAY = ĐI/LÁI)   -->
+  <!-- BẢNG 1: BẢNG HƯỚNG DẪN LÁI XE                                          -->
   <!-- ====================================================================== -->
   <div id="guide-panel" class="floating-panel">
     <h2>
-      <span>📘 HƯỚNG DẪN TAY CẦM QUEST 3 &amp; PHÍM</span>
-      <span id="gamepad-badge" style="font-size:10px;color:#00ff88;">🎮 Sẵn sàng</span>
+      <span>📘 BẢNG HƯỚNG DẪN ĐIỀU KHIỂN</span>
+      <span id="gamepad-badge" style="font-size:10px;color:#00ff88;">🥽 Laser Tay cầm Quest 3: SẴN SÀNG</span>
     </h2>
 
+    <div id="mode-banner" class="status-box">
+      🚶 <b>ĐANG ĐI BỘ:</b> Dùng <b>Tia Laser Tay Cầm</b> bấm vào cụm phím góc dưới (hoặc chĩa thẳng vào <b>Cửa Xe</b>) để di chuyển &amp; mở cửa lên xe!
+    </div>
+
     <table class="guide-table">
-      <tr><th>Nút Tay Cầm Quest 3</th><th>Chức năng cố định (Khi Đi Bộ &amp; Lái Xe)</th><th>Phím PC</th></tr>
-      <tr><td><b>Cò Tay Cầm (Trigger)</b></td><td><b>CHỈ DÙNG ĐỂ THAO TÁC CHỌN / KÉO BẢNG</b> (Không làm xe tự chạy)</td><td>Chuột Trái</td></tr>
-      <tr><td><b>Nút Xoay (Thumbstick)</b></td><td><b>Tiến / Lùi / Rẽ Trái / Rẽ Phải</b> (Đi bộ nhanh &amp; Lái xe trực tiếp)</td><td><b>W / A / S / D</b></td></tr>
-      <tr><td><b>Nút [A]</b> (Tay phải)</td><td><b>Bật Xi-nhan Trái / Phải / Tắt</b></td><td>Phím <b>Z / C</b></td></tr>
-      <tr><td><b>Nút [B]</b> (Tay phải)</td><td><b>Đỗ Xe Dừng Hẳn (0 KM/H - Số P)</b></td><td>Phím <b>Space</b></td></tr>
-      <tr><td><b>Nút [X]</b> (Tay trái)</td><td><b>Mở Cửa Lên Xe / Xuống Xe</b> (Chớp mắt)</td><td>Phím <b>F</b></td></tr>
-      <tr><td><b>Nút [Y]</b> (Tay trái)</td><td><b>Mở / Đóng Ứng Dụng YouTube</b> (Reset vị trí)</td><td>Phím <b>Y / U</b></td></tr>
-      <tr><td><b>Nút Nắm (Grip)</b></td><td><b>Thò Đầu Ra Ngoài Cửa Sổ Xe Để Nhìn</b></td><td>Phím <b>L</b></td></tr>
+      <tr><th>Thao tác</th><th>Tay Cầm Meta Quest 3 (Laser / Nút)</th><th>Bàn Phím PC</th></tr>
+      <tr><td>Đi bộ &amp; Lái Vô lăng</td><td>Giữ Tia Laser vào <b>Cụm Điều Hướng Trái</b> (hoặc đẩy Cần gạt)</td><td><b>W / A / S / D</b></td></tr>
+      <tr><td>Mở cửa Lên / Xuống Xe</td><td>Chĩa Laser vào <b>Cửa Xe / Nóc Xe</b> + Bóp Cò (hoặc nút <b>🚪 Lên/Xuống Xe</b> góc phải)</td><td>Phím <b>F</b></td></tr>
+      <tr><td>Đạp Ga / Đạp Thắng</td><td>Giữ Tia Laser vào <b>Bàn Đạp GA (Xanh) / THẮNG (Đỏ)</b> góc dưới phải (hoặc Cò Phải/Trái)</td><td>Phím <b>W / S</b></td></tr>
+      <tr><td>Bóp Còi Xe (Cứu chó)</td><td>Chĩa Laser vào <b>Logo RR giữa Vô lăng</b> (hoặc nút <b>📢 CÒI</b> góc phải)</td><td>Phím <b>Space</b></td></tr>
+      <tr><td>Mở Phim/Nhạc YouTube</td><td>Chĩa Laser bấm thẳng vào <b>Màn hình YouTube giữa xe</b></td><td>Phím <b>U</b></td></tr>
+      <tr><td>Bắt tay NPC / Thú kêu</td><td>Chĩa Laser bấm thẳng vào <b>Người đi bộ / Chó / Mèo</b></td><td>Phím <b>H</b></td></tr>
     </table>
   </div>
 
   <!-- ====================================================================== -->
-  <!-- BẢNG 2: BẢNG CHỨC NĂNG, CAM ESP32 TRƯỚC/SAU & XE MULTIPLAYER THỨ 2     -->
+  <!-- BẢNG 2: BẢNG CHỨC NĂNG & CÀI ĐẶT                                       -->
   <!-- ====================================================================== -->
   <div id="function-panel" class="floating-panel">
     <h2>
-      <span>⚙ BẢNG CHỨC NĂNG (ĐÃ GẮN VÀO 4 NÚT A, B, X, Y)</span>
-      <span style="font-size:10px;color:#ffd60a;">Độc lập</span>
+      <span>⚙ BẢNG CHỨC NĂNG &amp; PHẦN CỨNG</span>
+      <span id="func-target-badge" style="font-size:10px;color:#00ff88;background:#102a43;padding:2px 7px;border-radius:10px;border:1px solid #00e5ff;">🎯 Xe Của Tôi (Rolls-Royce)</span>
     </h2>
 
-    <div class="section-title">🎮 1. Bốn Nút Chức Năng Chính (A, B, X, Y)</div>
+    <div class="section-title">🎮 1. Chế độ Điều khiển (Input Mode)</div>
     <div class="row">
-      <button id="btn-func-a" class="act-btn" style="background:#ff9f1c;">⬅➡ [Nút A] Xi-nhan Trái/Phải</button>
-      <button id="btn-func-b" class="act-btn" style="background:#ff3b30;color:#fff;">🛑 [Nút B] Đỗ Xe Dừng Hẳn</button>
-    </div>
-    <div class="row">
-      <button id="btn-func-x" class="act-btn" style="background:#00e5ff;">🚪 [Nút X] Mở Cửa Lên/Xuống Xe</button>
-      <button id="btn-func-y" class="act-btn" style="background:#ff0000;color:#fff;">▶ [Nút Y] Mở/Đóng YouTube</button>
-    </div>
-
-    <div class="section-title">📷 2. Kết nối Cam Trước (Kính Chắn Gió) &amp; Cam Lùi ESP32</div>
-    <div class="row">
-      <label>Cam Trước ESP32:</label>
-      <input id="esp32-front-ip" type="text" value="http://192.168.4.102:81/stream" />
-      <button id="btn-connect-front" class="act-btn" style="flex:0.45;background:#00e5ff;">Kết nối</button>
-      <button id="btn-disconnect-front" class="act-btn" style="flex:0.35;background:#555;color:#fff;">Ngắt</button>
-    </div>
-    <div class="row">
-      <label>Cam Lùi ESP32:</label>
-      <input id="esp32-rear-ip" type="text" value="http://192.168.4.103:81/stream" />
-      <button id="btn-connect-rear" class="act-btn" style="flex:0.45;background:#4cd964;">Kết nối</button>
-      <button id="btn-disconnect-rear" class="act-btn" style="flex:0.35;background:#555;color:#fff;">3D Sau</button>
+      <label>Chế độ nhận lệnh:</label>
+      <select id="input-mode-select">
+        <option value="both" selected>✅ Tự Động (Vô Lăng + Pedal + Quest 3 + Phím PC)</option>
+        <option value="wheel">🏎️ Chỉ Dùng Vô Lăng &amp; Bàn Đạp Pedal USB</option>
+        <option value="controller">🥽 Chỉ Dùng Tay Cầm Meta Quest 3</option>
+        <option value="keyboard">⌨ Chỉ Dùng Bàn Phím &amp; Chuột</option>
+      </select>
     </div>
 
-    <div class="section-title">👥 3. Đa Thiết Bị (Xe Thứ 2), Đổi Ghế Tài Xế &amp; Thò Đầu Ra Xe</div>
-    <div class="row">
-      <button id="btn-enter-my-car" class="act-btn" style="background:#00ff88;">🚘 Lên Xe Của Tôi (Có ESP32)</button>
-      <button id="btn-enter-friend-car" class="act-btn" style="background:#00bbf9;">🚙 Sang Xe Người Thứ 2 (Ghế Phụ)</button>
-    </div>
-    <div class="row">
-      <button id="btn-swap-driver" class="act-btn" style="background:#ffd60a;">🔄 Đổi Chỗ Với Tài Xế (Cầm Lái)</button>
-      <button id="btn-swap-rear" class="act-btn">💺 Xuống Ghế Phụ Sau</button>
-      <button id="btn-lean-window" class="act-btn" style="background:#9b5de5;color:#fff;">👱 Thò Đầu Ra Xe (L)</button>
+    <!-- Bảng trạng thái & Căn chỉnh Vô lăng + Bàn đạp Pedal -->
+    <div id="wheel-pedals-panel" style="background:rgba(10,25,45,0.88);border:1px solid #00e5ff;border-radius:8px;padding:8px 10px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-weight:bold;color:#00e5ff;font-size:12px;">🏎️ VÔ LĂNG &amp; BÀN ĐẠP PEDAL</span>
+        <span id="wheel-connected-badge" style="background:#333;color:#aaa;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:bold;">Đang dò Vô Lăng USB...</span>
+      </div>
+
+      <!-- Góc xoay Vô lăng -->
+      <div style="margin-bottom:6px;">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#ccc;">
+          <span>🔄 Vô lăng: <strong id="wheel-angle-txt" style="color:#00ff88;">0°</strong></span>
+          <span id="wheel-gear-badge" style="background:#ff9500;color:#000;padding:1px 6px;border-radius:4px;font-weight:bold;font-size:10px;">SỐ: D</span>
+        </div>
+        <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;position:relative;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
+          <div style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:#fff;z-index:2;"></div>
+          <div id="wheel-steer-bar" style="height:100%;width:0%;background:#00e5ff;position:absolute;left:50%;transition:width 0.04s ease-out;"></div>
+        </div>
+        <div style="display:flex;gap:3px;margin-top:4px;">
+          <button id="btn-calib-steer" class="act-btn" style="background:#1f3354;color:#00e5ff;font-size:9px;padding:3px 4px;flex:1;cursor:pointer;" title="Bấm rồi đánh hết lái Trái/Phải để nhận diện trục vô lăng">🎯 Gán Trục Vô Lăng</button>
+          <button id="btn-toggle-wheel-invert-steer" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 6px;cursor:pointer;" title="Đảo chiều quay vô lăng">🔄 Đảo Lái</button>
+        </div>
+      </div>
+
+      <!-- Bàn đạp Ga, Phanh, và Lùi (3 Bàn Đạp Độc Lập Cho Vô Lăng GOG R808) -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px;">
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🟢 Ga (Tiến):</span>
+            <strong id="pedal-gas-txt" style="color:#00ff88;">0%</strong>
+          </div>
+          <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
+            <div id="pedal-gas-bar" style="height:100%;width:0%;background:#00ff88;transition:width 0.04s ease-out;"></div>
+          </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-gas" class="act-btn" style="background:#1f3354;color:#00ff88;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Ga để nhận diện">🎯 Gán Ga</button>
+            <button id="btn-toggle-invert-gas" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Ga">🔄</button>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🔴 Phanh (Dừng):</span>
+            <strong id="pedal-brake-txt" style="color:#ff3b30;">0%</strong>
+          </div>
+          <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
+            <div id="pedal-brake-bar" style="height:100%;width:0%;background:#ff3b30;transition:width 0.04s ease-out;"></div>
+          </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-brake" class="act-btn" style="background:#1f3354;color:#ff3b30;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Phanh để nhận diện">🎯 Gán Phanh</button>
+            <button id="btn-toggle-invert-brake" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Phanh">🔄</button>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#ccc;">
+            <span>🟡 Lùi (Chân Côn):</span>
+            <strong id="pedal-reverse-txt" style="color:#ffd60a;">0%</strong>
+          </div>
+          <div style="background:#141e33;height:8px;border-radius:4px;overflow:hidden;margin-top:2px;border:1px solid rgba(255,255,255,0.1);">
+            <div id="pedal-reverse-bar" style="height:100%;width:0%;background:#ffd60a;transition:width 0.04s ease-out;"></div>
+          </div>
+          <div style="display:flex;gap:3px;margin-top:4px;">
+            <button id="btn-calib-pedal-reverse" class="act-btn" style="background:#1f3354;color:#ffd60a;font-size:9px;padding:3px 2px;flex:1;cursor:pointer;" title="Bấm rồi đạp hết chân Lùi (hoặc Côn) để nhận diện">🎯 Gán Lùi</button>
+            <button id="btn-toggle-invert-reverse" class="act-btn" style="background:#1f3354;color:#ccc;font-size:9px;padding:3px 4px;cursor:pointer;" title="Đảo chiều chân Lùi">🔄</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Input Monitor: Soi trực tiếp các trục và nút của GOG R808 -->
+      <div id="wheel-live-monitor" style="background:#0c1524;border:1px dashed #204060;border-radius:4px;padding:3px 6px;margin-bottom:6px;font-family:monospace;font-size:10px;color:#79c0ff;display:flex;justify-content:space-between;align-items:center;">
+        <span id="wheel-monitor-axes">🎮 Tín hiệu: Đang dò vô lăng...</span>
+        <button id="btn-auto-detect-all-pedals" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;font-size:9px;padding:2px 5px;cursor:pointer;">⚡ Nhận Diện Lại</button>
+      </div>
+
+      <!-- Các nút căn chỉnh & sang số nhanh & chuyển đổi hiển thị -->
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;">
+        <button id="btn-wheel-toggle-cam-road" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;font-size:11px;padding:5px 8px;width:100%;margin-bottom:3px;cursor:pointer;">🔄 Tùy Chọn: [🛣️ ĐƯỜNG 3D TRONG GAME] (Bấm đổi sang Cam 📷)</button>
+        <button id="btn-wheel-shift-r" class="act-btn" style="background:#ff3b30;color:#fff;font-size:10px;padding:3px 6px;flex:1;">[R] Lùi</button>
+        <button id="btn-wheel-shift-d" class="act-btn" style="background:#00ff88;color:#000;font-size:10px;padding:3px 6px;flex:1;">[D] Tiến</button>
+      </div>
     </div>
 
-    <div class="section-title">💥 4. Sự Kiện Xe RC Ngoài Đời Tông Vật Cản &amp; Động Cơ</div>
+        <!-- CẤU HÌNH IP MÁY TÍNH ĐỂ PHÓNG TỰ ĐỘNG SANG META QUEST BROWSER IMMERSIVE VR -->
+    <div class="row" style="background:rgba(0,255,136,0.08);padding:6px;border-radius:6px;border:1px solid rgba(0,255,136,0.3);flex-direction:column;gap:4px;margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <label style="font-weight:bold;color:#00ff88;font-size:11.5px;width:auto;">🖥️ Máy Tính Chạy Server (VR Host):</label>
+        <span style="font-size:10px;color:#a0e0ff;">Tự động lưu vĩnh viễn</span>
+      </div>
+      <div style="display:flex;gap:5px;width:100%;">
+        <input id="pc-server-ip-input" type="text" placeholder="192.168.1.60" value="192.168.1.60" style="flex:1;font-family:monospace;background:#0f172a;color:#00ff88;border:1px solid #334155;border-radius:4px;padding:4px 6px;font-size:11px;" />
+        <button id="btn-save-pc-ip" class="act-btn" style="background:#00ff88;color:#000;font-weight:bold;flex:0.4;">💾 Lưu IP</button>
+      </div>
+    </div>
+
+<div class="section-title">🚘 2. Kết Nối Phần Cứng Xe Thật (ESP32 Car &amp; Cam)</div>
+
+    <!-- Mạch điều khiển bánh lái Servo & động cơ ESC xe RC -->
+    <div class="row" style="background:rgba(0,229,255,0.08);padding:6px;border-radius:6px;border:1px solid rgba(0,229,255,0.3);flex-direction:column;gap:5px;margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <label style="font-weight:bold;color:#00e5ff;font-size:12px;">🎮 Mạch Lái Xe (ESP32 Controller - UDP 4210):</label>
+        <span id="esp32-car-status" style="font-size:11px;font-weight:bold;color:#ff3b30;">● Chưa kết nối</span>
+      </div>
+      <div style="display:flex;gap:5px;width:100%;">
+        <input id="esp32-car-ip" type="text" placeholder="192.168.1.xxx (IP Mạch Lái Xe)" style="flex:1;font-family:monospace;background:#111;color:#fff;border:1px solid #444;border-radius:4px;padding:4px 6px;" />
+        <button id="btn-connect-car-esp32" class="act-btn" style="background:#00e5ff;color:#000;font-weight:bold;flex:0.6;">📡 Nối Mạch Xe</button>
+      </div>
+      <div style="display:flex;gap:5px;width:100%;flex-wrap:wrap;">
+        <button id="btn-toggle-invert-steer" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔄 Đảo Lái</button>
+        <button id="btn-toggle-swap-pedals" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🛞 Đảo Bàn Đạp (Ga ⇋ Phanh)</button>
+        <button id="btn-toggle-swap-ports" class="act-btn" style="background:#1f3354;color:#fff;font-size:10px;padding:3px 6px;flex:1;">🔀 Đổi Cổng (Servo ⇋ ESC)</button>
+        <button id="btn-test-esp32-pulse" class="act-btn" style="background:#ff9500;color:#000;font-size:10px;font-weight:bold;padding:3px 6px;flex:1;">⚡ Test Lái (Servo)</button>
+        <button id="btn-test-esp32-motor" class="act-btn" style="background:#28cd41;color:#000;font-size:10px;font-weight:bold;padding:3px 6px;flex:1;">🏎️ Test Ga (1660µs)</button>
+      </div>
+      <!-- CÂN CHỈNH ĐỒNG BỘ TỐC ĐỘ 1:1 XE THẬT & APP 3D (CHẾ ĐỘ LÁI VỪA PHẢI, DỄ ĐIỀU KHIỂN) -->
+      <div style="display:flex;flex-direction:column;gap:3px;background:rgba(0,0,0,0.3);padding:5px;border-radius:5px;border:1px solid #223046;">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#ffd60a;font-weight:bold;">
+          <span>🎯 Chế độ tốc độ xe thật (Đồng bộ 3D):</span>
+          <span id="val-rc-speed-mode" style="color:#00ff88;">🚗 Vừa phải (1585µs - 12 km/h)</span>
+        </div>
+        <div style="display:flex;gap:4px;width:100%;">
+          <button id="btn-rc-speed-slow" class="act-btn" style="background:#1f3354;color:#fff;font-size:9.5px;padding:3px 2px;flex:1;">🐢 Êm Ái (8 km/h)</button>
+          <button id="btn-rc-speed-medium" class="act-btn" style="background:#00e5ff;color:#000;font-size:9.5px;padding:3px 2px;flex:1;font-weight:bold;">🚗 Vừa Phải (12 km/h)</button>
+          <button id="btn-rc-speed-fast" class="act-btn" style="background:#1f3354;color:#fff;font-size:9.5px;padding:3px 2px;flex:1;">🏎️ Thể Thao (18 km/h)</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:10px;margin-top:2px;">
+          <span style="color:#8ab4f8;white-space:nowrap;">Gạt chỉnh ga:</span>
+          <input id="slider-rc-max-throttle" type="range" min="1540" max="1760" step="5" value="1660" style="flex:1;accent-color:#00e5ff;" />
+          <span id="val-rc-max-throttle" style="font-family:monospace;color:#00ff88;font-weight:bold;min-width:42px;">1660µs</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:10px;margin-top:2px;">
+          <span style="color:#ffd60a;white-space:nowrap;">Lực ga lùi:</span>
+          <input id="slider-rc-max-reverse" type="range" min="1300" max="1440" step="5" value="1350" style="flex:1;accent-color:#ffd60a;" />
+          <span id="val-rc-max-reverse" style="font-family:monospace;color:#ffd60a;font-weight:bold;min-width:42px;">1350µs</span>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#8ab4f8;padding:2px 2px;">
+        <span>⚡ Trạng thái xung thực tế:</span>
+        <span id="esp32-car-pulse-info" style="color:#00ff88;font-family:monospace;font-weight:bold;">Lái: 90° | Ga: 1500µs [⚪ DỪNG]</span>
+      </div>
+    </div>
+
     <div class="row">
-      <button id="btn-engine-start" class="act-btn" style="background:#28cd41;">🔘 Bật/Tắt Động Cơ (I)</button>
-      <button id="btn-rc-crash-walker" class="act-btn" style="background:#ff9500;">👵 RC Tông: Bà Già Đi Bộ</button>
-      <button id="btn-rc-crash-biker" class="act-btn" style="background:#ff3b30;color:#fff;">🛵 RC Tông: Bà Già Đi Xe Máy</button>
+      <label>Địa chỉ ESP32-CAM (Cam Trước):</label>
+      <input id="esp32-front-ip" type="text" value="ws://192.168.1.88:4213" />
+    </div>
+    <div class="row">
+      <button id="btn-connect-esp32" class="act-btn" style="background:#00e5ff;">📡 Kết nối Cam</button>
+      <button id="btn-sim-esp32-cam" class="act-btn" style="background:#4cd964;">🎥 Cam Mô Phỏng</button>
+      <button id="btn-clear-windshield" class="act-btn" style="background:#555;color:#fff;">🪟 Kính Trong</button>
+    </div>
+    <div class="row" style="margin-top:4px;margin-bottom:4px;">
+      <button id="btn-auto-discover-esp32" class="act-btn" style="background:#ff9500;color:#000;font-weight:bold;flex:1;">🔍 Tự Động Quét Tìm &amp; Cập Nhật IP Mới Khi Đổi Wi-Fi</button>
+    </div>
+    <div class="row">
+      <label>ESP32 Cam Lùi:</label>
+      <input id="esp32-rear-ip" type="text" value="ws://192.168.1.90:4213" placeholder="ws://192.168.1.xxx:4213" />
+      <button id="btn-connect-rear-esp32" class="act-btn" style="background:#00ff88;flex:0.6;">📡 Kết Nối Cam Lùi</button>
+      <button id="btn-rear-to-windshield" class="act-btn" style="background:#00e5ff;flex:0.6;">🪟 Chiếu Kính Lái</button>
+      <button id="btn-disconnect-rear-esp32" class="act-btn" style="background:#555;color:#fff;flex:0.4;">🔙 Cam 3D</button>
+    </div>
+    <div class="row">
+      <button id="btn-turn-left" class="act-btn" style="background:#ffcc00;color:#000;">⬅ Xi-nhan Trái (X)</button>
+      <button id="btn-turn-right" class="act-btn" style="background:#ffcc00;color:#000;">➡ Xi-nhan Phải (X)</button>
+      <button id="btn-park-brake" class="act-btn" style="background:#ff3b30;color:#fff;">🅿 Đỗ Dừng Hẳn (B)</button>
+    </div>
+    <div class="row">
+      <button id="btn-lean-out" class="act-btn" style="background:#00bbf9;color:#000;">👀 Thò Đầu Ra Cửa (L)</button>
+      <button id="btn-swap-driver" class="act-btn" style="background:#4cd964;color:#000;">🔄 Đổi Lái / Ghế Phụ (C)</button>
+    </div>
+
+    <div class="section-title">🚘 3. Chức năng Xe &amp; Sự kiện Digital Twin RC</div>
+    <div class="row">
+      <button id="btn-enter-exit-car" class="act-btn" style="background:#00e5ff;">🚪 Lên/Xuống Xe (F)</button>
+      <button id="btn-engine-start" class="act-btn" style="background:#ff3b30;color:#fff;">🔘 Đề Nổ Máy (I)</button>
+      <button id="btn-interact-social" class="act-btn" style="background:#4cd964;">🤝 Chào NPC / Thú (H)</button>
+    </div>
+    <div class="row">
+      <button id="btn-toggle-doors" class="act-btn">🚪 4 Cửa (O)</button>
+      <button id="btn-toggle-roof" class="act-btn">🌤 Mui Trần (M)</button>
+      <button id="btn-rc-cargo" class="act-btn" style="background:#ff9f1c;">📦 Khay RC (K)</button>
+      <button id="btn-switch-seat" class="act-btn">💺 4 Ghế (V)</button>
+    </div>
+    <div class="row">
+      <button id="btn-sim-disconnect" class="act-btn" style="background:#ff3b30;color:#fff;">📡 Mất Sóng: Cướp Xe</button>
+      <button id="btn-sim-reconnect" class="act-btn" style="background:#4cd964;">🔄 Spawn Lại Xe</button>
+      <button id="btn-crash-granny" class="act-btn" style="background:#ff9500;">👵 Tông Bà Già</button>
+      <button id="btn-hit-pothole" class="act-btn" style="background:#9b5de5;color:#fff;">🕳️ Ổ Gà (P)</button>
+    </div>
+
+    <div class="row">
+      <label style="width:145px;color:#ffd60a;">🚘 Tốc độ Xe (<span id="val-speed-ratio">5.0</span>x NPC):</label>
+      <input id="slider-speed-ratio" type="range" min="1.0" max="10.0" step="0.5" value="5.0" />
+      <label style="width:85px;">🎯 Độ nhạy (<span id="val-steer-sens">1.0</span>x):</label>
+      <input id="slider-steer-sens" type="range" min="0.3" max="2.5" step="0.1" value="1.0" />
+    </div>
+
+    <div class="row" id="walk-speed-control-row">
+      <label style="width:165px;color:#00ff88;">🏃 Tốc độ Đi Bộ (<span id="val-walk-speed">6.0</span>x - Gấp 6):</label>
+      <input id="slider-walk-speed" type="range" min="1.0" max="10.0" step="0.5" value="6.0" />
+      <span id="walk-speed-lock-msg" style="font-size:10px;color:#00ff88;">(Mặc định 5x-6x)</span>
+    </div>
+    <div class="row">
+      <button id="btn-respawn-home" class="act-btn" style="background:#00ff88;color:#000;">🏠 Về Điểm Spawn Nhà</button>
+      <button id="btn-board-npc-vehicle" class="act-btn" style="background:#ff9f1c;color:#000;">🔑 Lên Xe NPC Gần Nhất (N)</button>
+      <button id="btn-return-own-rr" class="act-btn" style="background:#00e5ff;color:#000;">🚘 Về Xe Rolls-Royce</button>
+    </div>
+
+
+    <div class="row">
+      <label>🌃 Thời tiết &amp; BGM:</label>
+      <select id="weather-select">
+        <option value="night" selected>🌃 Ban đêm (Đèn Pha Khúc Xạ + Sao Trời)</option>
+        <option value="sunset">🌇 Hoàng hôn (Nắng Chiều Đổ Bóng)</option>
+        <option value="rain">🌧 Trời mưa Đêm (Đường Ướt + Gạt Mưa)</option>
+        <option value="day">☀ Ban ngày (Trời Quang Đổ Bóng)</option>
+        <option value="snow">❄ Tuyết rơi (Bông Tuyết 3D)</option>
+      </select>
+      <button id="btn-app-bgm" class="act-btn" style="background:#4cd964;flex:0.4;">🔊 BGM</button>
+    </div>
+    <div class="row">
+      <label>🎨 Đổi Màu Xe (Nút B):</label>
+      <select id="car-color-select">
+        <option value="#101829" selected>⚫ Đen Sapphire (Mặc định)</option>
+        <option value="#f5f7fa">⚪ Trắng Ngọc Trai</option>
+        <option value="#b80c09">🔴 Đỏ Ruby Hoàng Gia</option>
+        <option value="#d4af37">🟡 Vàng Gold Rolls-Royce</option>
+        <option value="#0077b6">🔵 Xanh Dương Đại Dương</option>
+        <option value="#2a9d8f">🟢 Xanh Ngọc Lục Bảo</option>
+        <option value="#7209b7">🟣 Tím Tinh Vân VIP</option>
+      </select>
+      <button id="btn-cycle-color" class="act-btn" style="background:#ffd60a;flex:0.45;">🎨 Đổi Màu</button>
     </div>
   </div>
 
   <!-- ====================================================================== -->
-<!-- GOLDEN BASELINE V2.1 UI PATCH: LIQUID GEAR WIDGET, CAM LÙI & PHÍM TẮT  -->
-<!-- ====================================================================== -->
-<style>
-  /* 1. Nút Bánh Răng Cài Đặt (⚙) ngay dưới Minimap tròn với hiệu ứng Liquid Widget */
+  <!-- BÀN ĐẠP & CẦN LÁI TRỰC QUAN Ở 2 GÓC DƯỚI CHO TIA LASER TAY CẦM QUEST 3 -->
+  <!-- ====================================================================== -->
+  <div id="quest-laser-cockpit">
+    <!-- Góc dưới Trái: Đi bộ & Đánh lái Vô lăng bằng Tia Laser Tay cầm -->
+    <div class="cockpit-pad">
+      <div style="font-size:10.5px;color:#00e5ff;font-weight:bold;margin-bottom:5px;text-align:center;">
+        🎮 CẦN DI CHUYỂN / ĐÁNH LÁI VÔ LĂNG
+      </div>
+      <div class="dpad-grid">
+        <button id="pad-gear-down" class="pad-btn" style="color:#ffd60a;">Về Số<br/>[Q]</button>
+        <button id="pad-up" class="pad-btn">▲<br/>Tiến</button>
+        <button id="pad-gear-up" class="pad-btn" style="color:#00ff88;">Lên Số<br/>[E]</button>
+        <button id="pad-left" class="pad-btn">◀<br/>Trái</button>
+        <button id="pad-down" class="pad-btn">▼<br/>Lùi</button>
+        <button id="pad-right" class="pad-btn">▶<br/>Phải</button>
+      </div>
+    </div>
+
+    <!-- Góc dưới Phải: Bàn đạp Ga, Thắng, Bóp Còi, Mở Cửa Lên/Xuống Xe -->
+    <div class="cockpit-pad">
+      <div style="font-size:10.5px;color:#ffd60a;font-weight:bold;margin-bottom:5px;text-align:center;">
+        🚘 BÀN ĐẠP XE &amp; TƯƠNG TÁC NHANH
+      </div>
+      <div class="pedal-grid">
+        <div class="action-col">
+          <button id="pad-enter-exit" class="pad-btn" style="flex:1;background:#00e5ff;color:#000;">🚪 Mở Cửa<br/>Lên/Xuống Xe</button>
+          <button id="pad-horn" class="pad-btn" style="flex:1;background:#ff9500;color:#000;">📢 Bóp Còi Xe</button>
+          <button id="pad-hello" class="pad-btn" style="flex:1;background:#4cd964;color:#000;">🤝 Chào NPC</button>
+        </div>
+        <button id="pad-brake" class="pedal-btn pedal-brake">
+          <span style="font-size:18px;">🛑</span>
+          <span>THẮNG</span>
+          <span style="font-size:10px;opacity:0.85;">(Giữ Cò)</span>
+        </button>
+        <button id="pad-gas" class="pedal-btn pedal-gas">
+          <span style="font-size:18px;">⚡</span>
+          <span>ĐẠP GA</span>
+          <span style="font-size:10px;opacity:0.85;">(Giữ Cò)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================== -->
+  <!-- PATCH V135 CHO INDEX.HTML: SỬA NÚT 3 GẠCH (☰) & PHÂN QUYỀN VR / MOBILE -->
+  <!-- ====================================================================== -->
+  <style>
+    /* 1. Bản đồ Map tròn nằm góc trên bên trái, không đè lên bất kỳ nút nào */
+    #circular-minimap-widget {
+      top: 14px !important;
+      bottom: auto !important;
+      left: 14px !important;
+      width: 148px !important;
+      height: 148px !important;
+      z-index: 155 !important;
+      display: block !important;
+    }
+    #minimap-legend {
+      top: 168px !important;
+      bottom: auto !important;
+      left: 14px !important;
+      z-index: 155 !important;
+    }
+
+    /* 2. Nút 3 gạch (Hamburger Menu) cố định ở góc trên bên phải */
+    #hamburger-menu-btn {
+      position: fixed !important;
+      top: 12px !important;
+      right: 12px !important;
+      z-index: 9990 !important;
+      width: 44px !important;
+      height: 44px !important;
+      border-radius: 50% !important;
+      border: 2px solid #00ff88 !important;
+      background: rgba(6, 12, 24, 0.96) !important;
+      color: #00ff88 !important;
+      font-size: 22px !important;
+      font-weight: bold !important;
+      cursor: pointer !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.9) !important;
+    }
+
+    /* 3. Ghi đè triệt để lỗi display:none của mobile-clean-ui để bấm 3 gạch LUÔN HIỆN MENU */
+    body #top-bar,
+    body.mobile-clean-ui #top-bar {
+      position: fixed !important;
+      top: 12px !important;
+      right: 64px !important;
+      left: auto !important;
+      display: flex !important;
+      flex-wrap: wrap !important;
+      justify-content: flex-end !important;
+      max-width: calc(100vw - 230px) !important;
+      z-index: 9985 !important;
+      transform: scaleX(0) !important;
+      transform-origin: right center !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transition: transform 0.22s ease, opacity 0.2s ease !important;
+    }
+    body #top-bar.menu-expanded,
+    body.mobile-clean-ui #top-bar.menu-expanded {
+      display: flex !important;
+      transform: scaleX(1) !important;
+      opacity: 1 !important;
+      pointer-events: auto !important;
+    }
+
+    /* 4. Phân quyền hiển thị: Trên Kính VR (body.device-vr-quest) ẩn toàn bộ nút Mobile dư thừa */
+    body.device-vr-quest #mob-quick-bar,
+    body.device-vr-quest .mobile-only-ui,
+    body.device-vr-quest #quest-laser-cockpit {
+      display: none !important;
+    }
+
+    /* Trên Điện thoại (body.device-mobile-phone): Đặt cụm nút điều khiển ở góc dưới để KHÔNG ĐÈ nút 3 gạch */
+    body.device-mobile-phone #mob-quick-bar {
+      position: fixed !important;
+      bottom: 14px !important;
+      top: auto !important;
+      right: 14px !important;
+      z-index: 180 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 6px !important;
+    }
+  </style>
+
+  <button id="hamburger-menu-btn" title="Bấm để Mở / Thu gọn Thanh Menu">☰</button>
+
+  <script>
+    (function setupDeviceDetectionAndHamburgerMenu() {
+      const ua = navigator.userAgent || '';
+      const isQuestVR = /Quest|OculusBrowser|Pacific|VR|Headset/i.test(ua);
+      const isTouchMobile = !isQuestVR && (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.maxTouchPoints > 1 && window.innerWidth < 1024));
+
+      // Lưu trạng thái thiết bị toàn cục để app.js phân quyền nút bấm và góc nhìn
+      window.__DETECTED_DEVICE_TYPE__ = isQuestVR ? 'VR_QUEST_3' : (isTouchMobile ? 'MOBILE_PHONE' : 'VR_OR_PC');
+
+      if (!isTouchMobile) {
+        // Nếu là Kính Meta Quest 3 hoặc PC: Xóa sạch giao diện điện thoại bị đè ở mép trên
+        document.body.classList.remove('mobile-clean-ui', 'show-mobile-map', 'show-mobile-topbar');
+        document.body.classList.add('device-vr-quest');
+        // Ẩn các nút tự sinh của mobile nếu có
+        window.addEventListener('DOMContentLoaded', () => {
+          ['mob-lean', 'mob-swap', 'mob-door', 'mob-yt'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el && el.parentElement) el.parentElement.style.display = 'none';
+          });
+          // Ẩn các thanh bar nhỏ màu vàng/xanh của mobile ở mép trên
+          document.querySelectorAll('button, div').forEach((el) => {
+            const txt = (el.textContent || '').trim();
+            if ((txt === 'Lên/Xuống' || txt === 'Đổi Ghế' || txt === 'Thò Đầu' || txt.includes('Nghiêng ĐT')) && el.id !== 'btn-enter-exit-car') {
+              if (el.parentElement && el.parentElement.id !== 'function-panel' && el.parentElement.id !== 'top-bar') {
+                el.parentElement.style.display = 'none';
+              }
+            }
+          });
+        });
+      } else {
+        document.body.classList.add('device-mobile-phone');
+      }
+
+      // Gắn sự kiện đóng/mở thanh Menu 3 gạch (☰)
+      const menuBtn = document.getElementById('hamburger-menu-btn');
+      const topBar = document.getElementById('top-bar');
+      if (menuBtn && topBar) {
+        menuBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const expanded = topBar.classList.toggle('menu-expanded');
+          menuBtn.textContent = expanded ? '✖' : '☰';
+          menuBtn.style.color = expanded ? '#ff3b30' : '#00ff88';
+          menuBtn.style.borderColor = expanded ? '#ff3b30' : '#00ff88';
+        });
+      }
+    })();
+  </script>
+
+<script type="module">
+// HỖ TRỢ CHẠY 100% OFFLINE KHI KẾT NỐI WI-FI SOFTAP CỦA ESP32 (KHÔNG BỊ TREO TẢI CDN)
+(async function initOptionalSupabaseMultiScreen() {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return;
+  try {
+    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+    const SUPABASE_URL = "https://wrzybugwkohwltvexmhy.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_VkC2kikQlixIcxnmDvxNZQ_xAWSQs9O";
+    if (SUPABASE_URL.startsWith("https://")) {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const channel = supabase.channel("rolls-royce-vr-room", {
+        config: { broadcast: { self: false } }
+      });
+      channel
+        .on("broadcast", { event: "YT_MULTISCREEN_SYNC" }, ({ payload }) => {
+          if (payload && window.playExtractedVideoUrlInFrame) {
+            window.playExtractedVideoUrlInFrame({
+              videoId: payload.videoId,
+              title: payload.title,
+              directUrl: payload.streamUrl,
+              duration: payload.durationText
+            });
+          }
+        })
+        .subscribe();
+      window.supabaseChannel = channel;
+    }
+  } catch (err) {
+    console.info("[Offline Mode] Bỏ qua Supabase CDN; sử dụng WebSocket nội bộ để đồng bộ.");
+  }
+})();
+</script>
+  <script type="module" src="./app.js"></script>
+  <script type="module" src="./youtube-dom-extractor.js"></script>
+  <!-- ====================================================================== -->
+  <!-- PATCH V140 CHO INDEX.HTML: THÊM MÀU HỒNG & ĐIỀU PHỐI CỨU HỎA / CẤP CỨU -->
+  <!-- ====================================================================== -->
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      // 1. Thêm tùy chọn Màu Hồng Rose Quartz & Hồng Pastel vào bảng chọn màu xe (#car-color-select)
+      const colorSelect = document.getElementById('car-color-select');
+      if (colorSelect && !colorSelect.querySelector('option[value="#ff758f"]')) {
+        const optPink1 = document.createElement('option');
+        optPink1.value = '#ff758f';
+        optPink1.textContent = '🌸 Hồng Rose Quartz (Mới - Bóng Dịu)';
+        const optPink2 = document.createElement('option');
+        optPink2.value = '#ffafcc';
+        optPink2.textContent = '🌷 Hồng Pastel Sakura (Mới - Dễ Nhìn)';
+        colorSelect.appendChild(optPink1);
+        colorSelect.appendChild(optPink2);
+      }
+
+      // 2. Thêm hàng nút kích hoạt nhanh Chữa Cháy, Cấp Cứu Băng Ca & Ngồi Sau Xe Máy/Xe Đạp vào Bảng Chức Năng
+      const funcPanel = document.getElementById('function-panel');
+      if (funcPanel && !document.getElementById('v140-dispatch-row')) {
+        const row = document.createElement('div');
+        row.id = 'v140-dispatch-row';
+        row.className = 'row';
+        row.innerHTML = `
+          <button id="btn-trigger-fire-event" class="act-btn" style="background:#ff4d6d;color:#fff;">🔥 Báo Cháy (Xe Cứu Hỏa Xịt Nước)</button>
+          <button id="btn-trigger-ambulance" class="act-btn" style="background:#00bbf9;color:#000;">🚑 Gọi Cấp Cứu (Băng Ca)</button>
+          <button id="btn-sit-pillion-bike" class="act-btn" style="background:#ffafcc;color:#000;">🛵 Ngồi Sau Xe Máy/Đạp NPC</button>
+        `;
+        funcPanel.appendChild(row);
+      }
+    });
+  </script>
+  <!-- ====================================================================== -->
+  <!-- PATCH V145 CHO INDEX.HTML: NÚT DI CHUYỂN MOBILE, GHẾ XE LỚN & MÀU HỒNG -->
+  <!-- ====================================================================== -->
+  <style>
+    /* 1. Khi mở trên Điện thoại: Hiện cụm nút Di Chuyển (#quest-laser-cockpit) gọn ở 2 góc dưới */
+    body.device-mobile-phone #quest-laser-cockpit {
+      display: flex !important;
+      bottom: 10px !important;
+      left: 10px !important;
+      right: 10px !important;
+      z-index: 185 !important;
+      pointer-events: none;
+    }
+    body.device-mobile-phone #quest-laser-cockpit .cockpit-pad {
+      transform: scale(0.76);
+      transform-origin: bottom center;
+      pointer-events: auto;
+      background: rgba(8, 14, 26, 0.82);
+    }
+
+    /* 2. Thanh điều khiển chuyên dụng khi lên Xe Bus / Xe Cứu Hỏa / Xe Cấp Cứu / Xe Tải */
+    #heavy-vehicle-cockpit-bar {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 210;
+      display: flex;
+      gap: 8px;
+      background: rgba(8, 14, 28, 0.94);
+      border: 2px solid #00e5ff;
+      border-radius: 28px;
+      padding: 8px 14px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.85);
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 92vw;
+    }
+    .hv-btn {
+      padding: 7px 12px;
+      border-radius: 18px;
+      border: none;
+      font-size: 11.5px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .hv-btn:active {
+      transform: scale(0.95);
+    }
+  </style>
+
+  <!-- Thanh chọn vị trí ngồi góc nhìn thứ 1 (Trái / Phải / Cuối dãy) & Vòi xịt nóc xe cứu hỏa -->
+  <div id="heavy-vehicle-cockpit-bar">
+    <button id="btn-seat-left-row" class="hv-btn" style="background:#00bbf9;color:#000;">💺 Ghế Dãy Trái</button>
+    <button id="btn-seat-right-row" class="hv-btn" style="background:#4cd964;color:#000;">💺 Ghế Dãy Phải</button>
+    <button id="btn-seat-rear-end" class="hv-btn" style="background:#ffd60a;color:#000;">🚌 Ghế Cuối Dãy Xe</button>
+    <button id="btn-seat-driver-cab" class="hv-btn" style="background:#9b5de5;color:#fff;">🛞 Về Ghế Lái</button>
+    <button id="btn-fire-roof-turret" class="hv-btn" style="background:#ff4d6d;color:#fff;">🚒 Ngồi Nóc Vòi Xịt (Cứu Hỏa)</button>
+    <button id="btn-spray-water-cannon" class="hv-btn" style="background:#00f5d4;color:#000;">💦 BẮN VÒI NƯỚC (GIỮ)</button>
+  </div>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      // Cập nhật danh sách phối màu & kiểu dáng Bespoke hoàn toàn mới (Bao gồm 3 phiên bản Màu Hồng Đặc Biệt)
+      const colorSelect = document.getElementById('car-color-select');
+      if (colorSelect) {
+        colorSelect.innerHTML = `
+          <option value="ROYAL_SAPPHIRE" selected>⚫ Đen Sapphire Nguyên Bản (Nappa Kem - Gỗ Óc Chó)</option>
+          <option value="PINK_PEONY_GOLD">🌸 Hồng Mẫu Đơn Hoàng Gia (Phối Vàng Rose Gold - Ghế Hồng Kem)</option>
+          <option value="PINK_SAKURA_WHITE">🌷 Hồng Đào Sakura (Mui Trắng Ngọc Trai - Nội Thất Trắng Hồng)</option>
+          <option value="PINK_CYBER_CARBON">🌺 Hồng Cyber Rose (Nắp Capo Đen Carbon - Ghế Thể Thao Đen Viền Hồng)</option>
+          <option value="MINT_TIFFANY_LUX">💎 Xanh Mint Tiffany (Mui Bạc Silk - Nội Thất Kem Sữa)</option>
+          <option value="SUNSET_CORAL_GT">🧡 Cam San Hô GT (Bodykit Thể Thao - Ghế Da Cognac)</option>
+          <option value="LAVENDER_VELVET">🔮 Tím Lavender Ánh Kim (Phối Bạc Chrome - Nội Thất Tím Nhung)</option>
+          <option value="EMERALD_GOLD_VIP">🟢 Xanh Lục Bảo Hoàng Gia (Viền Vàng 24K - Nội Thất Da Bò)</option>
+          <option value="PEARL_GLACIER_SKY">⚪ Trắng Băng Tuyết (Mui Xanh Băng - Nội Thất Xanh Navy)</option>
+        `;
+      }
+    });
+  </script>
+  <!-- ====================================================================== -->
+  <!-- PATCH V150 CHO INDEX.HTML: ẨN/HIỆN NÚT GHẾ BUS THEO XE & CÒI HÚ TURRET -->
+  <!-- ====================================================================== -->
+  <style>
+    /* Mặc định ẩn thanh chọn ghế xe lớn; chỉ hiện đúng nút khi người chơi thực sự lên Xe Bus hoặc Xe Cứu Hỏa */
+    #heavy-vehicle-cockpit-bar {
+      display: none !important;
+    }
+    #heavy-vehicle-cockpit-bar.active-bus-bar,
+    #heavy-vehicle-cockpit-bar.active-fire-bar,
+    #heavy-vehicle-cockpit-bar.active-heavy-bar {
+      display: flex !important;
+    }
+    .bus-only-seat-btn {
+      display: none;
+    }
+    #heavy-vehicle-cockpit-bar.active-bus-bar .bus-only-seat-btn,
+    #heavy-vehicle-cockpit-bar.active-heavy-bar .bus-only-seat-btn {
+      display: inline-block;
+    }
+    .fire-only-turret-btn {
+      display: none;
+    }
+    #heavy-vehicle-cockpit-bar.active-fire-bar .fire-only-turret-btn {
+      display: inline-block;
+    }
+  </style>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const hvBar = document.getElementById('heavy-vehicle-cockpit-bar');
+      if (!hvBar) return;
+
+      // Gắn class phân loại cho các nút ghế Bus và nút Nóc Vòi Xịt Cứu Hỏa
+      ['btn-seat-left-row', 'btn-seat-right-row', 'btn-seat-rear-end', 'btn-seat-driver-cab'].forEach((id) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.add('bus-only-seat-btn');
+      });
+      ['btn-fire-roof-turret', 'btn-spray-water-cannon'].forEach((id) => {
+        const btn = document.getElementById(id);
+        if (btn) btn.classList.add('fire-only-turret-btn');
+      });
+
+      // Thêm nút Bật/Tắt Còi Hú Đặc Biệt khi ngồi trên ghế Nóc Vòi Xịt Xe Cứu Hỏa
+      if (!document.getElementById('btn-turret-siren-wail')) {
+        const sirenBtn = document.createElement('button');
+        sirenBtn.id = 'btn-turret-siren-wail';
+        sirenBtn.className = 'hv-btn fire-only-turret-btn';
+        sirenBtn.style.cssText = 'background:#ffd60a;color:#000;';
+        sirenBtn.textContent = '🚨 Bật Còi Hú Vòi Xịt (Siren)';
+        hvBar.appendChild(sirenBtn);
+      }
+    });
+  </script>
+
+  <!-- ====================================================================== -->
+  <!-- PATCH V155 CHO INDEX.HTML: THANH CHỈNH ĐÈN TRẦN RIÊNG TỪNG DÒNG XE     -->
+  <!-- ====================================================================== -->
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const funcPanel = document.getElementById('function-panel');
+      if (!funcPanel || document.getElementById('v155-dome-light-row')) return;
+
+      const domeRow = document.createElement('div');
+      domeRow.id = 'v155-dome-light-row';
+      domeRow.className = 'row';
+      domeRow.style.cssText = 'background:rgba(212,175,55,0.12);padding:6px 8px;border-radius:6px;border:1px solid #d4af37;margin-top:6px;';
+      domeRow.innerHTML = `
+        <label style="width:155px;color:#ffd60a;">
+          💡 Đèn Trần [<span id="dome-veh-name">RR</span>] (<span id="val-dome-light">1.8</span>x):
+        </label>
+        <input id="slider-dome-light" type="range" min="0.0" max="5.0" step="0.1" value="1.8" />
+        <button id="btn-dome-color-cycle" class="act-btn" style="background:#ffd60a;color:#000;flex:0.48;">
+          🎨 Đổi Ánh Đèn
+        </button>
+      `;
+      funcPanel.appendChild(domeRow);
+    });
+  </script>
+
+  <!-- ====================================================================== -->
+  <!-- PATCH V160 CHO INDEX.HTML: TỐI GIẢN GIAO DIỆN ĐIỆN THOẠI, ẨN BẢNG      -->
+  <!-- BÀN ĐẠP VƯỚNG MẮT, THU GỌN NÚT 3 GẠCH & HỖ TRỢ FULLSCREEN MƯỢT MÀ      -->
+  <!-- ====================================================================== -->
+  <style>
+    /* 1. Ẩn hoàn toàn 2 bảng điều khiển lớn (#quest-laser-cockpit) trên cả Điện thoại & PC để thoáng màn hình */
+    #quest-laser-cockpit,
+    body.device-mobile-phone #quest-laser-cockpit,
+    body.mobile-clean-ui #quest-laser-cockpit {
+      display: none !important;
+    }
+
+    /* 2. Chỉnh lại tỉ lệ nút 3 gạch (☰) gọn gàng (36x36px) ở sát góc trên phải, không đè lên bất kỳ nút nào */
+    #hamburger-menu-btn {
+      top: 10px !important;
+      right: 10px !important;
+      width: 36px !important;
+      height: 36px !important;
+      font-size: 18px !important;
+      border-width: 1.5px !important;
+      z-index: 10001 !important;
+    }
+
+    /* 3. Thu gọn Map tròn trên màn hình Điện thoại để không chiếm diện tích */
+    @media screen and (max-width: 920px) {
+      #circular-minimap-widget {
+        width: 96px !important;
+        height: 96px !important;
+        top: 8px !important;
+        left: 8px !important;
+        border-width: 2px !important;
+      }
+      #minimap-legend {
+        display: none !important;
+      }
+      #youtube-app-modal {
+        width: 96vw !important;
+        height: 86vh !important;
+        top: 50% !important;
+        left: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        z-index: 10005 !important;
+      }
+      #youtube-app-modal .yt-body {
+        flex-direction: column !important;
+        height: calc(86vh - 50px) !important;
+      }
+      #youtube-app-modal .yt-player-area {
+        flex: none !important;
+        height: 48% !important;
+      }
+      #youtube-app-modal .yt-playlist-side {
+        flex: 1 !important;
+        border-left: none !important;
+        border-top: 1px solid #333 !important;
+      }
+    }
+
+    /* 4. Thanh thao tác nhanh siêu gọn dành riêng cho Điện thoại (Nằm gọn sát mép dưới) */
+    #v160-mobile-minimal-dock {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9500;
+      display: none;
+      gap: 6px;
+      background: rgba(6, 12, 24, 0.86);
+      border: 1px solid #00e5ff;
+      padding: 5px 10px;
+      border-radius: 24px;
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.8);
+    }
+    body.device-mobile-phone #v160-mobile-minimal-dock {
+      display: flex !important;
+    }
+    .mob-min-btn {
+      background: #162438;
+      color: #fff;
+      border: 1px solid #3a506b;
+      border-radius: 16px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .mob-min-btn:active {
+      background: #00ff88;
+      color: #000;
+    }
+  </style>
+
+  <!-- Thanh Dock tối giản cho Điện thoại (Không che tầm nhìn, dễ bấm bằng 1 ngón tay) -->
+  <div id="v160-mobile-minimal-dock">
+    <button id="v160-mob-walk" class="mob-min-btn" style="background:#00ff88;color:#000;">🏃 Đi Tới (Giữ)</button>
+    <button id="v160-mob-door" class="mob-min-btn" style="background:#00e5ff;color:#000;">🚪 Lên/Xuống</button>
+    <button id="v160-mob-npc-car" class="mob-min-btn" style="background:#ffd60a;color:#000;">🚕 Đi Nhờ NPC</button>
+    <button id="v160-mob-swap" class="mob-min-btn" style="background:#4cd964;color:#000;">🔄 Đổi Lái / Ghế Phụ</button>
+    <button id="v160-mob-center" class="mob-min-btn" style="background:#00f5d4;color:#000;">🎯 Cân Bằng Tâm (R)</button>
+    <button id="v160-mob-yt" class="mob-min-btn" style="background:#ff0000;color:#fff;">▶ YouTube</button>
+    <button id="v160-mob-fs" class="mob-min-btn" style="background:#9b5de5;color:#fff;">⛶ Full</button>
+  </div>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      // Xóa các thanh nút trùng lặp ở mép trên trên điện thoại (như nút紫 Menu bị đè lên nút 3 gạch)
+      document.querySelectorAll('button, div').forEach((el) => {
+        const txt = (el.textContent || '').trim();
+        if (txt === '☰ Menu' || txt === '🧭 Nghiêng 360°: TẮT' || txt === '🗺️ Map') {
+          if (el.parentElement && el.parentElement.id !== 'top-bar' && el.parentElement.id !== 'v160-mobile-minimal-dock') {
+            el.parentElement.style.display = 'none';
+          }
+        }
+      });
+
+      // Nút Fullscreen đa nền tảng (Hỗ trợ cả Android Fullscreen API và iOS Safari Viewport Lock)
+      const fsBtn = document.getElementById('v160-mob-fs');
+      fsBtn?.addEventListener('click', () => {
+        const docEl = document.documentElement;
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+          if (docEl.requestFullscreen) docEl.requestFullscreen().catch(() => {});
+          else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+          window.scrollTo(0, 1);
+          document.body.classList.toggle('mobile-immersive-fs');
+          fsBtn.textContent = '🗗 Thoát';
+        } else {
+          if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+          else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+          fsBtn.textContent = '⛶ Full';
+        }
+      });
+
+      document.getElementById('v160-mob-door')?.addEventListener('click', () => {
+        document.getElementById('btn-enter-exit-car')?.click();
+      });
+      document.getElementById('v160-mob-npc-car')?.addEventListener('click', () => {
+        document.getElementById('btn-board-npc-vehicle')?.click();
+      });
+      document.getElementById('v160-mob-swap')?.addEventListener('click', () => {
+        document.getElementById('btn-swap-driver')?.click();
+      });
+      document.getElementById('v160-mob-center')?.addEventListener('click', () => {
+        if (typeof window.autoCenterBalancePassengerView === 'function') window.autoCenterBalancePassengerView();
+      });
+      document.getElementById('v160-mob-yt')?.addEventListener('click', () => {
+        document.getElementById('btn-open-yt-modal')?.click();
+      });
+
+      // Giữ nút "🏃 Đi Tới (Giữ)" trên điện thoại để đi bộ hoặc đạp ga mượt mà
+      const walkBtn = document.getElementById('v160-mob-walk');
+      const padUp = document.getElementById('pad-up');
+      if (walkBtn && padUp) {
+        const startMove = (e) => {
+          e.preventDefault();
+          padUp.dispatchEvent(new PointerEvent('pointerdown'));
+        };
+        const stopMove = () => {
+          padUp.dispatchEvent(new PointerEvent('pointerup'));
+        };
+        walkBtn.addEventListener('pointerdown', startMove);
+        walkBtn.addEventListener('pointerup', stopMove);
+        walkBtn.addEventListener('pointerleave', stopMove);
+        walkBtn.addEventListener('pointercancel', stopMove);
+      }
+    });
+  </script>
+
+  <!-- ====================================================================== -->
+  <!-- PATCH V165 CHO INDEX.HTML: BẢNG CHỌN NHANH 3 XE TRONG GARA CỦA TOÀN    -->
+  <!-- ====================================================================== -->
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const funcPanel = document.getElementById('function-panel');
+      if (funcPanel && !document.getElementById('v165-toan-garage-row')) {
+        const title = document.createElement('div');
+        title.className = 'section-title';
+        title.style.color = '#00ff88';
+        title.innerHTML = '🏆 GARA SIÊU XE CỦA TOÀN:';
+
+        const row = document.createElement('div');
+        row.id = 'v165-toan-garage-row';
+        row.className = 'row';
+        row.style.cssText = 'background:rgba(0,255,136,0.1);padding:6px;border-radius:8px;border:1px solid #00ff88;';
+        row.innerHTML = `
+          <button id="btn-garage-rr" class="act-btn" style="background:#d4af37;color:#000;">👑 1. Rolls-Royce Ghost</button>
+          <button id="btn-garage-coupe" class="act-btn" style="background:#ff2a85;color:#fff;">🏎️ 2. Sport Coupe GT</button>
+          <button id="btn-garage-moto" class="act-btn" style="background:#00e5ff;color:#000;">🏍️ 3. Moto PKL R1</button>
+        `;
+        funcPanel.prepend(row);
+        funcPanel.prepend(title);
+      }
+    });
+  </script>
+
+  <!-- ====================================================================== -->
+  <!-- PATCH V170 CHO INDEX.HTML: NÚT NHANH CỬA CUỐN GRAFFITI TOÀN & 360° VR  -->
+  <!-- ====================================================================== -->
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const dock = document.getElementById('v160-mobile-minimal-dock');
+      if (dock && !document.getElementById('v170-dock-tilt360')) {
+        const tiltBtn = document.createElement('button');
+        tiltBtn.id = 'v170-dock-tilt360';
+        tiltBtn.className = 'mob-min-btn';
+        tiltBtn.style.cssText = 'background:#00e5ff;color:#000;';
+        tiltBtn.textContent = '🧭 360° BẬT';
+        tiltBtn.addEventListener('click', () => {
+          document.getElementById('btn-v170-tilt-360')?.click();
+          const mainBtn = document.getElementById('btn-v170-tilt-360');
+          if (mainBtn) {
+            tiltBtn.textContent = mainBtn.textContent.includes('BẬT') ? '🧭 360° BẬT' : '🧭 360° TẮT';
+          }
+        });
+        dock.appendChild(tiltBtn);
+
+        const doorBtn = document.createElement('button');
+        doorBtn.id = 'v170-dock-roller';
+        doorBtn.className = 'mob-min-btn';
+        doorBtn.style.cssText = 'background:#ffd60a;color:#000;';
+        doorBtn.textContent = '🚪 Cửa Gara';
+        doorBtn.addEventListener('click', () => {
+          document.getElementById('btn-v170-roller-door')?.click();
+        });
+        dock.appendChild(doorBtn);
+      }
+    });
+  </script>
+  <!-- [SURGICAL UI FIX] PHÂN LOẠI ĐÚNG 3 THIẾT BỊ (VR / MOBILE / PC) & GIỮ CUỘN DANH SÁCH NHẠC -->
+  <style>
+    /* Chỉ khóa gesture cuộn trang trên vùng vẽ 3D canvas, giữ nguyên khả năng cuộn cho danh sách nhạc và bảng điều khiển */
+    html, body {
+      touch-action: manipulation !important;
+    }
+    canvas {
+      touch-action: none !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+    #yt-results-list, .yt-playlist-side, .floating-panel {
+      touch-action: pan-y !important;
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+  </style>
+  <script>
+    (function fixThreeWayDeviceClassification() {
+      const ua = navigator.userAgent || '';
+      const isQuestVR = /Quest|OculusBrowser|Pacific|VR|Headset/i.test(ua);
+      const isTouchMobile = !isQuestVR && (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.maxTouchPoints > 1 && window.innerWidth <= 1024));
+
+      document.body.classList.remove('device-vr-quest', 'device-mobile-phone', 'device-pc-desktop');
+
+      if (isQuestVR) {
+        window.__DETECTED_DEVICE_TYPE__ = 'VR_QUEST_3';
+        document.body.classList.add('device-vr-quest');
+      } else if (isTouchMobile) {
+        window.__DETECTED_DEVICE_TYPE__ = 'MOBILE_PHONE';
+        document.body.classList.add('device-mobile-phone');
+      } else {
+        window.__DETECTED_DEVICE_TYPE__ = 'PC_DESKTOP';
+        document.body.classList.add('device-pc-desktop');
+      }
+    })();
+  </script>
+  <!-- ====================================================================== -->
+  <!-- PATCH V250 CHO INDEX.HTML:                                             -->
+  <!-- 1. BẢNG KẾT NỐI CAM TRƯỚC + CAM LÙI ESP32 & MẠCH ESP32 CONTROLLER      -->
+  <!-- 2. HIỂN THỊ TRỰC QUAN CAM TRƯỚC / CAM LÙI TỰ ĐỘNG KHI LÙI XE (HTTP/HTTPS) -->
+  <!-- ====================================================================== -->
+  <style>
+    #v250-dual-cam-hud {
+      position: fixed;
+      top: 58px;
+      right: 12px;
+      z-index: 9400;
+      display: none !important; /* Ẩn hoàn toàn khung 2D để không che khuất tầm nhìn lái xe */
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: auto;
+      transition: all 0.25s ease;
+    }
+    .v250-cam-box {
+      width: 210px;
+      height: 118px;
+      background: rgba(8, 15, 30, 0.92);
+      border: 1.5px solid rgba(0, 229, 255, 0.65);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
+    }
+    .v250-cam-box.rear-active-reverse {
+      width: 320px;
+      height: 180px;
+      border: 2.5px solid #ff2a55;
+      box-shadow: 0 0 22px rgba(255, 42, 85, 0.75);
+    }
+    .v250-cam-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .v250-cam-label {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #00ff88;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      z-index: 2;
+    }
+    .v250-reverse-guidelines {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      background:
+        linear-gradient(to top, rgba(255, 0, 50, 0.32) 0%, transparent 28%),
+        repeating-linear-gradient(to top, transparent 0px, transparent 22px, rgba(255, 214, 10, 0.55) 23px, transparent 24px);
+    }
+    .v250-cam-box.rear-active-reverse .v250-reverse-guidelines {
+      display: block;
+    }
+    @media (max-width: 768px) {
+      .v250-cam-box { width: 145px; height: 82px; }
+      .v250-cam-box.rear-active-reverse { width: 220px; height: 124px; }
+    }
+  </style>
+
+  <div id="v250-dual-cam-hud">
+    <div id="v250-front-cam-card" class="v250-cam-box">
+      <div class="v250-cam-label" id="v250-front-cam-status">📹 CAM TRƯỚC: ĐANG NỐI...</div>
+      <img id="v250-front-cam-img" crossorigin="anonymous" alt="ESP32 Front Cam" />
+    </div>
+    <div id="v250-rear-cam-card" class="v250-cam-box">
+      <div class="v250-cam-label" id="v250-rear-cam-status" style="color:#ffd60a;">🔙 CAM LÙI: ĐANG NỐI...</div>
+      <img id="v250-rear-cam-img" crossorigin="anonymous" alt="ESP32 Rear Cam" />
+      <div class="v250-reverse-guidelines"></div>
+    </div>
+  </div>
+
+  <script>
+    function initV250Esp32HwBox() {
+      const funcPanel = document.getElementById('function-panel');
+      if (funcPanel && !document.getElementById('v250-esp32-hw-box')) {
+        const hwBox = document.createElement('div');
+        hwBox.id = 'v250-esp32-hw-box';
+        hwBox.style.cssText = 'background:rgba(0,229,255,0.08);border:1.5px solid #00e5ff;border-radius:10px;padding:8px;margin-bottom:8px;';
+        hwBox.innerHTML = `
+          <div style="font-weight:800;color:#00e5ff;font-size:12px;margin-bottom:6px;">
+            📡 KẾT NỐI ĐỒNG BỘ ESP32 & VÔ LĂNG GOG808 (HTTP & HTTPS):
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-bottom:6px;">
+            <input id="v250-ip-front" type="text" placeholder="IP Cam Trước (VD: 192.168.1.101)" style="background:#0f172a;color:#00ff88;border:1px solid #334155;border-radius:5px;padding:4px;font-size:11px;" />
+            <input id="v250-ip-rear" type="text" placeholder="IP Cam Lùi (VD: 192.168.1.102)" style="background:#0f172a;color:#ffd60a;border:1px solid #334155;border-radius:5px;padding:4px;font-size:11px;" />
+            <input id="v250-ip-ctrl" type="text" placeholder="IP Mạch Xe (VD: 192.168.1.100)" style="background:#0f172a;color:#38bdf8;border:1px solid #334155;border-radius:5px;padding:4px;font-size:11px;" />
+          </div>
+          <div class="row" style="gap:4px;">
+            <button id="v250-btn-connect-all" class="act-btn" style="background:#00ff88;color:#000;font-weight:700;">🔗 Kết Nối Cả 2 Cam & Mạch Xe</button>
+            <button id="v250-btn-toggle-cam-hud" class="act-btn" style="background:#0284c7;color:#fff;">👁️ Ẩn/Hiện Cửa Sổ 2 Cam</button>
+            <button id="v250-btn-test-esp32" class="act-btn" style="background:#f59e0b;color:#000;">⚡ Test Nhích Ga Xe Thật</button>
+          </div>
+          <div id="v250-hw-telemetry-bar" style="font-size:11px;color:#e2e8f0;margin-top:5px;font-family:monospace;">
+            🎮 Thiết bị: Đang quét GOG808 / Tay cầm Quest 3... | 📡 ESP32: Chờ lệnh
+          </div>
+        `;
+        funcPanel.prepend(hwBox);
+      }
+    }
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initV250Esp32HwBox);
+    } else {
+      initV250Esp32HwBox();
+    }
+  </script>
+<!-- ============================================================================ -->
+<!-- [OPTIMIZED UI MASTER V260] LIQUID GEAR WIDGET & MOBILE OPTIMIZATION         -->
+<!-- ============================================================================ -->
+<style id="v260-master-ui-styles">
+  /* 1. Bố cục Minimap góc trên trái & Nút Bánh Răng Liquid Widget ngay bên dưới */
+  #circular-minimap-widget {
+    top: 14px !important;
+    left: 14px !important;
+    bottom: auto !important;
+    z-index: 950 !important;
+  }
+  #minimap-legend {
+    display: none !important;
+  }
+
   #liquid-gear-widget-container {
-    position: fixed !important;
-    top: 176px !important;
-    left: 16px !important;
-    z-index: 9992 !important;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    pointer-events: auto;
-    font-family: 'Segoe UI', system-ui, sans-serif;
+    position: fixed;
+    top: 196px;
+    left: 14px;
+    z-index: 960;
+    width: 248px;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    user-select: none;
+    pointer-events: none;
   }
 
   #liquid-gear-trigger-btn {
-    width: 46px;
-    height: 46px;
-    border-radius: 50%;
-    border: 2px solid #00f5d4;
-    background: radial-gradient(circle at 30% 30%, rgba(0, 245, 212, 0.35), rgba(10, 18, 36, 0.94));
-    color: #00f5d4;
-    font-size: 23px;
-    cursor: pointer;
+    pointer-events: auto;
     display: flex;
     align-items: center;
-    justify-content: center;
-    box-shadow: 0 6px 22px rgba(0, 245, 212, 0.4), inset 0 0 12px rgba(255, 117, 143, 0.35);
+    gap: 10px;
+    width: 100%;
+    padding: 9px 14px;
+    border-radius: 24px;
+    border: 1px solid rgba(0, 229, 255, 0.55);
+    background: linear-gradient(135deg, rgba(10, 18, 34, 0.92), rgba(20, 36, 62, 0.88));
+    color: #00f5d4;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
     backdrop-filter: blur(12px);
-    transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.18);
+    transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease;
   }
-
   #liquid-gear-trigger-btn:hover {
-    transform: scale(1.12) rotate(45deg);
-    box-shadow: 0 8px 28px rgba(0, 245, 212, 0.7);
+    border-color: #00f5d4;
+    box-shadow: 0 10px 28px rgba(0, 245, 212, 0.28);
+    transform: translateY(-1px);
+  }
+  #liquid-gear-trigger-btn .gear-icon {
+    display: inline-block;
+    font-size: 16px;
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #liquid-gear-trigger-btn.liquid-open .gear-icon {
+    transform: rotate(180deg);
   }
 
-  #liquid-gear-trigger-btn.liquid-open {
-    transform: rotate(135deg) scale(1.06);
-    border-color: #ff758f;
-    color: #ff758f;
-  }
-
-  /* Danh sách cuộn Liquid Widget */
+  /* Danh sách cuộn Liquid Glass */
   #liquid-gear-menu-list {
-    margin-top: 10px;
-    width: 242px;
+    pointer-events: auto;
+    margin-top: 8px;
     max-height: 0;
     opacity: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 0 10px;
-    border-radius: 22px;
-    background: linear-gradient(160deg, rgba(8, 16, 32, 0.92), rgba(18, 28, 52, 0.88));
-    border: 1.5px solid rgba(0, 229, 255, 0.45);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), inset 0 1px 18px rgba(0, 229, 255, 0.18);
-    backdrop-filter: blur(18px);
-    transform: scaleY(0.35) translateY(-28px);
-    transform-origin: top left;
-    pointer-events: none;
+    overflow-y: hidden;
+    border-radius: 18px;
+    background: rgba(9, 15, 28, 0.94);
+    border: 1px solid rgba(0, 229, 255, 0.0);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65);
     transition:
-      max-height 0.52s cubic-bezier(0.22, 1.35, 0.36, 1),
-      opacity 0.32s ease,
-      transform 0.52s cubic-bezier(0.34, 1.56, 0.64, 1),
-      padding 0.35s ease;
+      max-height 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.28s ease,
+      padding 0.28s ease,
+      border-color 0.28s ease;
+    padding: 0 8px;
   }
-
   #liquid-gear-menu-list.liquid-expanded {
-    max-height: 64vh;
+    max-height: 58vh;
     opacity: 1;
-    padding: 12px 10px;
-    transform: scaleY(1) translateY(0);
-    pointer-events: auto;
+    overflow-y: auto;
+    padding: 8px;
+    border-color: rgba(0, 229, 255, 0.42);
+  }
+  #liquid-gear-menu-list::-webkit-scrollbar {
+    width: 5px;
+  }
+  #liquid-gear-menu-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 229, 255, 0.4);
+    border-radius: 4px;
   }
 
   .liquid-item-btn {
     width: 100%;
-    margin-bottom: 7px;
-    padding: 9px 12px;
-    border-radius: 16px;
-    border: 1px solid rgba(0, 229, 255, 0.35);
-    background: rgba(14, 24, 44, 0.85);
-    color: #e2f1ff;
-    font-size: 12px;
-    font-weight: 700;
-    text-align: left;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    margin-bottom: 5px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(22, 32, 52, 0.78);
+    color: #e2e8f0;
+    font-size: 11.5px;
+    font-weight: 600;
     cursor: pointer;
-    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease, border-color 0.2s ease;
+    text-align: left;
+    transition: all 0.18s ease;
   }
-
+  .liquid-item-btn:last-child {
+    margin-bottom: 0;
+  }
   .liquid-item-btn:hover {
-    transform: translateX(5px) scale(1.02);
-    background: rgba(24, 42, 74, 0.95);
-    border-color: #00f5d4;
+    background: rgba(34, 52, 84, 0.92);
+    border-color: rgba(0, 229, 255, 0.5);
+    transform: translateX(2px);
   }
-
   .liquid-item-btn.active-true {
-    background: linear-gradient(90deg, rgba(0, 245, 212, 0.25), rgba(0, 187, 249, 0.2));
-    border-color: #00ff88 !important;
-    color: #00ff88 !important;
-    box-shadow: 0 0 12px rgba(0, 255, 136, 0.35);
+    background: linear-gradient(90deg, rgba(6, 214, 160, 0.25), rgba(0, 187, 249, 0.22));
+    border-color: #06d6a0;
+    color: #ffffff;
   }
-
   .liquid-badge {
     font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.1);
-    color: #ffd166;
-  }
-
-  .liquid-item-btn.active-true .liquid-badge {
-    background: #00ff88;
-    color: #04101e;
     font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffd166;
+    flex-shrink: 0;
+  }
+  .liquid-item-btn.active-true .liquid-badge {
+    background: #06d6a0;
+    color: #041019;
   }
 
-  /* 2. Tách vị trí Khung Cam Trước ESP32 và Khung Cam Lùi ESP32 khi phóng to để KHÔNG đè nhau */
-  #esp32-front-ar-modal {
-    top: 66px !important;
-    left: 290px !important;
-    transform: none !important;
-    z-index: 210 !important;
+  /* 2. Tối ưu không gian bản Mobile (Thu gọn panel cồng kềnh) */
+  @media (max-width: 768px) {
+    #liquid-gear-widget-container {
+      top: 175px;
+      left: 10px;
+      width: 215px;
+    }
+    #liquid-gear-trigger-btn {
+      padding: 7px 10px;
+      font-size: 11.5px;
+    }
+    .mobile-compact-hidden {
+      display: none !important;
+    }
   }
 
-  #rear-cam-app-modal {
-    position: fixed !important;
-    top: auto !important;
-    bottom: 66px !important;
-    left: 290px !important;
-    transform: scale(1) !important;
-    transform-origin: top center !important;
-    width: 480px !important;
-    max-width: 82vw !important;
-    z-index: 215 !important;
-    transition: transform 0.38s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease !important;
+  /* 5. Role Seat Badge hiển thị vai trò thời gian thực */
+  #v260-role-seat-badge {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 980;
+    padding: 7px 18px;
+    border-radius: 20px;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    transition: all 0.3s ease;
+    pointer-events: none;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    user-select: none;
+  }
+  .role-driver {
+    background: rgba(0, 35, 20, 0.88);
+    border: 1.5px solid #00ff88;
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+  }
+  .role-passenger {
+    background: rgba(10, 25, 45, 0.88);
+    border: 1.5px solid #00d2ff;
+    color: #00d2ff;
+    text-shadow: 0 0 8px rgba(0, 210, 255, 0.5);
+  }
+  .role-foot {
+    background: rgba(35, 30, 10, 0.88);
+    border: 1.5px solid #ffd60a;
+    color: #ffd60a;
+    text-shadow: 0 0 8px rgba(255, 214, 10, 0.5);
+  }
+  @media (max-width: 768px) {
+    #v260-role-seat-badge {
+      font-size: 11px;
+      padding: 5px 12px;
+      top: 10px;
+      max-width: 90vw;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
   }
 
-  #rear-cam-app-modal.minimizing-to-mirror {
-    transform: translate(120px, -380px) scale(0.18) !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-
-  /* 3. Hiển thị trạng thái TRUE / BẬT trên Bảng Chức Năng */
-  .act-btn.func-active-true,
-  .bar-btn.func-active-true {
-    outline: 2px solid #00ff88 !important;
-    box-shadow: 0 0 14px rgba(0, 255, 136, 0.65) !important;
-    filter: brightness(1.15);
-  }
 </style>
 
-<!-- Nút Bánh Răng Liquid Widget ngay dưới Minimap -->
 <div id="liquid-gear-widget-container">
-  <button id="liquid-gear-trigger-btn" title="Mở / Đóng Liquid Widget Chức Năng Xe">⚙️</button>
+  <button id="liquid-gear-trigger-btn" type="button" title="Đóng/Mở Menu Điều Khiển Nhanh">
+    <span class="gear-icon">⚙️</span>
+    <span style="flex:1;text-align:left;">Tác Vụ Xe &amp; Thế Giới</span>
+    <span id="liquid-gear-state-pill" style="font-size:10px;background:#06d6a0;color:#000;padding:1px 6px;border-radius:8px;">SẴN SÀNG</span>
+  </button>
   <div id="liquid-gear-menu-list">
-    <button class="liquid-item-btn active-true" data-liquid-cmd="SNAP_TURN">
-      <span>🔄 Snap Turn 30°</span><span class="liquid-badge">TRUE</span>
+    <button type="button" class="liquid-item-btn active-true" data-liquid-cmd="DRIVE_RR">
+      <span>🚘 Lái Xe Rolls-Royce (4)</span>
+      <span class="liquid-badge">ĐANG CHỌN</span>
     </button>
-    <button class="liquid-item-btn active-true" data-liquid-cmd="DRIVE_RR">
-      <span>👑 Lái Xe Rolls-Royce (4)</span><span class="liquid-badge">TRUE</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="DRIVE_COUPE">
+      <span>🏎️ Lái Sport Coupe GT (5)</span>
+      <span class="liquid-badge">CHỌN</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="DRIVE_COUPE">
-      <span>🏎️ Lái Sport Coupe GT (5)</span><span class="liquid-badge">CHỌN</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="DRIVE_MOTO">
+      <span>🏍️ Lái Mô-tô PKL (6)</span>
+      <span class="liquid-badge">CHỌN</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="DRIVE_MOTO">
-      <span>🏍️ Lái Siêu Mô Tô R1 (6)</span><span class="liquid-badge">CHỌN</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="SWAP_SEAT">
+      <span>💺 Đổi 4 Ghế Ngồi Cabin (V)</span>
+      <span class="liquid-badge" id="lq-badge-seat">GHẾ 1</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="CALL_AMBULANCE">
-      <span>🚑 Gọi Cấp Cứu 115 (2)</span><span class="liquid-badge">GỌI</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="TOGGLE_HEADLIGHT">
+      <span>💡 Đèn Pha Trước &amp; Sau (H)</span>
+      <span class="liquid-badge" id="lq-badge-headlight">TẮT</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="GARAGE_DOOR">
-      <span>🏠 Đóng/Mở Cửa Cuốn Gara</span><span class="liquid-badge">MỞ</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="TURN_LEFT">
+      <span>⬅️ Xi-nhan Trái (Z)</span>
+      <span class="liquid-badge" id="lq-badge-left">TẮT</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="TOGGLE_HUD3D">
-      <span>🖥️ Ẩn/Hiện Digital Twin HUD</span><span class="liquid-badge">BẬT</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="TURN_RIGHT">
+      <span>➡️ Xi-nhan Phải (C)</span>
+      <span class="liquid-badge" id="lq-badge-right">TẮT</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="SWAP_SEAT">
-      <span>💺 Đổi Ghế Ngồi Cabin (V)</span><span class="liquid-badge">GHẾ 1</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="GARAGE_DOOR">
+      <span>🏠 Cửa Cuốn Gara (G)</span>
+      <span class="liquid-badge" id="lq-badge-garage">ĐÓNG</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="OPEN_YOUTUBE">
-      <span>▶️ Mở Rạp YouTube (U)</span><span class="liquid-badge">MP4</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="OPEN_YOUTUBE">
+      <span>📺 Mở Táp-lô YouTube MP4</span>
+      <span class="liquid-badge">MỞ</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="TOGGLE_HEADLIGHT">
-      <span>💡 Bật/Tắt Đèn Pha (H)</span><span class="liquid-badge">TẮT</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="TOGGLE_REARCAM">
+      <span>🎥 Phóng To / Thu Cam Lùi (Y)</span>
+      <span class="liquid-badge" id="lq-badge-rearcam">GƯƠNG</span>
     </button>
-    <button class="liquid-item-btn" data-liquid-cmd="TOGGLE_ALL_NPCS">
-      <span>👥 Ẩn/Hiện Toàn Bộ NPC (Q)</span><span class="liquid-badge">HIỆN</span>
+    <button type="button" class="liquid-item-btn" data-liquid-cmd="CALL_AMBULANCE">
+      <span>🚑 Gọi Xe Cấp Cứu 115 (2)</span>
+      <span class="liquid-badge">GỌI</span>
+    </button>
+    <button type="button" class="liquid-item-btn active-true" data-liquid-cmd="TOGGLE_ALL_NPCS">
+      <span>👥 Hiển Thị NPC &amp; Xe (Q)</span>
+      <span class="liquid-badge" id="lq-badge-npcs">ĐANG HIỆN</span>
     </button>
   </div>
 </div>
 
-  <script type="module" src="./app.js"></script>
+<div id="v260-role-seat-badge" class="v260-role-badge role-driver">
+  🚗 TÀI XẾ (GHẾ 0) — ĐIỀU KHIỂN CHÍNH [5X SPEED]
+</div>
+
 </body>
 </html>
