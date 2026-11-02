@@ -23510,10 +23510,18 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.seatIndex = 0;
       state.engineRunning = true;
       if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
-      if (typeof chassisGroup !== 'undefined' && typeof cameraRig !== 'undefined' && chassisGroup && cameraRig) {
-        chassisGroup.add(cameraRig);
-        cameraRig.position.set(-0.38, 0.88, 0.08);
+      if (typeof driverSeatMount !== 'undefined' && typeof cameraRig !== 'undefined' && driverSeatMount && cameraRig) {
+        if (typeof SEAT_POSITIONS !== 'undefined' && SEAT_POSITIONS[0]) {
+          driverSeatMount.position.copy(SEAT_POSITIONS[0].pos);
+        }
+        if (cameraRig.parent !== driverSeatMount) {
+          driverSeatMount.add(cameraRig);
+        }
+        cameraRig.position.set(0, 0, 0);
         cameraRig.rotation.set(0, 0, 0);
+      }
+      if (typeof camera !== 'undefined' && camera) {
+        camera.position.set(0, 1.12, 0);
       }
     }
   }
@@ -23994,10 +24002,18 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.seatIndex = 0;
       state.engineRunning = true;
       if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
-      if (typeof chassisGroup !== 'undefined' && typeof cameraRig !== 'undefined' && chassisGroup && cameraRig) {
-        chassisGroup.add(cameraRig);
-        cameraRig.position.set(-0.38, 0.88, 0.08);
+      if (typeof driverSeatMount !== 'undefined' && typeof cameraRig !== 'undefined' && driverSeatMount && cameraRig) {
+        if (typeof SEAT_POSITIONS !== 'undefined' && SEAT_POSITIONS[0]) {
+          driverSeatMount.position.copy(SEAT_POSITIONS[0].pos);
+        }
+        if (cameraRig.parent !== driverSeatMount) {
+          driverSeatMount.add(cameraRig);
+        }
+        cameraRig.position.set(0, 0, 0);
         cameraRig.rotation.set(0, 0, 0);
+      }
+      if (typeof camera !== 'undefined' && camera) {
+        camera.position.set(0, 1.12, 0);
       }
     }
   }
@@ -24160,4 +24176,24 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.speedKmh = carStateV503.velMs * 3.6;
     }
   };
+
+  // [COCKPIT GUARD] Đảm bảo camera mắt người lái luôn neo đúng vị trí ghế lái, không bao giờ bị văng lên nóc xe
+  window.__COCKPIT_ROOF_SPAWN_GUARD__ = true;
+  setInterval(() => {
+    if (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING' && state.seatIndex === 0) {
+      if (typeof driverSeatMount !== 'undefined' && typeof cameraRig !== 'undefined' && driverSeatMount && cameraRig) {
+        if (cameraRig.parent !== driverSeatMount) {
+          driverSeatMount.add(cameraRig);
+          cameraRig.position.set(0, 0, 0);
+          cameraRig.rotation.set(0, 0, 0);
+        } else if (cameraRig.position.lengthSq() > 0.001 && !state.isLeaningOut) {
+          cameraRig.position.set(0, 0, 0);
+        }
+      }
+      if (typeof camera !== 'undefined' && camera && Math.abs(camera.position.y - 1.12) > 0.05) {
+        camera.position.set(0, 1.12, 0);
+      }
+    }
+  }, 500);
+
 })();
