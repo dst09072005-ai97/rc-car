@@ -1,3 +1,10 @@
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ [CRITICAL UNCAUGHT EXCEPTION]', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ [CRITICAL UNHANDLED REJECTION]', reason && reason.stack ? reason.stack : reason);
+});
 global.buttonEvents = [];
 global.btnEvents = [];
 const path = require('path');
