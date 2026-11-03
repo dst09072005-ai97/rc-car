@@ -500,7 +500,7 @@ const state = {
   rcSpeedRatio: 1.0,
   rcSteerSensitivity: 1.0,
   rcMaxForwardPulse: 1660,
-  rcMaxReversePulse: 1320,
+  rcMaxReversePulse: 1100,
   rcTargetSpeedKmh: 12.0,
   rcSmoothThrottle: 1500,
   rcSmoothSteer: 90,
@@ -20675,7 +20675,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const pulseInfo = document.getElementById('esp32-car-pulse-info');
     if (pulseInfo) {
       const servoDeg = Math.round(90 + sNorm * 45);
-      const escUs = Math.round(1500 + dNorm * 260);
+      const escUs = Math.round(1500 + (dNorm < 0 ? dNorm * 400 : dNorm * 260));
       pulseInfo.textContent = `Lái: ${servoDeg}° | Ga: ${escUs}µs [Số ${gear}]`;
     }
 
@@ -21562,7 +21562,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     btnSpeedFast?.addEventListener('click', () => {
-      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1300);
+      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1100);
     });
 
     sliderMaxThrottle?.addEventListener('input', (e) => {
@@ -21572,7 +21572,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     sliderMaxReverse?.addEventListener('input', (e) => {
-      const revPulse = parseInt(e.target.value, 10) || 1350;
+      const revPulse = parseInt(e.target.value, 10) || 1100;
       state.rcMaxReversePulse = revPulse;
       localStorage.setItem('rc_max_reverse_pulse', String(revPulse));
       if (valMaxReverse) valMaxReverse.textContent = `${revPulse}µs`;
@@ -21777,7 +21777,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
         const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
-        const maxRevDelta = Math.max(40, Math.min(260, 1500 - (state.rcMaxReversePulse || 1320)));
+        const maxRevDelta = Math.max(40, Math.min(400, 1500 - (state.rcMaxReversePulse || 1100)));
 
         let targetSteer = 90;
         let targetThrottle = 1500;
@@ -23693,7 +23693,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           reversePercent: Math.round((wheel.reverseNorm || 0) * 100),
           gear: wheel.gear,
           steer: Math.max(45, Math.min(135, Math.round(90 + wheel.steerNorm * 45))),
-          throttle: Math.max(1000, Math.min(2000, Math.round(1500 + wheel.driveNorm * 260))),
+          throttle: Math.max(1000, Math.min(2000, Math.round(1500 + (wheel.driveNorm < 0 ? wheel.driveNorm * 400 : wheel.driveNorm * 260)))),
           buttonEvents: wheel.buttonEvents
         }
       }));

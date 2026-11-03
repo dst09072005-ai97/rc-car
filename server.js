@@ -477,7 +477,7 @@ function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
   // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
   const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-  const t = Math.max(1150, Math.min(1850, Math.round(Number(throttle) || 1500)));
+  const t = Math.max(1100, Math.min(1850, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
   buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)
@@ -1116,7 +1116,7 @@ function computeSafeEscPulseUs(msg) {
 
   // 2. Nếu client gửi trực tiếp xung micro-giây (ví dụ CAR_CONTROL: { steer: 90, throttle: 1500 })
   if (msg.escPulseUs !== undefined || (msg.throttle !== undefined && Math.abs(Number(msg.throttle)) >= 500)) {
-    const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1150, 1850, 1500);
+    const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1100, 1850, 1500);
     if (rawUs > 1520) {
       lastMovingForwardAt = Date.now();
       return Math.round(rawUs);
@@ -1136,7 +1136,7 @@ function computeSafeEscPulseUs(msg) {
   if (normDrive > 0.02) {
     if (gear === 'R') {
       // Đang cài số R và đạp ga -> Lùi trong dải an toàn [1500..1300 µs]
-      return Math.round(1500 - normDrive * 200);
+      return Math.round(1500 - normDrive * 400); // Lùi tối đa 1100µs khi đạp kịch ga
     }
     lastMovingForwardAt = Date.now();
     // Đang ở số D và đạp ga -> Tiến trong dải an toàn [1500..1700 µs]
@@ -1148,7 +1148,7 @@ function computeSafeEscPulseUs(msg) {
     if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
       return 1500;
     }
-    return Math.round(1500 + normDrive * 200); // normDrive âm -> [1500..1300 µs]
+    return Math.round(1500 + normDrive * 400); // normDrive âm (-1..0) -> Lùi tối đa 1100µs
   }
 
   return 1500;
@@ -2093,7 +2093,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
 
     const steerDeg = Math.max(45, Math.min(135, Math.round(90 + s * 45)));
-    const escUs = Math.max(1000, Math.min(2000, Math.round(1500 + d * 220)));
+    const escUs = Math.max(1100, Math.min(2000, Math.round(1500 + (d < 0 ? d * 400 : d * 220))));
 
     const changed = (steerDeg !== lastSteerDegSent) || (escUs !== lastEscUsSent);
     if (!forceImmediate && !changed && (now - lastUdpSendMs < 200)) return;
@@ -2224,7 +2224,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             reversePercent: gear === 'R' ? Math.round(brakeNorm * 100) : 0,
             gear,
             steer: Math.max(45, Math.min(135, Math.round(90 + steerNorm * 45))),
-            throttle: Math.max(1000, Math.min(2000, Math.round(1500 + driveNorm * 260))),
+            throttle: Math.max(1000, Math.min(2000, Math.round(1500 + (driveNorm < 0 ? driveNorm * 400 : driveNorm * 260)))),
             buttonEvents,
             seq: latestBridgeState.seq,
             timestamp: latestBridgeState.timestamp
@@ -2364,7 +2364,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               reversePercent: Math.round(data.reverseNorm * 100),
               gear: data.gear,
               steer: Math.max(45, Math.min(135, Math.round(90 + data.steerNorm * 45))),
-              throttle: Math.max(1000, Math.min(2000, Math.round(1500 + data.driveNorm * 260))),
+              throttle: Math.max(1000, Math.min(2000, Math.round(1500 + (data.driveNorm < 0 ? data.driveNorm * 400 : data.driveNorm * 260)))),
               buttonEvents: [],
               seq: data.seq,
               timestamp: latestBridgeState.timestamp
