@@ -526,21 +526,29 @@ udpServer.on('message', (msg, rinfo) => {
     // Tự động nhận diện IP của ESP32 Camera (Cam trước hoặc Cam lùi) khi đổi Wi-Fi
     if (data.type === 'ESP32_CAM' || data.type === 'ESP32_ANNOUNCE' || (data.cam && !data.speedKmh)) {
       const role = (data.role === 'rear' || data.cam === 'rear') ? 'rear' : 'front';
+      const targetPort = Number(data.port || 4213);
+      const isNewCam = !discoveredEsp32Cams[role] || discoveredEsp32Cams[role].ip !== rinfo.address || discoveredEsp32Cams[role].port !== targetPort;
       discoveredEsp32Cams[role] = {
         ip: rinfo.address,
-        port: Number(data.port || 4213),
+        port: targetPort,
         lastSeen: Date.now()
       };
-      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${rinfo.address}:${data.port || 4213}`);
+      if (isNewCam) {
+        console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${rinfo.address}:${targetPort}`);
+      }
       return; // Chỉ cập nhật IP Camera, KHÔNG ghi đè telemetry xe!
     }
 
     // Tự động nhận diện IP của Mạch Lái Xe ESP32 (Controller GPIO 12/13 qua UDP 4210)
     if (data.type === 'ESP32_CAR' || data.type === 'ESP32_CAR_ANNOUNCE' || data.role === 'car') {
+      const targetPort = Number(data.port || 4210);
+      const isNewCar = esp32CarConfig.ip !== rinfo.address || esp32CarConfig.port !== targetPort;
       esp32CarConfig.ip = rinfo.address;
-      esp32CarConfig.port = Number(data.port || 4210);
+      esp32CarConfig.port = targetPort;
       esp32CarConfig.lastSeen = Date.now();
-      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${esp32CarConfig.port}`);
+      if (isNewCar) {
+        console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${targetPort}`);
+      }
       return;
     }
 
@@ -2451,13 +2459,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       setTimeout(startNativeWheelBridge, 2500);
     });
 
-    process.on('exit', () => {
-      if (nativeWheelChild) {
-        try { nativeWheelChild.kill(); } catch (e) {}
-        nativeWheelChild = null;
-      }
-    });
   }
+
+  process.on('exit', () => {
+    if (nativeWheelChild) {
+      try { nativeWheelChild.kill(); } catch (e) {}
+      nativeWheelChild = null;
+    }
+  });
 
   startNativeWheelBridge();
 
