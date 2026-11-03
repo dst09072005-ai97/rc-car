@@ -2148,12 +2148,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     lastSteerDegSent = steerDeg;
     lastEscUsSent = escUs;
 
-    const pkt = Buffer.alloc(4);
-    pkt.writeInt16LE(steerDeg, 0);
-    pkt.writeInt16LE(escUs, 2);
-    const targetHost = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.ip) ? esp32CarConfig.ip : ESP32_HOST;
-    const targetPort = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.port) ? esp32CarConfig.port : ESP32_PORT;
-    udpOutSocket.send(pkt, 0, 4, targetPort, targetHost);
+    // Gửi qua hàm chuẩn sendUdpCarCommand (udpServer port 4210 có in log Terminal chi tiết)
+    sendUdpCarCommand(steerDeg, escUs);
   }
 
   function getLanIpv4List() {
@@ -2297,7 +2293,13 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             data.driveNorm ??
             (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 400 : 260) : 0)
           );
-          sendRateLimitedEsp32Udp(s, d, rawPulse, data.gear);
+          const isDriving = Math.abs(s) > 0.02 || Math.abs(d) > 0.02;
+          const now = Date.now();
+          if (isDriving) {
+            activeDriverClient = ws;
+            activeDriverLastActiveTime = now;
+          }
+          sendRateLimitedEsp32Udp(s, d, rawPulse, data.gear, isDriving);
           return;
         }
       });
@@ -2430,8 +2432,18 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               }
             }
 
-            // Gửi xuống ESP32 RC Car qua UDP (Port 4210)
-            sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear), data.gear);
+            // Gửi xuống ESP32 RC Car qua UDP (Port 4210) - Kiểm tra trạng thái thao tác để không cướp quyền Kính VR
+            const isWheelActivelyMoved = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
+            const nowTime = Date.now();
+            if (isWheelActivelyMoved) {
+              activeDriverClient = 'nativeWheel';
+              activeDriverLastActiveTime = nowTime;
+              sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear), data.gear, true);
+            } else if (activeDriverClient === 'nativeWheel') {
+              activeDriverClient = null;
+              activeDriverLastActiveTime = 0;
+              sendRateLimitedEsp32Udp(0, 0, 1500, 'D', true);
+            }
           }
         } catch (e) {}
       }

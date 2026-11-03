@@ -4167,7 +4167,7 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
               }
             });
           }
-          if (typeof syncWheelToFunctionPanel === 'function') syncWheelToFunctionPanel(wObj);
+                    if (typeof syncWheelToFunctionPanel === 'function') syncWheelToFunctionPanel(wObj);
           state.steeringAngleDeg = wObj.steerAngleDeg;
           state.targetSteeringAngleDeg = wObj.steerAngleDeg;
           // Tuyệt đối không gán trực tiếp steeringWheelPivot.rotation.z tại callback mạng!
@@ -4182,10 +4182,27 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             state.gearIndex = 3;
             wObj.gear = 'D';
           }
+
+          // Đồng bộ trực tiếp vào runtime.remoteBridge để resolveActiveDrivingCommand và attachSceneLoop không bị rỗng
+          if (typeof runtime !== 'undefined' && runtime.remoteBridge) {
+            runtime.remoteBridge.connected = true;
+            runtime.remoteBridge.steerNorm = wObj.rawSteer;
+            runtime.remoteBridge.gasNorm = THREE.MathUtils.clamp(gasNorm, 0, 1.0);
+            runtime.remoteBridge.brakeNorm = THREE.MathUtils.clamp(brakeNorm, 0, 1.0);
+            runtime.remoteBridge.reverseNorm = THREE.MathUtils.clamp(reverseNorm, 0, 1.0);
+            runtime.remoteBridge.driveNorm = THREE.MathUtils.clamp(gasNorm - brakeNorm - reverseNorm, -1.0, 1.0);
+            runtime.remoteBridge.gear = wObj.gear;
+            runtime.remoteBridge.updatedAt = performance.now();
+          }
+
           if (wObj.gasPercent > 3 || Math.abs(steeringNorm) > 0.04 || wObj.reversePercent > 3) {
             if (state.playerMode !== 'DRIVING') {
               state.playerMode = 'DRIVING';
+              state.seatIndex = 0;
               state.engineRunning = true;
+              if (typeof resetAndCenterViewpoint === 'function') {
+                resetAndCenterViewpoint('DRIVING', 0);
+              }
             }
           }
         } else if (msg.type === 'RC_HARDWARE_TELEMETRY') {
@@ -20758,6 +20775,18 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     if (!activeGp) {
+      if (typeof window !== 'undefined' && window._racingWheel && window._racingWheel.connected) {
+        racingWheel.connected = true;
+        racingWheel.deviceName = window._racingWheel.deviceName || 'GOG R808 Bridge';
+        racingWheel.steerAngleDeg = window._racingWheel.steerAngleDeg || 0;
+        racingWheel.gasPercent = window._racingWheel.gasPercent || 0;
+        racingWheel.brakePercent = window._racingWheel.brakePercent || 0;
+        racingWheel.reversePercent = window._racingWheel.reversePercent || 0;
+        racingWheel.gear = window._racingWheel.gear || 'D';
+        racingWheel.lastInputTime = window._racingWheel.lastInputTime || performance.now();
+        updateConnectedBadge(true, racingWheel.deviceName);
+        return;
+      }
       if (racingWheel.connected) {
         racingWheel.connected = false;
         racingWheel.deviceName = 'Chưa cắm Vô Lăng';
@@ -21569,7 +21598,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     btnSpeedMedium?.addEventListener('click', () => {
-      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium, 1150);
+      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium, 1100);
     });
 
     btnSpeedFast?.addEventListener('click', () => {
@@ -21583,7 +21612,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     sliderMaxReverse?.addEventListener('input', (e) => {
-      const revPulse = parseInt(e.target.value, 10) || 1350;
+      const revPulse = parseInt(e.target.value, 10) || 1100;
       state.rcMaxReversePulse = revPulse;
       localStorage.setItem('rc_max_reverse_pulse', String(revPulse));
       if (valMaxReverse) valMaxReverse.textContent = `${revPulse}µs`;
@@ -21593,9 +21622,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     const savedPulse = parseInt(localStorage.getItem('rc_max_throttle_pulse'), 10);
     const savedKmh = parseFloat(localStorage.getItem('rc_target_speed_kmh'));
-    const savedRev = parseInt(localStorage.getItem('rc_max_reverse_pulse'), 10);
-    if (savedRev && sliderMaxReverse && valMaxReverse) {
-      state.rcMaxReversePulse = savedRev;
+    let savedRev = parseInt(localStorage.getItem('rc_max_reverse_pulse'), 10);
+    if (!savedRev || savedRev > 1300 || savedRev < 1050) {
+      savedRev = 1100;
+      localStorage.setItem('rc_max_reverse_pulse', '1100');
+    }
+    state.rcMaxReversePulse = savedRev;
+    if (sliderMaxReverse && valMaxReverse) {
       sliderMaxReverse.value = String(savedRev);
       valMaxReverse.textContent = `${savedRev}µs`;
     }
@@ -23704,10 +23737,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           gear: wheel.gear,
           steer: Math.max(45, Math.min(135, Math.round(90 + wheel.steerNorm * 45))),
           throttle: wheel.driveNorm < -0.025
-            ? Math.round(1445 - Math.pow(Math.abs(wheel.driveNorm), 0.85) * 295)
+            ? Math.round(1445 - Math.pow(Math.abs(wheel.driveNorm), 0.85) * 345)
             : (wheel.driveNorm > 0.025 ? Math.round(1535 + wheel.driveNorm * 185) : 1500),
           escPulseUs: wheel.driveNorm < -0.025
-            ? Math.round(1445 - Math.pow(Math.abs(wheel.driveNorm), 0.85) * 295)
+            ? Math.round(1445 - Math.pow(Math.abs(wheel.driveNorm), 0.85) * 345)
             : (wheel.driveNorm > 0.025 ? Math.round(1535 + wheel.driveNorm * 185) : 1500),
           buttonEvents: wheel.buttonEvents
         }
@@ -23818,18 +23851,25 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     // Nguồn 2: Vô lăng GOG R808 truyền qua WebSocket Bridge (trên Kính VR)
+    const rw = (typeof window !== 'undefined' && window._racingWheel && window._racingWheel.connected) ? window._racingWheel : null;
     const rb = runtime.remoteBridge;
-    const bridgeFresh = rb.connected && (now - rb.updatedAt < CFG.bridgeTimeoutMs);
-    const bridgeActive = bridgeFresh && (
-      Math.abs(rb.steerNorm) > 0.01 || rb.gasNorm > 0.01 || rb.brakeNorm > 0.01 || rb.reverseNorm > 0.01
-    );
-    if (bridgeActive) {
+    const bridgeConnected = Boolean((rw && rw.connected) || (rb && rb.connected));
+    const bridgeLastTime = Math.max(rw ? (rw.lastInputTime || 0) : 0, rb ? (rb.updatedAt || 0) : 0);
+    const bridgeFresh = bridgeConnected && (now - bridgeLastTime < CFG.bridgeTimeoutMs);
+
+    const sNorm = rw ? (rw.rawSteer ?? (rw.steerAngleDeg ? rw.steerAngleDeg / 540 : 0)) : (rb?.steerNorm || 0);
+    const gNorm = rw ? ((rw.gasPercent || 0) / 100) : (rb?.gasNorm || 0);
+    const bNorm = rw ? ((rw.brakePercent || 0) / 100) : (rb?.brakeNorm || 0);
+    const rNorm = rw ? ((rw.reversePercent || 0) / 100) : (rb?.reverseNorm || 0);
+    const effBrakeNorm = Math.max(bNorm, rNorm);
+
+    if (bridgeFresh && (Math.abs(sNorm) > 0.01 || gNorm > 0.01 || effBrakeNorm > 0.01)) {
       return {
         source: 'GOG808_BRIDGE',
         active: true,
-        steerNorm: rb.steerNorm,
-        gasNorm: rb.gasNorm,
-        brakeNorm: Math.max(rb.brakeNorm, rb.reverseNorm)
+        steerNorm: THREE.MathUtils.clamp(sNorm, -1, 1),
+        gasNorm: THREE.MathUtils.clamp(gNorm, 0, 1),
+        brakeNorm: THREE.MathUtils.clamp(effBrakeNorm, 0, 1)
       };
     }
 
@@ -23845,7 +23885,23 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       };
     }
 
-    // Nguồn 4: Bàn phím (trên Localhost Admin)
+    // Nguồn 4: Cụm nút bấm HUD / Laser Pointer
+    if (typeof holdState !== 'undefined' && holdState && (holdState.gas || holdState.brake || holdState.left || holdState.right || holdState.up || holdState.down)) {
+      const touchSteer = (holdState.right ? 1 : 0) - (holdState.left ? 1 : 0);
+      const touchGas = (holdState.gas || holdState.up) ? 1 : 0;
+      const touchBrake = (holdState.brake || holdState.down) ? 1 : 0;
+      if (touchSteer !== 0 || touchGas !== 0 || touchBrake !== 0) {
+        return {
+          source: 'TOUCH_HUD',
+          active: true,
+          steerNorm: THREE.MathUtils.clamp(touchSteer, -1, 1),
+          gasNorm: touchBrake ? 0 : touchGas,
+          brakeNorm: touchBrake
+        };
+      }
+    }
+
+    // Nguồn 5: Bàn phím (trên Localhost Admin)
     const k = runtime.keys;
     const keySteer = (k.right ? 1 : 0) - (k.left ? 1 : 0);
     const keyGas = k.up ? 1 : 0;
@@ -23877,6 +23933,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       } else if (typeof chassisGroup !== 'undefined' && chassisGroup && typeof cameraRig !== 'undefined' && cameraRig) {
         if (cameraRig.parent !== chassisGroup) chassisGroup.add(cameraRig);
         cameraRig.position.set(-0.38, 0.88, 0.08);
+      }
+      if (typeof resetAndCenterViewpoint === 'function') {
+        resetAndCenterViewpoint('DRIVING', 0);
       }
     }
     state.engineRunning = true;
@@ -24020,13 +24079,19 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.speedKmh = Math.abs(velMs) * 3.6 * (CFG.virtualSpeedScale || 5.0);
 
       // 4. Gửi lệnh phần cứng xuống ESP32 (Rate-limited 25Hz)
-      if (cmd.source === 'KEYBOARD' || cmd.source === 'VR_CONTROLLER') {
+      const shouldSendHwCmd = (
+        cmd.source === 'KEYBOARD' ||
+        cmd.source === 'VR_CONTROLLER' ||
+        cmd.source === 'TOUCH_HUD' ||
+        (isQuestHeadset && cmd.active)
+      );
+      if (shouldSendHwCmd) {
         if (now - runtime.lastHwSendMs >= 40 && (cmd.active || runtime.wasDrivingInputActive)) {
           runtime.lastHwSendMs = now;
           runtime.wasDrivingInputActive = cmd.active;
           const sock = getActiveSocket();
           if (sock && sock.readyState === 1 && sock.bufferedAmount < 65536) {
-            const driveNorm = cmd.active ? clamp(cmd.gasNorm - cmd.brakeNorm, -1, 1) : 0;
+            const driveNorm = cmd.active ? (cmd.gasNorm > 0.04 ? cmd.gasNorm : (cmd.brakeNorm > 0.04 ? -cmd.brakeNorm : 0)) : 0;
             sock.send(JSON.stringify({
               type: 'RC_CONTROL_CMD',
               steeringNorm: Number(cmd.steerNorm.toFixed(4)),
