@@ -483,7 +483,7 @@ function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
   // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
   const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-  const t = Math.max(1150, Math.min(1850, Math.round(Number(throttle) || 1500)));
+  const t = Math.max(1100, Math.min(1850, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
   buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)
@@ -1140,12 +1140,8 @@ function computeAsymmetricEscPulseUs(driveNorm, explicitEscUs, gearHint) {
       return Math.round(rawUs);
     }
     if (rawUs < 1475) {
-      if (!escReverseArmState.wasReversing) {
-        escReverseArmState.wasReversing = true;
-        escReverseArmState.armUntilMs = now + 80; // Nhịp trung tính 80ms mở khóa ESC
-      }
-      if (now < escReverseArmState.armUntilMs) return 1500;
-      return Math.max(1150, Math.round(rawUs));
+      escReverseArmState.wasReversing = true;
+      return Math.max(1100, Math.round(rawUs));
     }
   }
 
@@ -1157,27 +1153,19 @@ function computeAsymmetricEscPulseUs(driveNorm, explicitEscUs, gearHint) {
     return 1500;
   }
 
-  // 3. Nhánh Ga Tiến (d > 0): Nhảy qua vùng chết ở 1535µs, đạt tối đa 1750µs
+  // 3. Nhánh Ga Tiến (d > 0): Nhảy qua vùng chết ở 1535µs, đạt tối đa 1760µs
   if (d > 0 && gear !== 'R') {
     escReverseArmState.wasReversing = false;
     escReverseArmState.lastForwardMs = now;
-    return Math.min(1750, Math.round(1535 + d * 185));
+    return Math.min(1760, Math.round(1535 + d * 225));
   }
 
-  // 4. Nhánh Ga Lùi (d < 0 hoặc gear === 'R'):
-  // Tự động chèn 80ms xung 1500µs khi bắt đầu chuyển sang lùi để mở khóa phanh ESC
+  // 4. Nhánh Ga Lùi (d < 0 hoặc gear === 'R'): Mở sâu tới 1100µs (bù 100% công suất ESC)
   const revMag = Math.min(1, Math.abs(d));
-  if (!escReverseArmState.wasReversing) {
-    escReverseArmState.wasReversing = true;
-    escReverseArmState.armUntilMs = now + 80;
-  }
-  if (now < escReverseArmState.armUntilMs) {
-    return 1500;
-  }
-
-  // Đường cong mũ 0.85 nhạy ở ga đầu, nhảy qua vùng chết ở 1445µs và mở sâu tới 1150µs (bù 50% công suất ESC)
+  escReverseArmState.wasReversing = true;
+  // Đường cong mũ 0.85 nhạy ở ga đầu, nhảy qua vùng chết ở 1445µs và mở sâu tới 1100µs (1445 - 345 = 1100µs)
   const boostedRev = Math.pow(revMag, 0.85);
-  return Math.max(1150, Math.round(1445 - boostedRev * 295));
+  return Math.max(1100, Math.round(1445 - boostedRev * 345));
 }
 
 function computeSafeEscPulseUs(msg) {
@@ -1201,10 +1189,18 @@ function computeSafeEscPulseUs(msg) {
 }
 
         } else if (data.type === 'CAR_CONTROL') {
-          // CHỈ TÀI XẾ (Seat 0) hoặc Laptop Admin MỚI ĐƯỢC PHÉP ĐIỀU KHIỂN XE THẬT:
-          const canControlHardware = ((p && (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin)) || ws.seatIndex === 0 || ws.isLocalhostAdmin);
+          // CHỈ TÀI XẾ (Seat 0), Kính Quest VR hoặc Laptop Admin MỚI ĐƯỢC PHÉP ĐIỀU KHIỂN XE THẬT:
+          const canControlHardware = Boolean(
+            !p ||
+            p.seatIndex === 0 ||
+            p.isHost ||
+            p.isLocalhostAdmin ||
+            p.isQuestVR ||
+            ws.seatIndex === 0 ||
+            ws.isLocalhostAdmin ||
+            ws.isQuestVR
+          );
           if (!canControlHardware) {
-            // Khách ngồi ghế phụ (Kính Quest 2, điện thoại khách) bị chặn lệnh lái/ga ra xe thật
             return;
           }
           let steer = 90;
@@ -2293,19 +2289,13 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         }
 
         // 2. Nhận lệnh điều khiển từ Bàn phím (Localhost) hoặc Tay cầm VR (Kính) gửi xuống ESP32
-        if (data.type === 'RC_CONTROL_CMD') {
-          const p = (typeof players !== 'undefined' && ws.id) ? players.get(ws.id) : null;
-          const seat = (p && p.seatIndex !== undefined) ? p.seatIndex : ws.seatIndex;
-          const isLocalAdmin = (p && (p.isHost || p.isLocalhostAdmin)) || ws.isLocalhostAdmin;
-          if (seat !== undefined && seat !== 0 && !isLocalAdmin) {
-            return;
-          }
-          const s = Number(data.steeringNorm ?? data.steerNorm ?? 0);
+        if (data.type === 'RC_CONTROL_CMD' || data.type === 'CAR_CONTROL') {
+          const s = Number(data.steeringNorm ?? data.steerNorm ?? (typeof data.steer === 'number' && data.steer <= 180 ? (data.steer - 90) / 45 : 0));
           const rawPulse = Number(data.escPulseUs ?? (Math.abs(Number(data.throttle)) >= 500 ? data.throttle : NaN));
           const d = Number(
             data.throttleNorm ??
             data.driveNorm ??
-            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 350 : 220) : 0)
+            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 400 : 260) : 0)
           );
           sendRateLimitedEsp32Udp(s, d, rawPulse, data.gear);
           return;

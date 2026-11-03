@@ -500,7 +500,7 @@ const state = {
   rcSpeedRatio: 1.0,
   rcSteerSensitivity: 1.0,
   rcMaxForwardPulse: 1660,
-  rcMaxReversePulse: 1320,
+  rcMaxReversePulse: 1100,
   rcTargetSpeedKmh: 12.0,
   rcSmoothThrottle: 1500,
   rcSmoothSteer: 90,
@@ -2159,6 +2159,9 @@ function enterOrExitCarWithBlink() {
       cameraRig.position.set(0, 0, 0);
       cameraRig.rotation.set(0, 0, 0);
       roofBeaconGroup.visible = false;
+      if (typeof resetAndCenterViewpoint === 'function') {
+        resetAndCenterViewpoint('DRIVING', state.seatIndex);
+      }
       if (bannerEl) {
         bannerEl.innerHTML = '🚘 <b>ĐANG LÁI XE (1ST-PERSON POV):</b> Dùng Tia Laser giữ nút <b>[⚡ ĐẠP GA] / [🛑 THẮNG]</b> góc dưới phải &amp; nút <b>[◀ Trái / Phải ▶]</b> góc trái để lái!';
       }
@@ -2176,6 +2179,9 @@ function enterOrExitCarWithBlink() {
       playerAvatarGroup.position.copy(state.avatarPos);
       playerAvatarGroup.add(cameraRig);
       cameraRig.position.set(0, 0.52, 0);
+      if (typeof resetAndCenterViewpoint === 'function') {
+        resetAndCenterViewpoint('ON_FOOT');
+      }
       if (bannerEl) {
         bannerEl.innerHTML = '🚶 <b>ĐANG ĐI BỘ:</b> Dùng Tia Laser bấm cụm nút góc trái để đi bộ, hoặc bấm <b>[🚪 Mở Cửa Lên/Xuống Xe]</b> góc phải để lên xe!';
       }
@@ -3989,6 +3995,9 @@ function swapSeatOrTakeDriverControl() {
     }));
   }
   state.lastActionLog = `💺 Đã chuyển sang: ${SEAT_POSITIONS[state.seatIndex].name} ${state.seatIndex === 0 ? '(Bạn đang cầm lái!)' : '(Góc nhìn thứ 1 Ghế Phụ)'}`;
+  if (typeof resetAndCenterViewpoint === 'function') {
+    resetAndCenterViewpoint('DRIVING', state.seatIndex);
+  }
 }
 
 document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOrTakeDriverControl);
@@ -4067,6 +4076,9 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
                 driverSeatMount.position.copy(SEAT_POSITIONS[state.seatIndex || 0].pos);
               }
             }
+            if (typeof resetAndCenterViewpoint === 'function') {
+              resetAndCenterViewpoint('DRIVING', state.seatIndex || 0);
+            }
           }
           // Gửi ngay 1 gói CAR_SYNC để server cập nhật vị trí xe hiện tại
           if (mpSocket && mpSocket.readyState === WebSocket.OPEN && (state.seatIndex === 0 || !state.seatIndex)) {
@@ -4090,6 +4102,9 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             if (typeof SEAT_POSITIONS !== 'undefined' && SEAT_POSITIONS[msg.seatIndex] && typeof driverSeatMount !== 'undefined' && driverSeatMount) {
               driverSeatMount.position.copy(SEAT_POSITIONS[msg.seatIndex].pos);
               cameraRig.position.set(0, 0, 0);
+              if (typeof resetAndCenterViewpoint === 'function') {
+                resetAndCenterViewpoint('DRIVING', msg.seatIndex);
+              }
             }
           }
         } else if (msg.type === 'ESP32_CAM_FRAME_RELAY' && msg.dataUrl) {
@@ -4097,10 +4112,9 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             window.__questRelayImg.src = msg.dataUrl;
           }
         } else if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
-          // Nếu trình duyệt Localhost đang cắm trực tiếp vô lăng USB, bỏ qua hoàn toàn gói echo từ Server
-          const hasLocalPhysicalWheel = (typeof findGog808Gamepad === 'function' && Boolean(findGog808Gamepad())) ||
-            (window.__LOCAL_GOG808_CONNECTED__ === true);
-          if (hasLocalPhysicalWheel) return;
+          // Chỉ bỏ qua trên chính tab Localhost nếu tab đó đang tự đọc trực tiếp từ Gamepad API của trình duyệt.
+          // Kính Meta Quest KHÔNG BAO GIỜ bị chặn gói này!
+          if (!isQuestHeadset && window.__LOCAL_GOG808_CONNECTED__ === true) return;
 
           // Cầu nối vô lăng GOG R808 & Bàn phím Laptop sang kính Meta Quest 3
           if (!window._racingWheel) {
@@ -21551,15 +21565,15 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     btnSpeedSlow?.addEventListener('click', () => {
-      setRcSpeedPreset(1565, 8.0, '🐢 Êm Ái', btnSpeedSlow, 1380);
+      setRcSpeedPreset(1565, 8.0, '🐢 Êm Ái', btnSpeedSlow, 1200);
     });
 
     btnSpeedMedium?.addEventListener('click', () => {
-      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium, 1350);
+      setRcSpeedPreset(1585, 12.0, '🚗 Vừa Phải', btnSpeedMedium, 1150);
     });
 
     btnSpeedFast?.addEventListener('click', () => {
-      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1300);
+      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1100);
     });
 
     sliderMaxThrottle?.addEventListener('input', (e) => {
@@ -21775,7 +21789,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
         const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
         // Mở giới hạn xung lùi xuống 1150µs (delta tới 380µs) để thắng giới hạn 50% công suất của ESC
-        const maxRevDelta = Math.max(40, Math.min(380, 1500 - (state.rcMaxReversePulse || 1150)));
+        const maxRevDelta = Math.max(40, Math.min(400, 1500 - (state.rcMaxReversePulse || 1100)));
 
         let targetSteer = 90;
         let targetThrottle = 1500;
@@ -23465,25 +23479,23 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // 3. BỘ ĐỌC VÔ LĂNG & BÀN ĐẠP GOG R808 CHUẨN HÓA DUY NHẤT (LOCAL USB)
   // --------------------------------------------------------------------------
   function findGog808Gamepad() {
+    if (isQuestHeadset) return null; // Kính VR nhận vô lăng qua WebSocket Bridge từ Host PC!
     if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return null;
     const pads = navigator.getGamepads();
     if (!pads) return null;
 
-    let fallbackPad = null;
     for (let i = 0; i < pads.length; i++) {
       const gp = pads[i];
       if (!gp || !gp.connected) continue;
       const id = (gp.id || '').toLowerCase();
-      // Loại trừ tay cầm VR của Meta Quest để không nhận nhầm làm vô lăng USB
+      // Loại trừ tay cầm VR của Meta Quest
       if (/oculus|quest|meta|touch|openxr|xr-standard/i.test(id)) continue;
-      if (/808|gog|wheel|racing|driving|steering|logitech|thrustmaster/i.test(id) || gp.mapping === '') {
+      // Chỉ nhận diện vô lăng phần cứng thật
+      if (/808|gog|wheel|racing|driving|steering|logitech|thrustmaster/i.test(id)) {
         return gp;
       }
-      if (!fallbackPad && gp.axes && gp.axes.length >= 2) {
-        fallbackPad = gp;
-      }
     }
-    return fallbackPad;
+    return null;
   }
 
   function readLocalGog808State() {
@@ -23790,15 +23802,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // 6. HỢP NHẤT NGUỒN ĐIỀU KHIỂN & VẬT LÝ XE THỐNG NHẤT CHO ADMIN & VR PLAYER
   // --------------------------------------------------------------------------
   function resolveActiveDrivingCommand(now) {
-    // 1. RULE PHÂN QUYỀN GHẾ LÁI (MULTIPLAYER SEAT LOCK):
-    // Nếu đang ngồi trên xe nhưng ở Ghế Phụ (seatIndex !== 0), khóa 100% lệnh lái/ga từ thiết bị này
-    // (Áp dụng cho cả Kính thứ 2 và Điện thoại đang ngồi ghế phụ; tay cầm/cảm ứng chỉ dùng để xoay nhìn 360°, thò đầu, bấm YouTube)
-    const isPassengerInCar = state.playerMode === 'DRIVING' && Number(state.seatIndex || 0) !== 0 && !isLocalAdmin;
-    if (isPassengerInCar) {
-      return { active: false, steerNorm: 0, gasNorm: 0, brakeNorm: 0, source: 'passenger_locked' };
-    }
-
-    // 2. RULE ĐÁNH DẤU LOCALHOST ĐANG CẮM VÔ LĂNG VẬT LÝ (CHỐNG ECHO):
+    // 1. RULE ĐÁNH DẤU LOCALHOST ĐANG CẮM VÔ LĂNG VẬT LÝ (CHỐNG ECHO):
     const localWheel = readLocalGog808State();
     window.__LOCAL_GOG808_CONNECTED__ = Boolean(localWheel && localWheel.connected);
 
@@ -23915,7 +23919,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
 
       // Cho phép lái nếu ở ghế lái (seatIndex === 0) hoặc là Localhost Admin hoặc đang điều khiển từ Tay cầm VR
-      const canDrive = (state.seatIndex === 0 || isLocalAdmin || (isQuestHeadset && cmd.active));
+      const canDrive = (state.seatIndex === 0 || isLocalAdmin || (isQuestHeadset && cmd.active) || cmd.active);
       if (!canDrive || state.playerMode !== 'DRIVING') return;
 
       let velMs = state.velocityMs || 0;
