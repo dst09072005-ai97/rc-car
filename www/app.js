@@ -500,7 +500,7 @@ const state = {
   rcSpeedRatio: 1.0,
   rcSteerSensitivity: 1.0,
   rcMaxForwardPulse: 1660,
-  rcMaxReversePulse: 1100,
+  rcMaxReversePulse: 1320,
   rcTargetSpeedKmh: 12.0,
   rcSmoothThrottle: 1500,
   rcSmoothSteer: 90,
@@ -2960,7 +2960,7 @@ renderer.setAnimationLoop(() => {
   state.rcCargoAnim = THREE.MathUtils.lerp(state.rcCargoAnim, targetCargo, dt * 4);
   rcCargoTrayPivot.rotation.x = state.rcCargoAnim;
 
-  steeringWheelPivot.rotation.z = THREE.MathUtils.degToRad(-state.steeringAngleDeg);
+  state.targetSteeringAngleDeg = state.steeringAngleDeg;
 
   const focusPos = state.playerMode === 'DRIVING' ? vehicleRoot.position : state.avatarPos;
   mainShadowLight.position.set(focusPos.x + 25, 55, focusPos.z + 20);
@@ -4097,6 +4097,11 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             window.__questRelayImg.src = msg.dataUrl;
           }
         } else if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
+          // Nếu trình duyệt Localhost đang cắm trực tiếp vô lăng USB, bỏ qua hoàn toàn gói echo từ Server
+          const hasLocalPhysicalWheel = (typeof findGog808Gamepad === 'function' && Boolean(findGog808Gamepad())) ||
+            (window.__LOCAL_GOG808_CONNECTED__ === true);
+          if (hasLocalPhysicalWheel) return;
+
           // Cầu nối vô lăng GOG R808 & Bàn phím Laptop sang kính Meta Quest 3
           if (!window._racingWheel) {
             window._racingWheel = {
@@ -4150,9 +4155,8 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           }
           if (typeof syncWheelToFunctionPanel === 'function') syncWheelToFunctionPanel(wObj);
           state.steeringAngleDeg = wObj.steerAngleDeg;
-          if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
-            steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(state.steeringAngleDeg);
-          }
+          state.targetSteeringAngleDeg = wObj.steerAngleDeg;
+          // Tuyệt đối không gán trực tiếp steeringWheelPivot.rotation.z tại callback mạng!
           state.throttlePercent = wObj.gasPercent;
           state.brakePercent = wObj.brakePercent;
           state.reversePercent = wObj.reversePercent;
@@ -4218,10 +4222,7 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
                 state.speedKmh = c.speedKmh || 0;
                 state.velocityMs = (c.speedKmh || 0) / 3.6;
                 if (c.steerDeg !== undefined) {
-                  state.steeringAngleDeg = THREE.MathUtils.lerp(state.steeringAngleDeg, c.steerDeg, 0.5);
-                  if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
-                    steeringWheelPivot.rotation.z = THREE.MathUtils.degToRad(-state.steeringAngleDeg);
-                  }
+                  state.targetSteeringAngleDeg = c.steerDeg;
                 }
               }
             } else if (c.carId !== state.activeCarId) {
@@ -20675,7 +20676,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const pulseInfo = document.getElementById('esp32-car-pulse-info');
     if (pulseInfo) {
       const servoDeg = Math.round(90 + sNorm * 45);
-      const escUs = Math.round(1500 + (dNorm < 0 ? dNorm * 400 : dNorm * 260));
+      const escUs = Math.round(1500 + dNorm * 260);
       pulseInfo.textContent = `Lái: ${servoDeg}° | Ga: ${escUs}µs [Số ${gear}]`;
     }
 
@@ -20804,9 +20805,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // Đồng bộ trực tiếp 1:1 góc vô lăng và bánh trước lên xe Rolls-Royce
     state.steeringAngleDeg = racingWheel.steerAngleDeg;
-    if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
-      steeringWheelPivot.rotation.z = THREE.MathUtils.degToRad(-state.steeringAngleDeg);
-    }
+    state.targetSteeringAngleDeg = racingWheel.steerAngleDeg;
 
     // 2. LƯU LẠI GIÁ TRỊ BAN ĐẦU (TRẠNG THÁI NGHỈ CỦA CÁC TRỤC & NÚT)
     if (!racingWheel.calibrated || racingWheel.lastGpId !== activeGp.id) {
@@ -21169,9 +21168,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // A. ĐÁNH LÁI BẰNG VÔ LĂNG
     state.steeringAngleDeg = racingWheel.steerAngleDeg;
-    if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot) {
-      steeringWheelPivot.rotation.z = THREE.MathUtils.degToRad(-state.steeringAngleDeg);
-    }
+    state.targetSteeringAngleDeg = racingWheel.steerAngleDeg;
     const steerRad = THREE.MathUtils.degToRad((state.steeringAngleDeg / 540) * 35);
 
     // Đồng bộ góc xoay bánh trước xe Rolls-Royce
@@ -21526,7 +21523,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         state.rcMaxReversePulse = revPulse;
       } else {
         const fwdDelta = pulse - 1500;
-        state.rcMaxReversePulse = 1500 - Math.round(Math.max(110, fwdDelta * 1.75));
+        state.rcMaxReversePulse = 1500 - Math.round(Math.max(160, fwdDelta * 2.1));
       }
       localStorage.setItem('rc_max_throttle_pulse', String(pulse));
       localStorage.setItem('rc_target_speed_kmh', String(kmh));
@@ -21562,7 +21559,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     btnSpeedFast?.addEventListener('click', () => {
-      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1100);
+      setRcSpeedPreset(1640, 18.0, '🏎️ Thể Thao', btnSpeedFast, 1300);
     });
 
     sliderMaxThrottle?.addEventListener('input', (e) => {
@@ -21572,7 +21569,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     });
 
     sliderMaxReverse?.addEventListener('input', (e) => {
-      const revPulse = parseInt(e.target.value, 10) || 1100;
+      const revPulse = parseInt(e.target.value, 10) || 1350;
       state.rcMaxReversePulse = revPulse;
       localStorage.setItem('rc_max_reverse_pulse', String(revPulse));
       if (valMaxReverse) valMaxReverse.textContent = `${revPulse}µs`;
@@ -21777,7 +21774,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
         const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
-        const maxRevDelta = Math.max(40, Math.min(400, 1500 - (state.rcMaxReversePulse || 1100)));
+        // Mở giới hạn xung lùi xuống 1150µs (delta tới 380µs) để thắng giới hạn 50% công suất của ESC
+        const maxRevDelta = Math.max(40, Math.min(380, 1500 - (state.rcMaxReversePulse || 1150)));
 
         let targetSteer = 90;
         let targetThrottle = 1500;
@@ -21847,11 +21845,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
           const pct = THREE.MathUtils.clamp(rawRevPct, 0, 100);
           if (pct > 2.0) {
-            // Đường cong lũy tiến mượt mà C0+C1 continuous, hòa trộn êm vùng chết 20µs trong 15% hành trình đầu (Zero-Discontinuity)
+            // Đường cong lũy tiến mượt mà C0+C1 continuous, hòa trộn êm qua vùng chết 55µs (1445µs) và số mũ 0.85 nhạy ở đầu ga
             const normPct = pct / 100.0;
             const blendIn = Math.min(1.0, normPct / 0.15);
-            const expoPct = Math.pow(normPct, 1.35);
-            const deadbandSkip = 20.0;
+            const expoPct = Math.pow(normPct, 0.85);
+            const deadbandSkip = 55.0; // Nhảy ngay qua vùng chết 1500..1445µs của ESC
             const effectiveDelta = Math.max(0, maxRevDelta - deadbandSkip);
             const revDelta = (deadbandSkip * blendIn) + (expoPct * effectiveDelta);
             targetThrottle = Math.round(1500 - revDelta);
@@ -23693,7 +23691,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           reversePercent: Math.round((wheel.reverseNorm || 0) * 100),
           gear: wheel.gear,
           steer: Math.max(45, Math.min(135, Math.round(90 + wheel.steerNorm * 45))),
-          throttle: Math.max(1000, Math.min(2000, Math.round(1500 + (wheel.driveNorm < 0 ? wheel.driveNorm * 400 : wheel.driveNorm * 260)))),
+          throttle: wheel.driveNorm < -0.025
+            ? Math.round(1445 - Math.pow(Math.abs(wheel.driveNorm), 0.85) * 295)
+            : (wheel.driveNorm > 0.025 ? Math.round(1535 + wheel.driveNorm * 185) : 1500),
+          escPulseUs: wheel.driveNorm < -0.025
+            ? Math.round(1445 - Math.pow(Math.abs(wheel.driveNorm), 0.85) * 295)
+            : (wheel.driveNorm > 0.025 ? Math.round(1535 + wheel.driveNorm * 185) : 1500),
           buttonEvents: wheel.buttonEvents
         }
       }));
@@ -23787,8 +23790,19 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // 6. HỢP NHẤT NGUỒN ĐIỀU KHIỂN & VẬT LÝ XE THỐNG NHẤT CHO ADMIN & VR PLAYER
   // --------------------------------------------------------------------------
   function resolveActiveDrivingCommand(now) {
-    // Nguồn 1: Vô lăng GOG R808 cắm trực tiếp (trên Localhost Admin)
+    // 1. RULE PHÂN QUYỀN GHẾ LÁI (MULTIPLAYER SEAT LOCK):
+    // Nếu đang ngồi trên xe nhưng ở Ghế Phụ (seatIndex !== 0), khóa 100% lệnh lái/ga từ thiết bị này
+    // (Áp dụng cho cả Kính thứ 2 và Điện thoại đang ngồi ghế phụ; tay cầm/cảm ứng chỉ dùng để xoay nhìn 360°, thò đầu, bấm YouTube)
+    const isPassengerInCar = state.playerMode === 'DRIVING' && Number(state.seatIndex || 0) !== 0 && !isLocalAdmin;
+    if (isPassengerInCar) {
+      return { active: false, steerNorm: 0, gasNorm: 0, brakeNorm: 0, source: 'passenger_locked' };
+    }
+
+    // 2. RULE ĐÁNH DẤU LOCALHOST ĐANG CẮM VÔ LĂNG VẬT LÝ (CHỐNG ECHO):
     const localWheel = readLocalGog808State();
+    window.__LOCAL_GOG808_CONNECTED__ = Boolean(localWheel && localWheel.connected);
+
+    // Nguồn 1: Vô lăng GOG R808 cắm trực tiếp (trên Localhost Admin)
     if (localWheel && localWheel.active) {
       return {
         source: 'GOG808_LOCAL',
@@ -23907,21 +23921,28 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       let velMs = state.velocityMs || 0;
       let heading = state.headingRad ?? (vehicleRoot.rotation.y || 0);
 
-      // 1. Góc xoay vô lăng 3D mượt theo tín hiệu chuẩn hóa (giới hạn cứng [-540, 540] độ)
-      const targetSteerDeg = THREE.MathUtils.clamp(cmd.steerNorm * CFG.steerMaxVisualDeg, -540, 540);
-      if (typeof THREE !== 'undefined' && THREE.MathUtils) {
-        state.steeringAngleDeg = THREE.MathUtils.lerp(
-          state.steeringAngleDeg || 0,
-          targetSteerDeg,
-          Math.min(1, dt * 18)
-        );
-      } else {
-        state.steeringAngleDeg = targetSteerDeg;
+      // 1. Góc xoay vô lăng 3D mượt theo tín hiệu chuẩn hóa (Single-Writer duy nhất với Khóa Tĩnh Vùng Tâm)
+      const rawTargetDeg = Number.isFinite(state.targetSteeringAngleDeg)
+        ? state.targetSteeringAngleDeg
+        : (Number(state.steeringAngleDeg) || (cmd.steerNorm * CFG.steerMaxVisualDeg) || 0);
+
+      // Khử nhiễu vi mô ở vùng tâm: nếu góc < 0.8 độ thì khóa cứng về 0 độ
+      const cleanTargetDeg = Math.abs(rawTargetDeg) < 0.8 ? 0 : THREE.MathUtils.clamp(rawTargetDeg, -540, 540);
+      const prevSmoothDeg = Number.isFinite(state.__renderedWheelDeg) ? state.__renderedWheelDeg : cleanTargetDeg;
+
+      const lerpFactor = Math.min(1, Math.max(0.15, dt * 22));
+      let nextSmoothDeg = prevSmoothDeg + (cleanTargetDeg - prevSmoothDeg) * lerpFactor;
+
+      // Khi thả tay về tâm, ngắt hoàn toàn dao động dư (< 0.15 độ -> đứng im tuyệt đối ở 0)
+      if (cleanTargetDeg === 0 && Math.abs(nextSmoothDeg) < 0.15) {
+        nextSmoothDeg = 0;
       }
-      state.steeringAngleDeg = THREE.MathUtils.clamp(state.steeringAngleDeg, -540, 540);
+
+      state.__renderedWheelDeg = nextSmoothDeg;
+      state.steeringAngleDeg = nextSmoothDeg;
 
       if (typeof steeringWheelPivot !== 'undefined' && steeringWheelPivot && typeof THREE !== 'undefined' && THREE.MathUtils) {
-        steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(state.steeringAngleDeg);
+        steeringWheelPivot.rotation.z = -THREE.MathUtils.degToRad(nextSmoothDeg);
       }
       // Đánh lái góc bánh xe trước
       const frontYaw = THREE.MathUtils.degToRad((-state.steeringAngleDeg / 540) * 34);
