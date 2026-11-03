@@ -1119,53 +1119,80 @@ function clampNum(val, min, max, fallback) {
   return Math.min(max, Math.max(min, n));
 }
 
-// Trạng thái theo dõi hướng chuyển động để kích hoạt chốt lùi (Double-Tap Arming) cho ESC
-let escReverseArmState = {
-  wasReversing: false,
-  armUntilMs: 0,
-  lastForwardMs: 0
+// ============================================================================
+// [V504 RESTORED + 1100µs REVERSE] BỘ TRỌNG TÀI ƯU TIÊN VÔ LĂNG & UDP 4210 CHUẨN
+// ============================================================================
+const rcArbitration = {
+  lastPhysicalWheelActiveAt: 0, // Timestamp lần cuối vô lăng Laptop thực sự có thao tác
+  lastSentSteerDeg: 90,
+  lastSentEscUs: 1500,
+  idleNeutralCount: 0,
+  WHEEL_PRIORITY_WINDOW_MS: 350 // Khóa ưu tiên 350ms cho vô lăng vật lý, chống kính gửi đè 1500us
 };
 
-function computeAsymmetricEscPulseUs(driveNorm, explicitEscUs, gearHint) {
-  const now = Date.now();
+// Hàm quy đổi xung ESC bất đối xứng: Tiến [1535..1850µs] | Trung tính [1500µs] | Lùi sâu [1445..1100µs]
+function computeAsymmetricEscPulseUs(driveNorm, explicitPulseUs, gear = 'D') {
+  const rawExplicit = Number(explicitPulseUs);
+  if (Number.isFinite(rawExplicit) && rawExplicit >= 1000 && rawExplicit <= 2000 && Math.abs(rawExplicit - 1500) > 5) {
+    // Nếu gói gửi lên bị kẹp ở ngưỡng lùi cũ (1250..1320), tự động mở rộng xuống dải 1100us
+    if (rawExplicit < 1445 && rawExplicit >= 1250 && driveNorm < -0.05) {
+      const revMag = Math.min(1, Math.max(0, Math.abs(driveNorm)));
+      return Math.round(1445 - Math.pow(revMag, 0.85) * 345); // Chạm ngưỡng 1100µs khi đạp hết cỡ
+    }
+    return Math.round(rawExplicit);
+  }
+
   const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-  const gear = String(gearHint || (d < -0.02 ? 'R' : 'D')).toUpperCase();
+  if (Math.abs(d) <= 0.025) return 1500;
 
-  // 1. Nếu client gửi xung micro-giây tường minh hợp lệ ngoài vùng trung tính
-  const rawUs = (typeof explicitEscUs === 'number') ? explicitEscUs : Number(explicitEscUs);
-  if (Number.isFinite(rawUs) && rawUs >= 1000 && rawUs <= 2000 && Math.abs(rawUs - 1500) > 15) {
-    if (rawUs > 1525) {
-      escReverseArmState.wasReversing = false;
-      escReverseArmState.lastForwardMs = now;
-      return Math.round(rawUs);
-    }
-    if (rawUs < 1475) {
-      escReverseArmState.wasReversing = true;
-      return Math.max(1100, Math.round(rawUs));
+  if (d > 0.025 && gear !== 'R') {
+    // Dải tiến: khởi động từ 1535µs lên tối đa 1850µs
+    return Math.round(1535 + Math.pow(d, 0.9) * 315);
+  } else {
+    // Dải lùi: vượt deadband 1445µs xuống sâu tới 1100µs
+    const revMag = Math.abs(d);
+    return Math.round(1445 - Math.pow(revMag, 0.85) * 345);
+  }
+}
+
+function sendRateLimitedEsp32Udp(steerNorm, driveNorm, explicitEscPulseUs, gear = 'D', source = 'UNKNOWN') {
+  const now = Date.now();
+  const sNorm = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
+  const dNorm = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
+  const isInputActive = Math.abs(sNorm) > 0.025 || Math.abs(dNorm) > 0.025 ||
+    (Number.isFinite(Number(explicitEscPulseUs)) && Math.abs(Number(explicitEscPulseUs) - 1500) > 15);
+
+  // 1. Nếu tín hiệu đến từ Vô lăng trên Laptop (WINMM_USB hoặc WHEEL_BRIDGE_INPUT)
+  if (source === 'WHEEL_BRIDGE' || source === 'WINMM_USB' || source === 'NATIVE_WHEEL') {
+    if (isInputActive) {
+      rcArbitration.lastPhysicalWheelActiveAt = now;
+      rcArbitration.idleNeutralCount = 0;
+    } else {
+      // Nếu vô lăng đang thả tay ở vị trí nghỉ: chỉ gửi tối đa 2 gói dừng 1500µs rồi ngắt
+      // để nhường kênh cho Kính Quest 3 (tránh spam 50Hz trung tính đè tín hiệu kính)
+      rcArbitration.idleNeutralCount++;
+      if (rcArbitration.idleNeutralCount > 2) return;
     }
   }
 
-  // 2. Vùng trung tính (Đứng yên / Nhả bàn đạp)
-  if (Math.abs(d) <= 0.025) {
-    if (now - escReverseArmState.lastForwardMs > 250) {
-      escReverseArmState.wasReversing = false;
+  // 2. Nếu tín hiệu đến từ Kính Quest (CAR_CONTROL), nhưng Vô lăng Laptop vừa thao tác trong 350ms qua
+  //    và gói từ kính lại là gói dừng trung tính (1500µs) -> BỎ QUA để không làm khựng xe thật!
+  if ((source === 'QUEST_CAR_CONTROL' || source === 'CAR_CONTROL') && !isInputActive) {
+    if (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS) {
+      return;
     }
-    return 1500;
   }
 
-  // 3. Nhánh Ga Tiến (d > 0): Nhảy qua vùng chết ở 1535µs, đạt tối đa 1760µs
-  if (d > 0 && gear !== 'R') {
-    escReverseArmState.wasReversing = false;
-    escReverseArmState.lastForwardMs = now;
-    return Math.min(1760, Math.round(1535 + d * 225));
-  }
+  const steerDeg = Math.max(45, Math.min(135, Math.round(90 + sNorm * 45)));
+  const escPulseUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, gear);
 
-  // 4. Nhánh Ga Lùi (d < 0 hoặc gear === 'R'): Mở sâu tới 1100µs (bù 100% công suất ESC)
-  const revMag = Math.min(1, Math.abs(d));
-  escReverseArmState.wasReversing = true;
-  // Đường cong mũ 0.85 nhạy ở ga đầu, nhảy qua vùng chết ở 1445µs và mở sâu tới 1100µs (1445 - 345 = 1100µs)
-  const boostedRev = Math.pow(revMag, 0.85);
-  return Math.max(1100, Math.round(1445 - boostedRev * 345));
+  rcArbitration.lastSentSteerDeg = steerDeg;
+  rcArbitration.lastSentEscUs = escPulseUs;
+
+  // Ưu tiên gọi qua hàm chuẩn sendUdpCarCommand (Port 4210)
+  if (typeof sendUdpCarCommand === 'function') {
+    sendUdpCarCommand(steerDeg, escPulseUs);
+  }
 }
 
 function computeSafeEscPulseUs(msg) {
@@ -1200,9 +1227,8 @@ function computeSafeEscPulseUs(msg) {
             ws.isLocalhostAdmin ||
             ws.isQuestVR
           );
-          if (!canControlHardware) {
-            return;
-          }
+          if (!canControlHardware) return;
+
           let steer = 90;
           if (data.steeringDeg !== undefined || (data.steer !== undefined && Math.abs(Number(data.steer)) > 1.5)) {
             steer = Math.max(45, Math.min(135, Math.round(Number(data.steeringDeg ?? data.steer) || 90)));
@@ -1214,31 +1240,11 @@ function computeSafeEscPulseUs(msg) {
           const dNorm = Number(
             data.throttleNorm ??
             data.driveNorm ??
-            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 350 : 220) : data.throttle) ??
-            0
+            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 345 : 315) : 0)
           );
-          const rawThrottle = computeAsymmetricEscPulseUs(dNorm, rawPulse, data.gear);
-          const throttle = Math.abs(rawThrottle - 1500) < 15 ? 1500 : rawThrottle;
-          if (Math.abs(steer - 90) < 3) steer = 90;
-          const isActivelyDriving = (throttle !== 1500 || steer !== 90);
-          const now = Date.now();
-
-          if (isActivelyDriving) {
-            // Client này đang đạp ga hoặc bẻ lái -> Chiếm quyền Active Driver
-            activeDriverClient = ws;
-            activeDriverLastActiveTime = now;
-            sendUdpCarCommand(steer, throttle);
-          } else {
-            // Lệnh trả về trung tính (90°, 1500µs):
-            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 600)) {
-              if (activeDriverClient === ws) {
-                activeDriverLastActiveTime = 0;
-              }
-              sendUdpCarCommand(steer, throttle);
-            }
-          }
+          const gear = data.gear || (dNorm < -0.025 || rawPulse < 1460 ? 'R' : 'D');
+          sendRateLimitedEsp32Udp((steer - 90) / 45, dNorm, rawPulse, gear, 'QUEST_CAR_CONTROL');
         } else if (data.type === 'WHEEL_BRIDGE_INPUT' || data.type === 'WHEEL_BRIDGE_STATE') {
-          // Cầu nối vô lăng GOG R808 & Bàn phím: Chuẩn hóa 100% góc lái, chân ga, chân phanh sang Kính Quest 3
           const src = data.payload || data;
           const steerNorm = clampFinite(src.steerNorm ?? src.steeringNorm ?? (typeof src.steer === 'number' && src.steer <= 180 ? (src.steer - 90) / 45 : 0), -1, 1, 0);
           const gasNorm = clampFinite(src.gasNorm ?? (typeof src.gasPercent === 'number' ? src.gasPercent / 100 : 0), 0, 1, 0);
@@ -1247,10 +1253,8 @@ function computeSafeEscPulseUs(msg) {
           const driveNorm = clampFinite(src.driveNorm ?? (gasNorm - brakeNorm - reverseNorm), -1, 1, 0);
 
           const steerAngleDeg = clampFinite(src.steerAngleDeg ?? Math.round(steerNorm * 540), -540, 540, 0);
-          const steerVal = clampFinite(src.steer ?? Math.round(90 + steerNorm * 45), 45, 135, 90);
-          const throttleVal = clampFinite(src.throttle ?? Math.round(1500 + driveNorm * 260), 1000, 2000, 1500);
-
           const gear = src.gear || (brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : (reverseNorm > 0.04 ? 'R' : 'D'));
+          const escPulseUs = computeAsymmetricEscPulseUs(driveNorm, src.escPulseUs, gear);
           const buttonEvents = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
 
           const bridgePayload = JSON.stringify({
@@ -1270,8 +1274,9 @@ function computeSafeEscPulseUs(msg) {
             brakePercent: Math.round(brakeNorm * 100),
             reversePercent: Math.round(reverseNorm * 100),
             gear,
-            steer: steerVal,
-            throttle: throttleVal,
+            escPulseUs,
+            throttle: escPulseUs,
+            steer: Math.round(90 + steerNorm * 45),
             buttonEvents,
             sourcePlayer: playerId,
             timestamp: Date.now()
@@ -1283,22 +1288,7 @@ function computeSafeEscPulseUs(msg) {
             }
           }
 
-          // Bắn trực tiếp ra ESP32 Controller xe thật qua UDP nếu có tín hiệu ga/lái
-          const isActivelyDriving = (throttleVal !== 1500 || steerVal !== 90);
-          const now = Date.now();
-          if (isActivelyDriving) {
-            activeDriverClient = ws;
-            activeDriverLastActiveTime = now;
-            sendUdpCarCommand(steerVal, throttleVal);
-          } else {
-            // Khi nhả vô lăng/bàn đạp: phát xung trung tính (90°, 1500µs) để dừng xe ngay lập tức!
-            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 350)) {
-              if (activeDriverClient === ws) {
-                activeDriverLastActiveTime = 0;
-              }
-              sendUdpCarCommand(90, 1500);
-            }
-          }
+          sendRateLimitedEsp32Udp(steerNorm, driveNorm, escPulseUs, gear, 'WHEEL_BRIDGE');
         } else if (data.type === 'TEST_ESP32_PULSE') {
           // Lắc nhẹ bánh xe kiểm tra kết nối Servo & ESC thực tế
           sendUdpCarCommand(60, 1500);
@@ -2286,20 +2276,15 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
         // 2. Nhận lệnh điều khiển từ Bàn phím (Localhost) hoặc Tay cầm VR (Kính) gửi xuống ESP32
         if (data.type === 'RC_CONTROL_CMD' || data.type === 'CAR_CONTROL') {
-          const s = Number(data.steeringNorm ?? data.steerNorm ?? (typeof data.steer === 'number' && data.steer <= 180 ? (data.steer - 90) / 45 : 0));
+          const s = Number(data.steeringNorm ?? data.steerNorm ?? (data.steer !== undefined ? (Number(data.steer) - 90) / 45 : 0));
           const rawPulse = Number(data.escPulseUs ?? (Math.abs(Number(data.throttle)) >= 500 ? data.throttle : NaN));
           const d = Number(
             data.throttleNorm ??
             data.driveNorm ??
-            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 400 : 260) : 0)
+            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 345 : 315) : 0)
           );
-          const isDriving = Math.abs(s) > 0.02 || Math.abs(d) > 0.02;
-          const now = Date.now();
-          if (isDriving) {
-            activeDriverClient = ws;
-            activeDriverLastActiveTime = now;
-          }
-          sendRateLimitedEsp32Udp(s, d, rawPulse, data.gear, isDriving);
+          const gear = data.gear || (d < -0.025 || rawPulse < 1460 ? 'R' : 'D');
+          sendRateLimitedEsp32Udp(s, d, rawPulse, gear, 'QUEST_CAR_CONTROL');
           return;
         }
       });
@@ -2438,7 +2423,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             if (isWheelActivelyMoved) {
               activeDriverClient = 'nativeWheel';
               activeDriverLastActiveTime = nowTime;
-              sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear), data.gear, true);
+              sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear), data.gear, 'NATIVE_WHEEL');
             } else if (activeDriverClient === 'nativeWheel') {
               activeDriverClient = null;
               activeDriverLastActiveTime = 0;

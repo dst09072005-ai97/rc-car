@@ -1355,6 +1355,7 @@ D:\XE_RC_FPV_V10\tools\restore-golden-baseline.ps1	tools/restore-golden-baseline
 D:\XE_RC_FPV_V10\tools\serve_webxr.py	tools/serve_webxr.py
 D:\XE_RC_FPV_V10\tools\show_qr.js	tools/show_qr.js
 D:\XE_RC_FPV_V10\tools\sync_generator.py	tools/sync_generator.py
+D:\XE_RC_FPV_V10\tools\sync_v504_patch.js	tools/sync_v504_patch.js
 D:\XE_RC_FPV_V10\tools\test_gog_r808_pedals.js	tools/test_gog_r808_pedals.js
 D:\XE_RC_FPV_V10\tools\test_runtime_load.js	tools/test_runtime_load.js
 D:\XE_RC_FPV_V10\tools\test_v190_cabin_rules.js	tools/test_v190_cabin_rules.js

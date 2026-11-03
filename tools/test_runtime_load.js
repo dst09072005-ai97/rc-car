@@ -224,6 +224,7 @@ global.requestAnimationFrame = global.window.requestAnimationFrame;
 global.cancelAnimationFrame = global.window.cancelAnimationFrame;
 global.WebSocket = global.window.WebSocket;
 global.localStorage = global.window.localStorage;
+global.location = global.window.location;
 
 async function run() {
   console.log('🔍 [1/3] Đang nạp app.js vào môi trường giả lập Headless Browser...');
