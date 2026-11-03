@@ -2283,6 +2283,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
   let nativeWheelChild = null;
   let lastTerminalLogMs = 0;
+  let wheelConnectedLogged = false;
 
   function startNativeWheelBridge() {
     if (process.platform !== 'win32') return;
@@ -2306,7 +2307,6 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       return;
     }
 
-    console.log('✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=0 (Native Host 50Hz)');
 
     let buf = '';
     nativeWheelChild.stdout.on('data', (chunk) => {
@@ -2320,6 +2320,10 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         try {
           const data = JSON.parse(trimmed);
           if (data && data.type === 'WHEEL_BRIDGE_STATE' && data.connected) {
+            if (!wheelConnectedLogged) {
+              console.log('✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=' + (data.joyId ?? 0) + ' (Native Host 50Hz)');
+              wheelConnectedLogged = true;
+            }
             latestBridgeState.connected = true;
             latestBridgeState.steerNorm = data.steerNorm;
             latestBridgeState.gasNorm = data.gasNorm;
@@ -2377,6 +2381,12 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
             // Gửi xuống ESP32 RC Car qua UDP (Port 4210)
             sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, false);
+          } else if (data && data.type === 'WHEEL_BRIDGE_STATE' && !data.connected) {
+            latestBridgeState.connected = false;
+            if (wheelConnectedLogged) {
+              console.log('🔌 [GOG808 NATIVE] Vô lăng đã ngắt kết nối, đang chờ cắm lại...');
+              wheelConnectedLogged = false;
+            }
           }
         } catch (e) {}
       }
@@ -2391,16 +2401,17 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     nativeWheelChild.on('exit', () => {
       nativeWheelChild = null;
-      setTimeout(startNativeWheelBridge, 2500);
-    });
-
-    process.on('exit', () => {
-      if (nativeWheelChild) {
-        try { nativeWheelChild.kill(); } catch (e) {}
-        nativeWheelChild = null;
-      }
+      wheelConnectedLogged = false;
+      setTimeout(startNativeWheelBridge, 3500);
     });
   }
+
+  process.on('exit', () => {
+    if (nativeWheelChild) {
+      try { nativeWheelChild.kill(); } catch (e) {}
+      nativeWheelChild = null;
+    }
+  });
 
   startNativeWheelBridge();
 
