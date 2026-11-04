@@ -497,7 +497,9 @@ function sendUdpCarCommand(steer, throttle) {
         const key = `${s}_${t}`;
         if (key !== lastUdpCommandLog && (s !== 90 || t !== 1500)) {
           lastUdpCommandLog = key;
-          console.log(`[RC CAR UDP 4210] -> ${esp32CarConfig.ip}: Lái ${s}°, Ga ${t}µs (${t > 1520 ? 'TIẾN' : (t < 1480 ? 'LÙI' : 'DỪNG')})`);
+          if (process.env.DEBUG_RC_UDP) {
+            console.log(`[RC CAR UDP 4210] -> ${esp32CarConfig.ip}: Lái ${s}°, Ga ${t}µs (${t > 1520 ? 'TIẾN' : (t < 1480 ? 'LÙI' : 'DỪNG')})`);
+          }
         }
       }
     });
@@ -2373,14 +2375,16 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
             const clientCount = (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) ? activeMultiplayerSockets.size : 0;
 
-            // In log 50Hz MƯỢT lên Terminal đúng như cam kết khi có thao tác lái/đạp chân
-            const isActive = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
-            const now = Date.now();
-            if (isActive && (now - lastTerminalLogMs > 400)) {
-              lastTerminalLogMs = now;
-              console.log(
-                `🛞 [GOG808 50Hz MƯỢT] Lái: ${data.steerNorm.toFixed(2)} | Ga: ${data.gasNorm.toFixed(2)} | Phanh: ${data.brakeNorm.toFixed(2)} | Số ${data.gear} | Kính: ${clientCount}`
-              );
+            // Chỉ in log khi bật DEBUG_WHEEL để tránh làm tràn Terminal, giúp người dùng dễ nhìn
+            if (process.env.DEBUG_WHEEL) {
+              const isActive = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
+              const now = Date.now();
+              if (isActive && (now - lastTerminalLogMs > 1000)) {
+                lastTerminalLogMs = now;
+                console.log(
+                  `🛞 [GOG808] Lái: ${data.steerNorm.toFixed(2)} | Ga: ${data.gasNorm.toFixed(2)} | Phanh: ${data.brakeNorm.toFixed(2)} | Số ${data.gear} | Kính: ${clientCount}`
+                );
+              }
             }
 
             const outMsg = JSON.stringify({
