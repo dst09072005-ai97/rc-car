@@ -1139,20 +1139,29 @@ function createVerifiedGuestAvatar(guestInfo, suitColor) {
 const windshieldCanvas = document.createElement('canvas');
 windshieldCanvas.width = 1024;
 windshieldCanvas.height = 512;
-const wsCtx = windshieldCanvas.getContext('2d');
+const wsCtx = windshieldCanvas.getContext('2d', { alpha: false, desynchronized: true });
 const wsTex = new THREE.CanvasTexture(windshieldCanvas);
+wsTex.generateMipmaps = false;
+wsTex.minFilter = THREE.LinearFilter;
+wsTex.magFilter = THREE.LinearFilter;
 
 const ytCanvas = document.createElement('canvas');
 ytCanvas.width = 640;
 ytCanvas.height = 360;
 const ytCtx = ytCanvas.getContext('2d');
 const ytTex = new THREE.CanvasTexture(ytCanvas);
+ytTex.generateMipmaps = false;
+ytTex.minFilter = THREE.LinearFilter;
+ytTex.magFilter = THREE.LinearFilter;
 
 const rearCamCanvas = document.createElement('canvas');
 rearCamCanvas.width = 512;
 rearCamCanvas.height = 256;
-const rearCamCtx = rearCamCanvas.getContext('2d');
+const rearCamCtx = rearCamCanvas.getContext('2d', { alpha: false, desynchronized: true });
 const rearCamTex = new THREE.CanvasTexture(rearCamCanvas);
+rearCamTex.generateMipmaps = false;
+rearCamTex.minFilter = THREE.LinearFilter;
+rearCamTex.magFilter = THREE.LinearFilter;
 
 function buildMasterRollsRoyceVehicle() {
   const underbody = new THREE.Mesh(new THREE.BoxGeometry(1.94, 0.16, 4.85), matPiano);
@@ -1442,10 +1451,16 @@ function decodePendingFrontFrame() {
     if (state.windshieldMode === 'ESP32_LIVE') {
       wsCtx.drawImage(bmp, 0, 0, 1024, 512);
       wsTex.needsUpdate = true;
+    } else if (state.windshieldMode === 'ESP32_PIP') {
+      const pipW = 340, pipH = 190, pipX = 1024 - pipW - 16, pipY = 56;
+      wsCtx.drawImage(bmp, pipX, pipY, pipW, pipH);
+      wsTex.needsUpdate = true;
     } else if (state.windshieldMode === 'ESP32_REAR_LIVE' && !esp32RearBitmap) {
       wsCtx.drawImage(bmp, 0, 0, 1024, 512);
       wsTex.needsUpdate = true;
     }
+    try { bmp.close(); } catch (e) {}
+    esp32Bitmap = true;
     frontCamNeedsRedraw = false;
   }).catch(() => {}).finally(() => {
     isFrontDecoding = false;
@@ -4127,7 +4142,8 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             }
           }
         } else if (msg.type === 'ESP32_CAM_FRAME_RELAY' && msg.dataUrl) {
-          if (typeof window !== 'undefined' && window.__questRelayImg) {
+          // Chỉ nhận fallback khi chưa có kết nối WebSocket nhị phân trực tiếp
+          if (!state.esp32Connected && typeof window !== 'undefined' && window.__questRelayImg) {
             window.__questRelayImg.src = msg.dataUrl;
           }
         } else if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
@@ -22256,24 +22272,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (!isLaptopAdmin) return;
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
 
-    // 1. Chuyển tiếp khung hình ESP32 Cam từ Laptop sang Quest 3 (~12 FPS)
-    if (relayCtx && typeof mpSocket !== 'undefined' && mpSocket && mpSocket.readyState === WebSocket.OPEN) {
-      if (now - lastCamRelaySentAt > 80) {
-        const frontImg = document.getElementById('v250-front-cam-img');
-        if (frontImg && frontImg.complete && (frontImg.naturalWidth || 0) > 0) {
-          try {
-            relayCtx.drawImage(frontImg, 0, 0, 480, 270);
-            const dataUrl = relayCanvas.toDataURL('image/jpeg', 0.60);
-            lastCamRelaySentAt = now;
-            mpSocket.send(JSON.stringify({
-              type: 'ESP32_CAM_FRAME_RELAY',
-              role: 'front',
-              dataUrl
-            }));
-          } catch (e) {}
-        }
-      }
-    }
+    // 1. Camera ESP32 đã truyền trực tiếp qua WebSocket Binary tốc độ 30 FPS Zero-Lag
+    // Triệt tiêu hoàn toàn việc nén base64 toDataURL() để giải phóng băng thông mạng và CPU
 
     // 2. Đọc Gamepad API quét Vô lăng & Bàn đạp GOG R808
     if (typeof navigator === 'undefined' || !navigator.getGamepads) return;

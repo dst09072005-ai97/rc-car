@@ -1314,7 +1314,6 @@ D:\XE_RC_FPV_V10\server\server.js	server/server.js
 D:\XE_RC_FPV_V10\server\tests\test_contract.js	server/tests/test_contract.js
 D:\XE_RC_FPV_V10\server.js	server.js
 D:\XE_RC_FPV_V10\start_all.bat	start_all.bat
-D:\XE_RC_FPV_V10\tools\apply_esp32_cam_auto_sync.js	tools/apply_esp32_cam_auto_sync.js
 D:\XE_RC_FPV_V10\tools\apply_patch_v400.js	tools/apply_patch_v400.js
 D:\XE_RC_FPV_V10\tools\apply_patch_v500.js	tools/apply_patch_v500.js
 D:\XE_RC_FPV_V10\tools\apply_reverse_limit_1100.js	tools/apply_reverse_limit_1100.js
@@ -1351,6 +1350,7 @@ D:\XE_RC_FPV_V10\tools\patch_native_bridge_stability.js	tools/patch_native_bridg
 D:\XE_RC_FPV_V10\tools\patch_server_multiplayer.js	tools/patch_server_multiplayer.js
 D:\XE_RC_FPV_V10\tools\patch_server_stability.js	tools/patch_server_stability.js
 D:\XE_RC_FPV_V10\tools\patch_snippet.js	tools/patch_snippet.js
+D:\XE_RC_FPV_V10\tools\patch_steer_and_cam_perf.js	tools/patch_steer_and_cam_perf.js
 D:\XE_RC_FPV_V10\tools\patch_websocket_and_bridge.js	tools/patch_websocket_and_bridge.js
 D:\XE_RC_FPV_V10\tools\restore-golden-baseline.js	tools/restore-golden-baseline.js
 D:\XE_RC_FPV_V10\tools\restore-golden-baseline.ps1	tools/restore-golden-baseline.ps1

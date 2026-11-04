@@ -480,8 +480,9 @@ const esp32CarConfig = {
 // Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
 function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
-  // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
-  const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
+  // [FIX ĐẢO LÁI XE NGOÀI] Đảo ngược góc lái 45..135° cho servo xe RC ngoài đời thật (180 - rawS)
+  const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
+  const s = 180 - rawS;
   const t = Math.max(1150, Math.min(1850, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
@@ -848,6 +849,11 @@ function proxyEsp32WebSocket(clientWs, targetIp, targetPort, roleName) {
 
   upstreamWs.on('message', (data, isBinary) => {
     if (clientWs.readyState === WebSocket.OPEN) {
+      // [ZERO-LAG FPV] Nếu socket client nghẽn buffer > 24KB, bỏ qua ngay frame cũ này
+      // để triệt tiêu hoàn toàn độ trễ tích tụ (video bám sát tức thì tốc độ xe khi đạp ga)
+      if (clientWs.bufferedAmount > 24 * 1024) {
+        return;
+      }
       clientWs.send(data, { binary: isBinary });
     }
   });
@@ -1847,7 +1853,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   // Hàm bắn tín hiệu điều khiển xuống mạch ESP32 Controller ngoài đời thật
   function dispatchToRealEsp32Controller(payload) {
     const t = Math.max(-255, Math.min(255, Math.round(Number(payload.throttle) || 0)));
-    const s = Math.max(-100, Math.min(100, Math.round(Number(payload.steering) || 0)));
+    const rawS = Math.max(-100, Math.min(100, Math.round(Number(payload.steering) || 0)));
+    const s = -rawS; // [FIX ĐẢO LÁI XE NGOÀI] Đảo ngược phần trăm lái cho servo xe RC ngoài đời thật
     const b = payload.brake ? 1 : 0;
     const l = payload.lights ? 1 : 0;
     const h = payload.horn ? 1 : 0;
@@ -2142,7 +2149,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     const s = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
     const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
 
-    const steerDeg = Math.max(45, Math.min(135, Math.round(90 + s * 45)));
+    // [FIX ĐẢO LÁI XE NGOÀI] Đảo góc lái cho servo xe RC thật (-s thay vì +s)
+    const steerDeg = Math.max(45, Math.min(135, Math.round(90 - s * 45)));
     const escUs = Math.max(1000, Math.min(2000, Math.round(1500 + d * 220)));
 
     const changed = (steerDeg !== lastSteerDegSent) || (escUs !== lastEscUsSent);
