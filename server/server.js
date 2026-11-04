@@ -83,14 +83,23 @@ const wwwPath = fs.existsSync(path.resolve(__dirname, '../www')) ? path.resolve(
 // [PATCH V400] API PING CHO KÍNH META QUEST 3 TỰ ĐỘNG DÒ TÌM LAPTOP QUA WI-FI
 app.get('/api/bridge-ping', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Cache-Control', 'no-store');
-  const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.32';
+  const lanIps = typeof getLanIpv4List === 'function' ? getLanIpv4List() : (typeof getLocalLanIp === 'function' ? [getLocalLanIp()] : ['127.0.0.1']);
   res.json({
     ok: true,
     service: 'GOG808_LAPTOP_BRIDGE',
-    ips: [lanIp, '192.168.1.32'],
-    wheelConnected: true,
+    hostIp: lanIps[0] || '127.0.0.1',
+    ips: lanIps,
+    car: {
+      ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
+      port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210,
+      lastSeen: (typeof esp32CarConfig !== 'undefined') ? esp32CarConfig.lastSeen : 0,
+      active: (typeof esp32CarConfig !== 'undefined') ? ((Date.now() - (esp32CarConfig.lastSeen || 0)) < 30000) : false
+    },
+    cams: (typeof discoveredEsp32Cams !== 'undefined') ? discoveredEsp32Cams : {},
+    wheel: (typeof latestBridgeState !== 'undefined') ? latestBridgeState : { connected: false },
     timestamp: Date.now()
   });
 });
@@ -550,6 +559,19 @@ udpServer.on('message', (msg, rinfo) => {
       esp32CarConfig.lastSeen = Date.now();
       if (isNewCar) {
         console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${targetPort}`);
+        if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
+          const carUpdatePacket = JSON.stringify({
+            type: 'CAR_IP_UPDATED',
+            carIp: esp32CarConfig.ip,
+            ip: esp32CarConfig.ip,
+            port: esp32CarConfig.port
+          });
+          for (const client of activeMultiplayerSockets) {
+            if (client.readyState === 1) {
+              try { client.send(carUpdatePacket); } catch (e) {}
+            }
+          }
+        }
       }
       return;
     }
@@ -2180,10 +2202,21 @@ app.get('/api/sc-search', handleSoundCloudSearch);
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-store'
         });
+        const lanIps = getLanIpv4List();
         res.end(JSON.stringify({
           ok: true,
-          ips: getLanIpv4List(),
-          wheel: latestBridgeState
+          service: 'GOG808_LAPTOP_BRIDGE',
+          hostIp: lanIps[0] || '127.0.0.1',
+          ips: lanIps,
+          car: {
+            ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
+            port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210,
+            lastSeen: (typeof esp32CarConfig !== 'undefined') ? esp32CarConfig.lastSeen : 0,
+            active: (typeof esp32CarConfig !== 'undefined') ? ((Date.now() - (esp32CarConfig.lastSeen || 0)) < 30000) : false
+          },
+          cams: (typeof discoveredEsp32Cams !== 'undefined') ? discoveredEsp32Cams : {},
+          wheel: latestBridgeState,
+          timestamp: Date.now()
         }));
         return true;
       }
