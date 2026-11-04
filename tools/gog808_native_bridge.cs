@@ -122,19 +122,38 @@ public class Gog808Bridge {
                 float steerNorm = Clamp(rawSteer, -1f, 1f);
 
                 // Ga & Phanh & Lùi
-                float rawGas = ReadAxis(info.dwYpos, restY);
-                float rawBrake = ReadAxis(info.dwZpos, restZ);
-                float rawRev = ReadAxis(info.dwRpos, restR);
+                // GOG R808 chuẩn DirectInput/WinMM:
+                // Trục Z (dwZpos, rest 0) = Bàn đạp Ga (Phải)
+                // Trục R (dwRpos, rest 0) = Bàn đạp Phanh (Trái)
+                // Trục Y (dwYpos, rest 32767) = Phụ / Trục kết hợp
+                float pedalZ = ReadAxis(info.dwZpos, restZ);
+                float pedalR = ReadAxis(info.dwRpos, restR);
+                float pedalY = ReadAxis(info.dwYpos, restY);
 
                 // Nút cò digital 6 và 7
                 bool bGas = ((info.dwButtons & (1 << 7)) != 0) && ((restBtns & (1 << 7)) == 0);
                 bool bBrake = ((info.dwButtons & (1 << 6)) != 0) && ((restBtns & (1 << 6)) == 0);
-                if (bGas) rawGas = Math.Max(rawGas, 1.0f);
-                if (bBrake) rawBrake = Math.Max(rawBrake, 1.0f);
 
-                if (rawGas < 0.04f) rawGas = 0f;
-                if (rawBrake < 0.04f) rawBrake = 0f;
-                if (rawRev < 0.04f) rawRev = 0f;
+                // Hỗ trợ kiểm tra cờ đảo bàn đạp
+                bool swapPedals = (args.Length > 0 && args[0] == "--swap")
+                                  || Environment.GetEnvironmentVariable("GOG808_SWAP_PEDALS") == "1"
+                                  || System.IO.File.Exists("gog808_swap.flag");
+
+                float primaryGas = swapPedals ? pedalR : pedalZ;
+                float primaryBrake = swapPedals ? pedalZ : pedalR;
+
+                // Fallback nếu vô lăng dùng trục kết hợp dwYpos
+                if (primaryGas < 0.03f && pedalY > 0.05f) primaryGas = pedalY;
+
+                if (bGas) primaryGas = Math.Max(primaryGas, 1.0f);
+                if (bBrake) primaryBrake = Math.Max(primaryBrake, 1.0f);
+
+                if (primaryGas < 0.04f) primaryGas = 0f;
+                if (primaryBrake < 0.04f) primaryBrake = 0f;
+
+                float rawGas = primaryGas;
+                float rawBrake = primaryBrake;
+                float rawRev = primaryBrake;
 
                 // Quy tắc ưu tiên phanh: Khi đạp cả ga lẫn phanh -> triệt tiêu ga
                 if (rawBrake > 0.05f && rawGas > 0.05f) rawGas = 0f;

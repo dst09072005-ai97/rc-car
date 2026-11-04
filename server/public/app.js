@@ -125,7 +125,7 @@ async function setupSeamless3D2DSwitcher() {
   if (typeof localStorage !== 'undefined' && !localStorage.getItem('pc_server_ip')) {
     const fallbackDefaultIp = (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function')
       ? window.QuestVRBridge.getDefaultHostIp()
-      : '192.168.1.60';
+      : '192.168.1.21';
     localStorage.setItem('pc_server_ip', fallbackDefaultIp);
   }
 
@@ -133,7 +133,7 @@ async function setupSeamless3D2DSwitcher() {
   const pcIpInput = document.getElementById('pc-server-ip-input');
   const btnSavePcIp = document.getElementById('btn-save-pc-ip');
   if (pcIpInput) {
-    const curIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.60';
+    const curIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.21';
     pcIpInput.value = curIp;
     const saveIp = () => {
       const val = pcIpInput.value.trim();
@@ -181,7 +181,7 @@ async function setupSeamless3D2DSwitcher() {
       if (!pcIp && typeof window.QuestVRBridge !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function') {
         try { pcIp = window.QuestVRBridge.getDefaultHostIp(); } catch (e) {}
       }
-      if (!pcIp) pcIp = '192.168.1.60';
+      if (!pcIp) pcIp = '192.168.1.21';
       if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
 
       const vrTargetUrl = `https://${pcIp}:8443/?vr=immersive`;
@@ -4017,10 +4017,13 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     );
 
     if (isApkEnvironment) {
+      const isMobileOrQuest = (typeof navigator !== 'undefined') && /android|quest|mobile/i.test(navigator.userAgent || '');
       let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
-      if (!pcIp || pcIp === 'localhost' || pcIp === '127.0.0.1' || pcIp === 'null' || pcIp === 'undefined') {
-        pcIp = '192.168.1.60';
+      if (!pcIp || pcIp === '192.168.1.60' || pcIp === 'null' || pcIp === 'undefined') {
+        pcIp = isMobileOrQuest ? '192.168.1.21' : '127.0.0.1';
         if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
+      } else if (!isMobileOrQuest && (pcIp === 'localhost' || pcIp === '127.0.0.1')) {
+        pcIp = '127.0.0.1';
       }
       hostTarget = `${pcIp}:8080`;
       wsProto = 'ws:';
