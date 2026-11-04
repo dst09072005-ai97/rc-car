@@ -1314,6 +1314,7 @@ D:\XE_RC_FPV_V10\server\server.js	server/server.js
 D:\XE_RC_FPV_V10\server\tests\test_contract.js	server/tests/test_contract.js
 D:\XE_RC_FPV_V10\server.js	server.js
 D:\XE_RC_FPV_V10\start_all.bat	start_all.bat
+D:\XE_RC_FPV_V10\tools\apply_esp32_cam_auto_sync.js	tools/apply_esp32_cam_auto_sync.js
 D:\XE_RC_FPV_V10\tools\apply_patch_v400.js	tools/apply_patch_v400.js
 D:\XE_RC_FPV_V10\tools\apply_patch_v500.js	tools/apply_patch_v500.js
 D:\XE_RC_FPV_V10\tools\apply_reverse_limit_1100.js	tools/apply_reverse_limit_1100.js
@@ -1323,9 +1324,6 @@ D:\XE_RC_FPV_V10\tools\apply_v300_perfect_hybrid.js	tools/apply_v300_perfect_hyb
 D:\XE_RC_FPV_V10\tools\apply_v501_clean.js	tools/apply_v501_clean.js
 D:\XE_RC_FPV_V10\tools\apply_v502_pedal_rules.js	tools/apply_v502_pedal_rules.js
 D:\XE_RC_FPV_V10\tools\apply_v503_smooth_streaming.js	tools/apply_v503_smooth_streaming.js
-D:\XE_RC_FPV_V10\tools\apply_v504_client_sync.js	tools/apply_v504_client_sync.js
-D:\XE_RC_FPV_V10\tools\apply_v504_full_patch.js	tools/apply_v504_full_patch.js
-D:\XE_RC_FPV_V10\tools\apply_v504_lan_discovery.js	tools/apply_v504_lan_discovery.js
 D:\XE_RC_FPV_V10\tools\apply_v504_native_host_bridge.js	tools/apply_v504_native_host_bridge.js
 D:\XE_RC_FPV_V10\tools\audit_individual_meshes.js	tools/audit_individual_meshes.js
 D:\XE_RC_FPV_V10\tools\build_v260_module.js	tools/build_v260_module.js
@@ -1347,6 +1345,7 @@ D:\XE_RC_FPV_V10\tools\patch_apk_immersive_bridge.js	tools/patch_apk_immersive_b
 D:\XE_RC_FPV_V10\tools\patch_app.py	tools/patch_app.py
 D:\XE_RC_FPV_V10\tools\patch_audit_fixes.py	tools/patch_audit_fixes.py
 D:\XE_RC_FPV_V10\tools\patch_control_flow.js	tools/patch_control_flow.js
+D:\XE_RC_FPV_V10\tools\patch_esp32_cam_sync.js	tools/patch_esp32_cam_sync.js
 D:\XE_RC_FPV_V10\tools\patch_gog_r808_pedals.js	tools/patch_gog_r808_pedals.js
 D:\XE_RC_FPV_V10\tools\patch_native_bridge_stability.js	tools/patch_native_bridge_stability.js
 D:\XE_RC_FPV_V10\tools\patch_server_multiplayer.js	tools/patch_server_multiplayer.js

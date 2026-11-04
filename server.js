@@ -1,9 +1,3 @@
-process.on('uncaughtException', (err) => {
-  console.error('❌ [CRITICAL UNCAUGHT EXCEPTION]', err && err.stack ? err.stack : err);
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ [CRITICAL UNHANDLED REJECTION]', reason && reason.stack ? reason.stack : reason);
-});
 global.buttonEvents = [];
 global.btnEvents = [];
 const path = require('path');
@@ -83,23 +77,19 @@ const wwwPath = fs.existsSync(path.resolve(__dirname, '../www')) ? path.resolve(
 // [PATCH V400] API PING CHO KÍNH META QUEST 3 TỰ ĐỘNG DÒ TÌM LAPTOP QUA WI-FI
 app.get('/api/bridge-ping', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Cache-Control', 'no-store');
-  const lanIps = typeof getLanIpv4List === 'function' ? getLanIpv4List() : (typeof getLocalLanIp === 'function' ? [getLocalLanIp()] : ['127.0.0.1']);
+  const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.32';
   res.json({
     ok: true,
     service: 'GOG808_LAPTOP_BRIDGE',
-    hostIp: lanIps[0] || '127.0.0.1',
-    ips: lanIps,
+    ips: [lanIp, '192.168.1.32'],
+    wheelConnected: true,
     car: {
       ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
-      port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210,
-      lastSeen: (typeof esp32CarConfig !== 'undefined') ? esp32CarConfig.lastSeen : 0,
-      active: (typeof esp32CarConfig !== 'undefined') ? ((Date.now() - (esp32CarConfig.lastSeen || 0)) < 30000) : false
+      port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
     },
     cams: (typeof discoveredEsp32Cams !== 'undefined') ? discoveredEsp32Cams : {},
-    wheel: (typeof latestBridgeState !== 'undefined') ? latestBridgeState : { connected: false },
     timestamp: Date.now()
   });
 });
@@ -492,7 +482,7 @@ function sendUdpCarCommand(steer, throttle) {
   if (!esp32CarConfig.ip) return;
   // Giới hạn biên an toàn: Góc lái 45..135°, Xung ga cân chỉnh 1300..1700us (1500us dừng)
   const s = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-  const t = Math.max(1100, Math.min(1850, Math.round(Number(throttle) || 1500)));
+  const t = Math.max(1150, Math.min(1850, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
   buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)
@@ -506,9 +496,7 @@ function sendUdpCarCommand(steer, throttle) {
         const key = `${s}_${t}`;
         if (key !== lastUdpCommandLog && (s !== 90 || t !== 1500)) {
           lastUdpCommandLog = key;
-          if (process.env.DEBUG_RC_UDP) {
-            console.log(`[RC CAR UDP 4210] -> ${esp32CarConfig.ip}: Lái ${s}°, Ga ${t}µs (${t > 1520 ? 'TIẾN' : (t < 1480 ? 'LÙI' : 'DỪNG')})`);
-          }
+          console.log(`[RC CAR UDP 4210] -> ${esp32CarConfig.ip}: Lái ${s}°, Ga ${t}µs (${t > 1520 ? 'TIẾN' : (t < 1480 ? 'LÙI' : 'DỪNG')})`);
         }
       }
     });
@@ -537,42 +525,23 @@ udpServer.on('message', (msg, rinfo) => {
     // Tự động nhận diện IP của ESP32 Camera (Cam trước hoặc Cam lùi) khi đổi Wi-Fi
     if (data.type === 'ESP32_CAM' || data.type === 'ESP32_ANNOUNCE' || (data.cam && !data.speedKmh)) {
       const role = (data.role === 'rear' || data.cam === 'rear') ? 'rear' : 'front';
-      const targetPort = Number(data.port || 4213);
-      const isNewCam = !discoveredEsp32Cams[role] || discoveredEsp32Cams[role].ip !== rinfo.address || discoveredEsp32Cams[role].port !== targetPort;
       discoveredEsp32Cams[role] = {
         ip: rinfo.address,
-        port: targetPort,
+        port: Number(data.port || 4213),
         lastSeen: Date.now()
       };
-      if (isNewCam) {
-        console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${rinfo.address}:${targetPort}`);
-      }
+      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${rinfo.address}:${data.port || 4213}`);
+      if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
       return; // Chỉ cập nhật IP Camera, KHÔNG ghi đè telemetry xe!
     }
 
     // Tự động nhận diện IP của Mạch Lái Xe ESP32 (Controller GPIO 12/13 qua UDP 4210)
     if (data.type === 'ESP32_CAR' || data.type === 'ESP32_CAR_ANNOUNCE' || data.role === 'car') {
-      const targetPort = Number(data.port || 4210);
-      const isNewCar = esp32CarConfig.ip !== rinfo.address || esp32CarConfig.port !== targetPort;
       esp32CarConfig.ip = rinfo.address;
-      esp32CarConfig.port = targetPort;
+      esp32CarConfig.port = Number(data.port || 4210);
       esp32CarConfig.lastSeen = Date.now();
-      if (isNewCar) {
-        console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${targetPort}`);
-        if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
-          const carUpdatePacket = JSON.stringify({
-            type: 'CAR_IP_UPDATED',
-            carIp: esp32CarConfig.ip,
-            ip: esp32CarConfig.ip,
-            port: esp32CarConfig.port
-          });
-          for (const client of activeMultiplayerSockets) {
-            if (client.readyState === 1) {
-              try { client.send(carUpdatePacket); } catch (e) {}
-            }
-          }
-        }
-      }
+      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${esp32CarConfig.port}`);
+      if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
       return;
     }
 
@@ -633,6 +602,7 @@ app.get('/api/register-esp32', (req, res) => {
 
   discoveredEsp32Cams[role] = { ip: cleanIp, port, lastSeen: Date.now() };
   console.log(`[HTTP REGISTRATION] ESP32 ${role.toUpperCase()} đã đăng ký IP mới: ${cleanIp}:${port}`);
+  if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
   res.json({ status: 'ok', role, ip: cleanIp, port });
 });
 
@@ -733,6 +703,8 @@ app.get('/api/scan-esp32', async (req, res) => {
   } catch (err) {
     console.error('[SCAN ESP32 ERROR]', err);
   }
+  if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+  if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
   res.json({ found: results, discovered: discoveredEsp32Cams });
 });
 
@@ -821,6 +793,25 @@ cars.delete('car_guest_1');
 const activeMultiplayerSockets = new Set();
 let activeDriverClient = null;
 let activeDriverLastActiveTime = 0;
+
+function broadcastCameraIpUpdate() {
+  if (typeof activeMultiplayerSockets === 'undefined' || !activeMultiplayerSockets) return;
+  const camPacket = JSON.stringify({
+    type: 'CAM_IP_UPDATED',
+    cams: {
+      front: discoveredEsp32Cams.front,
+      rear: discoveredEsp32Cams.rear
+    },
+    car: esp32CarConfig,
+    front: discoveredEsp32Cams.front,
+    rear: discoveredEsp32Cams.rear
+  });
+  for (const client of activeMultiplayerSockets) {
+    if (client.readyState === 1) { // WebSocket.OPEN
+      try { client.send(camPacket); } catch (e) {}
+    }
+  }
+}
 
 function broadcastWorldState() {
   if (activeMultiplayerSockets.size === 0) return;
@@ -994,8 +985,29 @@ function attachMultiplayerServer(serverInstance) {
     ws.send(JSON.stringify({
       type: 'SERVER_LAN_INFO',
       lanIp: getLocalLanIp(),
-      port: HTTP_PORT
+      port: HTTP_PORT,
+      car: {
+        ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
+        port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
+      },
+      cams: {
+        front: discoveredEsp32Cams.front,
+        rear: discoveredEsp32Cams.rear
+      }
     }));
+    if (discoveredEsp32Cams.front.ip || discoveredEsp32Cams.rear.ip) {
+      try {
+        ws.send(JSON.stringify({
+          type: 'CAM_IP_UPDATED',
+          cams: {
+            front: discoveredEsp32Cams.front,
+            rear: discoveredEsp32Cams.rear
+          },
+          front: discoveredEsp32Cams.front,
+          rear: discoveredEsp32Cams.rear
+        }));
+      } catch (e) {}
+    }
     ws.send(JSON.stringify({
       type: 'WELCOME',
       playerId,
@@ -1143,116 +1155,65 @@ function clampNum(val, min, max, fallback) {
   return Math.min(max, Math.max(min, n));
 }
 
-// ============================================================================
-// [V504 RESTORED + 1100µs REVERSE] BỘ TRỌNG TÀI ƯU TIÊN VÔ LĂNG & UDP 4210 CHUẨN
-// ============================================================================
-const rcArbitration = {
-  lastPhysicalWheelActiveAt: 0, // Timestamp lần cuối vô lăng Laptop thực sự có thao tác
-  lastSentSteerDeg: 90,
-  lastSentEscUs: 1500,
-  idleNeutralCount: 0,
-  WHEEL_PRIORITY_WINDOW_MS: 350 // Khóa ưu tiên 350ms cho vô lăng vật lý, chống kính gửi đè 1500us
-};
-
-// Hàm quy đổi xung ESC bất đối xứng: Tiến [1535..1850µs] | Trung tính [1500µs] | Lùi sâu [1445..1100µs]
-function computeAsymmetricEscPulseUs(driveNorm, explicitPulseUs, gear = 'D') {
-  const rawExplicit = Number(explicitPulseUs);
-  if (Number.isFinite(rawExplicit) && rawExplicit >= 1000 && rawExplicit <= 2000 && Math.abs(rawExplicit - 1500) > 5) {
-    // Nếu gói gửi lên bị kẹp ở ngưỡng lùi cũ (1250..1320), tự động mở rộng xuống dải 1100us
-    if (rawExplicit < 1445 && rawExplicit >= 1250 && driveNorm < -0.05) {
-      const revMag = Math.min(1, Math.max(0, Math.abs(driveNorm)));
-      return Math.round(1445 - Math.pow(revMag, 0.85) * 345); // Chạm ngưỡng 1100µs khi đạp hết cỡ
-    }
-    return Math.round(rawExplicit);
-  }
-
-  const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-  if (Math.abs(d) <= 0.025) return 1500;
-
-  if (d > 0.025 && gear !== 'R') {
-    // Dải tiến: khởi động từ 1535µs lên tối đa 1850µs
-    return Math.round(1535 + Math.pow(d, 0.9) * 315);
-  } else {
-    // Dải lùi: vượt deadband 1445µs xuống sâu tới 1100µs
-    const revMag = Math.abs(d);
-    return Math.round(1445 - Math.pow(revMag, 0.85) * 345);
-  }
-}
-
-function sendRateLimitedEsp32Udp(steerNorm, driveNorm, explicitEscPulseUs, gear = 'D', source = 'UNKNOWN') {
-  const now = Date.now();
-  const sNorm = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
-  const dNorm = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-  const isInputActive = Math.abs(sNorm) > 0.025 || Math.abs(dNorm) > 0.025 ||
-    (Number.isFinite(Number(explicitEscPulseUs)) && Math.abs(Number(explicitEscPulseUs) - 1500) > 15);
-
-  // 1. Nếu tín hiệu đến từ Vô lăng trên Laptop (WINMM_USB hoặc WHEEL_BRIDGE_INPUT)
-  if (source === 'WHEEL_BRIDGE' || source === 'WINMM_USB' || source === 'NATIVE_WHEEL') {
-    if (isInputActive) {
-      rcArbitration.lastPhysicalWheelActiveAt = now;
-      rcArbitration.idleNeutralCount = 0;
-    } else {
-      // Nếu vô lăng đang thả tay ở vị trí nghỉ: chỉ gửi tối đa 2 gói dừng 1500µs rồi ngắt
-      // để nhường kênh cho Kính Quest 3 (tránh spam 50Hz trung tính đè tín hiệu kính)
-      rcArbitration.idleNeutralCount++;
-      if (rcArbitration.idleNeutralCount > 2) return;
-    }
-  }
-
-  // 2. Nếu tín hiệu đến từ Kính Quest (CAR_CONTROL), nhưng Vô lăng Laptop vừa thao tác trong 350ms qua
-  //    và gói từ kính lại là gói dừng trung tính (1500µs) -> BỎ QUA để không làm khựng xe thật!
-  if ((source === 'QUEST_CAR_CONTROL' || source === 'CAR_CONTROL') && !isInputActive) {
-    if (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS) {
-      return;
-    }
-  }
-
-  const steerDeg = Math.max(45, Math.min(135, Math.round(90 + sNorm * 45)));
-  const escPulseUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, gear);
-
-  rcArbitration.lastSentSteerDeg = steerDeg;
-  rcArbitration.lastSentEscUs = escPulseUs;
-
-  // Ưu tiên gọi qua hàm chuẩn sendUdpCarCommand (Port 4210)
-  if (typeof sendUdpCarCommand === 'function') {
-    sendUdpCarCommand(steerDeg, escPulseUs);
-  }
-}
-
 function computeSafeEscPulseUs(msg) {
   const rawBrake = clampNum(msg.brakeNorm ?? msg.brake ?? 0, 0, 1, 0);
   const gear = String(msg.gear || 'D').toUpperCase();
 
-  // 1. Nếu có lệnh phanh chủ động và không ở số R -> cắt ga đưa về 1500 µs
-  if (rawBrake > 0.05 && gear !== 'R') {
+  // 1. Nếu có lệnh phanh chủ động -> cắt ga đưa về trung tính 1500 µs ngay lập tức (không bao giờ lùi)
+  if (rawBrake > 0.05) {
     return 1500;
   }
 
-  const rawPulse = Number(msg.escPulseUs ?? (Math.abs(Number(msg.throttle)) >= 500 ? msg.throttle : NaN));
-  const normDrive = clampNum(
-    msg.throttleNorm ??
-    msg.driveNorm ??
-    (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 350 : 220) : msg.throttle) ??
-    0,
-    -1, 1, 0
-  );
-  return computeAsymmetricEscPulseUs(normDrive, rawPulse, gear);
+  // 2. Nếu client gửi trực tiếp xung micro-giây (ví dụ CAR_CONTROL: { steer: 90, throttle: 1500 })
+  if (msg.escPulseUs !== undefined || (msg.throttle !== undefined && Math.abs(Number(msg.throttle)) >= 500)) {
+    const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1150, 1850, 1500);
+    if (rawUs > 1520) {
+      lastMovingForwardAt = Date.now();
+      return Math.round(rawUs);
+    }
+    if (rawUs < 1480) {
+      // Interlock: Nếu vừa mới chạy tiến trong vòng 350ms và chưa sang số R, khóa ở 1500 µs để tránh biến phanh thành lùi
+      if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
+        return 1500;
+      }
+      return Math.round(rawUs);
+    }
+    return 1500;
+  }
+
+  // 3. Nếu client gửi giá trị chuẩn hóa [-1..1] (throttleNorm / steerNorm / steeringNorm)
+  const normDrive = clampNum(msg.throttleNorm ?? msg.throttle ?? 0, -1, 1, 0);
+  if (normDrive > 0.02) {
+    if (gear === 'R') {
+      // Đang cài số R và đạp ga -> Lùi trong dải an toàn [1500..1300 µs]
+      return Math.round(1500 - normDrive * 200);
+    }
+    lastMovingForwardAt = Date.now();
+    // Đang ở số D và đạp ga -> Tiến trong dải an toàn [1500..1700 µs]
+    return Math.round(1500 + normDrive * 200);
+  }
+
+  if (normDrive < -0.02) {
+    // Nếu giá trị âm được gửi khi chưa gạt số R và xe vừa tiến -> coi là phanh dừng (1500 µs)
+    if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
+      return 1500;
+    }
+    return Math.round(1500 + normDrive * 200); // normDrive âm -> [1500..1300 µs]
+  }
+
+  return 1500;
 }
 
         } else if (data.type === 'CAR_CONTROL') {
-          // CHỈ TÀI XẾ (Seat 0), Kính Quest VR hoặc Laptop Admin MỚI ĐƯỢC PHÉP ĐIỀU KHIỂN XE THẬT:
-          const canControlHardware = Boolean(
-            !p ||
-            p.seatIndex === 0 ||
-            p.isHost ||
-            p.isLocalhostAdmin ||
-            p.isQuestVR ||
-            ws.seatIndex === 0 ||
-            ws.isLocalhostAdmin ||
-            ws.isQuestVR
-          );
-          if (!canControlHardware) return;
-
+          // CHỈ TÀI XẾ (Seat 0) hoặc Laptop Admin MỚI ĐƯỢC PHÉP ĐIỀU KHIỂN XE THẬT:
+          const canControlHardware = (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin);
+          if (!canControlHardware) {
+            // Khách ngồi ghế phụ (Kính Quest 2, điện thoại khách) bị chặn lệnh lái/ga ra xe thật
+            return;
+          }
+          // BỘ TRỌNG TÀI LÁI XE DUY NHẤT (Active Driver Arbitration):
+          // Chỉ client đang chủ động cầm lái mới được quyền phát xung tới xe RC ESP32.
+          // Các tab phụ / tab nền / spectator TUYỆT ĐỐI KHÔNG thể gửi xung 1500 đè lên người đang lái gây giật xe!
           let steer = 90;
           if (data.steeringDeg !== undefined || (data.steer !== undefined && Math.abs(Number(data.steer)) > 1.5)) {
             steer = Math.max(45, Math.min(135, Math.round(Number(data.steeringDeg ?? data.steer) || 90)));
@@ -1260,15 +1221,30 @@ function computeSafeEscPulseUs(msg) {
             const sNorm = Math.max(-1, Math.min(1, Number(data.steeringNorm ?? data.steerNorm ?? data.steer) || 0));
             steer = Math.round(90 + sNorm * 45);
           }
-          const rawPulse = Number(data.escPulseUs ?? (Math.abs(Number(data.throttle)) >= 500 ? data.throttle : NaN));
-          const dNorm = Number(
-            data.throttleNorm ??
-            data.driveNorm ??
-            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 345 : 315) : 0)
-          );
-          const gear = data.gear || (dNorm < -0.025 || rawPulse < 1460 ? 'R' : 'D');
-          sendRateLimitedEsp32Udp((steer - 90) / 45, dNorm, rawPulse, gear, 'QUEST_CAR_CONTROL');
+          const rawThrottle = typeof computeSafeEscPulseUs === 'function' ? computeSafeEscPulseUs(data) : (Number(data.throttle) || 1500);
+          const throttle = Math.abs(rawThrottle - 1500) < 15 ? 1500 : rawThrottle;
+          if (Math.abs(steer - 90) < 3) steer = 90;
+          const isActivelyDriving = (throttle !== 1500 || steer !== 90);
+          const now = Date.now();
+
+          if (isActivelyDriving) {
+            // Client này đang đạp ga hoặc bẻ lái -> Chiếm quyền Active Driver
+            activeDriverClient = ws;
+            activeDriverLastActiveTime = now;
+            sendUdpCarCommand(steer, throttle);
+          } else {
+            // Lệnh trả về trung tính (90°, 1500µs):
+            // Chỉ chấp nhận nếu do chính Active Driver gửi, HOẶC không có ai lái trong 600ms qua
+            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 600)) {
+              if (activeDriverClient === ws) {
+                // Active driver vừa nhả ga dừng xe
+                activeDriverLastActiveTime = 0;
+              }
+              sendUdpCarCommand(steer, throttle);
+            }
+          }
         } else if (data.type === 'WHEEL_BRIDGE_INPUT' || data.type === 'WHEEL_BRIDGE_STATE') {
+          // Cầu nối vô lăng GOG R808 & Bàn phím: Chuẩn hóa 100% góc lái, chân ga, chân phanh sang Kính Quest 3
           const src = data.payload || data;
           const steerNorm = clampFinite(src.steerNorm ?? src.steeringNorm ?? (typeof src.steer === 'number' && src.steer <= 180 ? (src.steer - 90) / 45 : 0), -1, 1, 0);
           const gasNorm = clampFinite(src.gasNorm ?? (typeof src.gasPercent === 'number' ? src.gasPercent / 100 : 0), 0, 1, 0);
@@ -1277,8 +1253,10 @@ function computeSafeEscPulseUs(msg) {
           const driveNorm = clampFinite(src.driveNorm ?? (gasNorm - brakeNorm - reverseNorm), -1, 1, 0);
 
           const steerAngleDeg = clampFinite(src.steerAngleDeg ?? Math.round(steerNorm * 540), -540, 540, 0);
+          const steerVal = clampFinite(src.steer ?? Math.round(90 + steerNorm * 45), 45, 135, 90);
+          const throttleVal = clampFinite(src.throttle ?? Math.round(1500 + driveNorm * 260), 1000, 2000, 1500);
+
           const gear = src.gear || (brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : (reverseNorm > 0.04 ? 'R' : 'D'));
-          const escPulseUs = computeAsymmetricEscPulseUs(driveNorm, src.escPulseUs, gear);
           const buttonEvents = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
 
           const bridgePayload = JSON.stringify({
@@ -1298,9 +1276,8 @@ function computeSafeEscPulseUs(msg) {
             brakePercent: Math.round(brakeNorm * 100),
             reversePercent: Math.round(reverseNorm * 100),
             gear,
-            escPulseUs,
-            throttle: escPulseUs,
-            steer: Math.round(90 + steerNorm * 45),
+            steer: steerVal,
+            throttle: throttleVal,
             buttonEvents,
             sourcePlayer: playerId,
             timestamp: Date.now()
@@ -1312,7 +1289,22 @@ function computeSafeEscPulseUs(msg) {
             }
           }
 
-          sendRateLimitedEsp32Udp(steerNorm, driveNorm, escPulseUs, gear, 'WHEEL_BRIDGE');
+          // Bắn trực tiếp ra ESP32 Controller xe thật qua UDP nếu có tín hiệu ga/lái
+          const isActivelyDriving = (throttleVal !== 1500 || steerVal !== 90);
+          const now = Date.now();
+          if (isActivelyDriving) {
+            activeDriverClient = ws;
+            activeDriverLastActiveTime = now;
+            sendUdpCarCommand(steerVal, throttleVal);
+          } else {
+            // Khi nhả vô lăng/bàn đạp: phát xung trung tính (90°, 1500µs) để dừng xe ngay lập tức!
+            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 350)) {
+              if (activeDriverClient === ws) {
+                activeDriverLastActiveTime = 0;
+              }
+              sendUdpCarCommand(90, 1500);
+            }
+          }
         } else if (data.type === 'TEST_ESP32_PULSE') {
           // Lắc nhẹ bánh xe kiểm tra kết nối Servo & ESC thực tế
           sendUdpCarCommand(60, 1500);
@@ -2145,25 +2137,28 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   let lastSteerDegSent = 90;
   let lastEscUsSent = 1500;
 
-  function sendRateLimitedEsp32Udp(steerNorm, driveNorm, explicitEscUs, gearHint, forceImmediate) {
+  function sendRateLimitedEsp32Udp(steerNorm, driveNorm, forceImmediate) {
     const now = Date.now();
-    const isForce = (typeof explicitEscUs === 'boolean') ? explicitEscUs : Boolean(forceImmediate);
     const s = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
     const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
 
     const steerDeg = Math.max(45, Math.min(135, Math.round(90 + s * 45)));
-    const escUs = computeAsymmetricEscPulseUs(d, (typeof explicitEscUs === 'number' ? explicitEscUs : NaN), gearHint);
+    const escUs = Math.max(1000, Math.min(2000, Math.round(1500 + d * 220)));
 
     const changed = (steerDeg !== lastSteerDegSent) || (escUs !== lastEscUsSent);
-    if (!isForce && !changed && (now - lastUdpSendMs < 200)) return;
-    if (!isForce && (now - lastUdpSendMs < 30)) return; // Giới hạn tối đa ~33Hz
+    if (!forceImmediate && !changed && (now - lastUdpSendMs < 200)) return;
+    if (!forceImmediate && (now - lastUdpSendMs < 30)) return; // Giới hạn tối đa ~33Hz
 
     lastUdpSendMs = now;
     lastSteerDegSent = steerDeg;
     lastEscUsSent = escUs;
 
-    // Gửi qua hàm chuẩn sendUdpCarCommand (udpServer port 4210 có in log Terminal chi tiết)
-    sendUdpCarCommand(steerDeg, escUs);
+    const pkt = Buffer.alloc(4);
+    pkt.writeInt16LE(steerDeg, 0);
+    pkt.writeInt16LE(escUs, 2);
+    const targetHost = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.ip) ? esp32CarConfig.ip : ESP32_HOST;
+    const targetPort = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.port) ? esp32CarConfig.port : ESP32_PORT;
+    udpOutSocket.send(pkt, 0, 4, targetPort, targetHost);
   }
 
   function getLanIpv4List() {
@@ -2202,21 +2197,10 @@ app.get('/api/sc-search', handleSoundCloudSearch);
           'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-store'
         });
-        const lanIps = getLanIpv4List();
         res.end(JSON.stringify({
           ok: true,
-          service: 'GOG808_LAPTOP_BRIDGE',
-          hostIp: lanIps[0] || '127.0.0.1',
-          ips: lanIps,
-          car: {
-            ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
-            port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210,
-            lastSeen: (typeof esp32CarConfig !== 'undefined') ? esp32CarConfig.lastSeen : 0,
-            active: (typeof esp32CarConfig !== 'undefined') ? ((Date.now() - (esp32CarConfig.lastSeen || 0)) < 30000) : false
-          },
-          cams: (typeof discoveredEsp32Cams !== 'undefined') ? discoveredEsp32Cams : {},
-          wheel: latestBridgeState,
-          timestamp: Date.now()
+          ips: getLanIpv4List(),
+          wheel: latestBridgeState
         }));
         return true;
       }
@@ -2230,11 +2214,38 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     wssInstance.on('connection', (ws) => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
+        if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
+        activeMultiplayerSockets.add(ws);
+        ws.on('close', () => activeMultiplayerSockets.delete(ws));
+        ws.on('error', () => activeMultiplayerSockets.delete(ws));
+      }
+      ws.send(JSON.stringify({
           type: 'SERVER_LAN_INFO',
           ips: getLanIpv4List(),
-          port: 8080
+          lanIp: typeof getLocalLanIp === 'function' ? getLocalLanIp() : (getLanIpv4List()[0] || '127.0.0.1'),
+          port: 8080,
+          car: {
+            ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
+            port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
+          },
+          cams: {
+            front: discoveredEsp32Cams.front,
+            rear: discoveredEsp32Cams.rear
+          }
         }));
+        if (discoveredEsp32Cams.front.ip || discoveredEsp32Cams.rear.ip) {
+          try {
+            ws.send(JSON.stringify({
+              type: 'CAM_IP_UPDATED',
+              cams: {
+                front: discoveredEsp32Cams.front,
+                rear: discoveredEsp32Cams.rear
+              },
+              front: discoveredEsp32Cams.front,
+              rear: discoveredEsp32Cams.rear
+            }));
+          } catch (e) {}
+        }
         if (latestBridgeState.connected && (Date.now() - latestBridgeState.timestamp < 2000)) {
           ws.send(JSON.stringify({
             type: 'WHEEL_BRIDGE_STATE',
@@ -2311,15 +2322,9 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
         // 2. Nhận lệnh điều khiển từ Bàn phím (Localhost) hoặc Tay cầm VR (Kính) gửi xuống ESP32
         if (data.type === 'RC_CONTROL_CMD' || data.type === 'CAR_CONTROL') {
-          const s = Number(data.steeringNorm ?? data.steerNorm ?? (data.steer !== undefined ? (Number(data.steer) - 90) / 45 : 0));
-          const rawPulse = Number(data.escPulseUs ?? (Math.abs(Number(data.throttle)) >= 500 ? data.throttle : NaN));
-          const d = Number(
-            data.throttleNorm ??
-            data.driveNorm ??
-            (Number.isFinite(rawPulse) ? (rawPulse - 1500) / (rawPulse < 1500 ? 345 : 315) : 0)
-          );
-          const gear = data.gear || (d < -0.025 || rawPulse < 1460 ? 'R' : 'D');
-          sendRateLimitedEsp32Udp(s, d, rawPulse, gear, 'QUEST_CAR_CONTROL');
+          const sNorm = Number(data.steeringNorm ?? data.steerNorm ?? 0);
+          const tNorm = Number(data.throttleNorm ?? data.driveNorm ?? 0);
+          sendRateLimitedEsp32Udp(sNorm, tNorm, false);
           return;
         }
       });
@@ -2355,7 +2360,6 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
   let nativeWheelChild = null;
   let lastTerminalLogMs = 0;
-  let wheelConnectedLogged = false;
 
   function startNativeWheelBridge() {
     if (process.platform !== 'win32') return;
@@ -2379,10 +2383,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       return;
     }
 
-    if (!wheelConnectedLogged) {
-      console.log('✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=0 (Native Host 50Hz)');
-      wheelConnectedLogged = true;
-    }
+    console.log('✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=0 (Native Host 50Hz)');
 
     let buf = '';
     nativeWheelChild.stdout.on('data', (chunk) => {
@@ -2408,16 +2409,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
             const clientCount = (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) ? activeMultiplayerSockets.size : 0;
 
-            // Chỉ in log khi bật DEBUG_WHEEL để tránh làm tràn Terminal, giúp người dùng dễ nhìn
-            if (process.env.DEBUG_WHEEL) {
-              const isActive = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
-              const now = Date.now();
-              if (isActive && (now - lastTerminalLogMs > 1000)) {
-                lastTerminalLogMs = now;
-                console.log(
-                  `🛞 [GOG808] Lái: ${data.steerNorm.toFixed(2)} | Ga: ${data.gasNorm.toFixed(2)} | Phanh: ${data.brakeNorm.toFixed(2)} | Số ${data.gear} | Kính: ${clientCount}`
-                );
-              }
+            // In log 50Hz MƯỢT lên Terminal đúng như cam kết khi có thao tác lái/đạp chân
+            const isActive = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
+            const now = Date.now();
+            if (isActive && (now - lastTerminalLogMs > 400)) {
+              lastTerminalLogMs = now;
+              console.log(
+                `🛞 [GOG808 50Hz MƯỢT] Lái: ${data.steerNorm.toFixed(2)} | Ga: ${data.gasNorm.toFixed(2)} | Phanh: ${data.brakeNorm.toFixed(2)} | Số ${data.gear} | Kính: ${clientCount}`
+              );
             }
 
             const outMsg = JSON.stringify({
@@ -2438,8 +2437,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               reversePercent: Math.round(data.reverseNorm * 100),
               gear: data.gear,
               steer: Math.max(45, Math.min(135, Math.round(90 + data.steerNorm * 45))),
-              throttle: computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear),
-              escPulseUs: computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear),
+              throttle: Math.max(1000, Math.min(2000, Math.round(1500 + data.driveNorm * 260))),
               buttonEvents: [],
               seq: data.seq,
               timestamp: latestBridgeState.timestamp
@@ -2454,18 +2452,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               }
             }
 
-            // Gửi xuống ESP32 RC Car qua UDP (Port 4210) - Kiểm tra trạng thái thao tác để không cướp quyền Kính VR
-            const isWheelActivelyMoved = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
-            const nowTime = Date.now();
-            if (isWheelActivelyMoved) {
-              activeDriverClient = 'nativeWheel';
-              activeDriverLastActiveTime = nowTime;
-              sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, computeAsymmetricEscPulseUs(data.driveNorm, NaN, data.gear), data.gear, 'NATIVE_WHEEL');
-            } else if (activeDriverClient === 'nativeWheel') {
-              activeDriverClient = null;
-              activeDriverLastActiveTime = 0;
-              sendRateLimitedEsp32Udp(0, 0, 1500, 'D', true);
-            }
+            // Gửi xuống ESP32 RC Car qua UDP (Port 4210)
+            sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, false);
           }
         } catch (e) {}
       }
@@ -2483,14 +2471,13 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       setTimeout(startNativeWheelBridge, 2500);
     });
 
+    process.on('exit', () => {
+      if (nativeWheelChild) {
+        try { nativeWheelChild.kill(); } catch (e) {}
+        nativeWheelChild = null;
+      }
+    });
   }
-
-  process.on('exit', () => {
-    if (nativeWheelChild) {
-      try { nativeWheelChild.kill(); } catch (e) {}
-      nativeWheelChild = null;
-    }
-  });
 
   startNativeWheelBridge();
 
