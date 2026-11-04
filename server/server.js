@@ -483,7 +483,7 @@ function sendUdpCarCommand(steer, throttle) {
   // [FIX ĐẢO LÁI XE NGOÀI] Đảo ngược góc lái 45..135° cho servo xe RC ngoài đời thật (180 - rawS)
   const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
   const s = 180 - rawS;
-  const t = Math.max(1150, Math.min(1850, Math.round(Number(throttle) || 1500)));
+  const t = Math.max(1050, Math.min(1950, Math.round(Number(throttle) || 1500)));
 
   const buf = Buffer.alloc(4);
   buf.writeInt16LE(s, 0); // Little Endian int16: Góc lái 45..135 (90 thẳng)
@@ -2144,26 +2144,76 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   let lastSteerDegSent = 90;
   let lastEscUsSent = 1500;
 
-  function sendRateLimitedEsp32Udp(steerNorm, driveNorm, forceImmediate) {
-    const now = Date.now();
-    const s = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
+  // ============================================================================
+  // [V504 RESTORED + 1100µs REVERSE] BỘ TRỌNG TÀI ƯU TIÊN VÔ LĂNG & UDP 4210 CHUẨN
+  // ============================================================================
+  const rcArbitration = {
+    lastPhysicalWheelActiveAt: 0,
+    lastSentSteerDeg: 90,
+    lastSentEscUs: 1500,
+    idleNeutralCount: 0,
+    lastUdpSendMs: 0,
+    WHEEL_PRIORITY_WINDOW_MS: 350
+  };
+
+  function computeAsymmetricEscPulseUs(driveNorm, explicitPulseUs, gear = 'D') {
+    const rawExplicit = Number(explicitPulseUs);
+    if (Number.isFinite(rawExplicit) && rawExplicit >= 1000 && rawExplicit <= 2000 && Math.abs(rawExplicit - 1500) > 5) {
+      if (rawExplicit < 1445 && rawExplicit >= 1250 && driveNorm < -0.05) {
+        const revMag = Math.min(1, Math.max(0, Math.abs(driveNorm)));
+        return Math.round(1445 - Math.pow(revMag, 0.85) * 345);
+      }
+      return Math.round(rawExplicit);
+    }
+
     const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
+    if (Math.abs(d) <= 0.025) return 1500;
 
-    // [FIX ĐẢO LÁI XE NGOÀI] Đảo góc lái cho servo xe RC thật (-s thay vì +s)
-    const steerDeg = Math.max(45, Math.min(135, Math.round(90 - s * 45)));
-    const escUs = Math.max(1000, Math.min(2000, Math.round(1500 + d * 220)));
+    if (d > 0.025 && gear !== 'R') {
+      return Math.round(1535 + Math.pow(d, 0.9) * 315);
+    } else {
+      const revMag = Math.abs(d);
+      return Math.round(1445 - Math.pow(revMag, 0.85) * 345);
+    }
+  }
 
-    const changed = (steerDeg !== lastSteerDegSent) || (escUs !== lastEscUsSent);
-    if (!forceImmediate && !changed && (now - lastUdpSendMs < 200)) return;
-    if (!forceImmediate && (now - lastUdpSendMs < 30)) return; // Giới hạn tối đa ~33Hz
+  function sendRateLimitedEsp32Udp(steerNorm, driveNorm, explicitEscPulseUs, gear = 'D', source = 'UNKNOWN') {
+    const now = Date.now();
+    const sNorm = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
+    const dNorm = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
+    const isInputActive = Math.abs(sNorm) > 0.025 || Math.abs(dNorm) > 0.025 ||
+      (Number.isFinite(Number(explicitEscPulseUs)) && Math.abs(Number(explicitEscPulseUs) - 1500) > 15);
 
-    lastUdpSendMs = now;
-    lastSteerDegSent = steerDeg;
-    lastEscUsSent = escUs;
+    if (source === 'WHEEL_BRIDGE' || source === 'WINMM_USB') {
+      if (isInputActive) {
+        rcArbitration.lastPhysicalWheelActiveAt = now;
+        rcArbitration.idleNeutralCount = 0;
+      } else {
+        rcArbitration.idleNeutralCount++;
+        if (rcArbitration.idleNeutralCount > 2) return;
+      }
+    }
+
+    if (source === 'QUEST_CAR_CONTROL' && !isInputActive) {
+      if (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS) {
+        return;
+      }
+    }
+
+    const steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
+    const escPulseUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, gear);
+
+    const changed = (steerDeg !== rcArbitration.lastSentSteerDeg) || (escPulseUs !== rcArbitration.lastSentEscUs);
+    if (!changed && (now - rcArbitration.lastUdpSendMs < 200)) return;
+    if (now - rcArbitration.lastUdpSendMs < 25) return;
+
+    rcArbitration.lastUdpSendMs = now;
+    rcArbitration.lastSentSteerDeg = steerDeg;
+    rcArbitration.lastSentEscUs = escPulseUs;
 
     const pkt = Buffer.alloc(4);
     pkt.writeInt16LE(steerDeg, 0);
-    pkt.writeInt16LE(escUs, 2);
+    pkt.writeInt16LE(escPulseUs, 2);
     const targetHost = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.ip) ? esp32CarConfig.ip : ESP32_HOST;
     const targetPort = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.port) ? esp32CarConfig.port : ESP32_PORT;
     udpOutSocket.send(pkt, 0, 4, targetPort, targetHost);
@@ -2207,8 +2257,12 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         });
         res.end(JSON.stringify({
           ok: true,
+          service: 'GOG808_LAPTOP_BRIDGE',
           ips: getLanIpv4List(),
-          wheel: latestBridgeState
+          wheel: latestBridgeState,
+          car: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig) ? esp32CarConfig : { ip: '192.168.1.238', port: 4210 },
+          cams: (typeof discoveredEsp32Cams !== 'undefined') ? discoveredEsp32Cams : {},
+          timestamp: Date.now()
         }));
         return true;
       }
@@ -2324,7 +2378,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             });
           }
 
-          sendRateLimitedEsp32Udp(steerNorm, driveNorm, buttonEvents.length > 0);
+          sendRateLimitedEsp32Udp(steerNorm, driveNorm, null, gear, 'WHEEL_BRIDGE');
           return;
         }
 
@@ -2332,7 +2386,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         if (data.type === 'RC_CONTROL_CMD' || data.type === 'CAR_CONTROL') {
           const sNorm = Number(data.steeringNorm ?? data.steerNorm ?? 0);
           const tNorm = Number(data.throttleNorm ?? data.driveNorm ?? 0);
-          sendRateLimitedEsp32Udp(sNorm, tNorm, false);
+          sendRateLimitedEsp32Udp(sNorm, tNorm, null, 'D', 'QUEST_CAR_CONTROL');
           return;
         }
       });
@@ -2461,7 +2515,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             }
 
             // Gửi xuống ESP32 RC Car qua UDP (Port 4210)
-            sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, false);
+            sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, null, data.gear, 'WINMM_USB');
           }
         } catch (e) {}
       }

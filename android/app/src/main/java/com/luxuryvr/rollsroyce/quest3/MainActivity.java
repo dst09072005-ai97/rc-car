@@ -72,7 +72,7 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public String getDefaultHostIp() {
-            return "192.168.1.32";
+            return "192.168.1.228";
         }
     }
 }
