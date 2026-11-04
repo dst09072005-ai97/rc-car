@@ -255,6 +255,44 @@ if (oldSendCarControlRegex.test(appCode)) {
   console.log('✅ Đã cập nhật CAR_CONTROL rate-limiting và bridge-priority check trong app.js');
 }
 
+// Thay thế đoạn gửi WHEEL_BRIDGE_INPUT để kính không gửi đè lên server
+const oldBridgeSendRegex = /\/\/\s*Phát Bridge State cho Quest 3[\s\S]*?mpSocket\.send\(JSON\.stringify\(\{\s*type:\s*'WHEEL_BRIDGE_INPUT'[\s\S]*?\}\)\);\s*\}/;
+const newBridgeSendCode = `// Phát Bridge State cho Quest 3 (CHỈ GỬI TỪ LAPTOP HOST, Kính Quest & Điện thoại là thiết bị NHẬN)
+        const isHeadsetOrMobile = (typeof window !== 'undefined') && (
+          window.QuestVRBridge ||
+          window.Capacitor ||
+          (typeof navigator !== 'undefined' && /android|quest|mobile/i.test(navigator.userAgent || ''))
+        );
+        const isKeyboardDriving = !isHeadsetOrMobile && (wantGas || wantRev || keys.a || keys.d || keys.ArrowLeft || keys.ArrowRight);
+        const hasWheel = !isHeadsetOrMobile && (wheel && wheel.connected && !wheel.isRemoteBridge);
+        if (hasWheel || isKeyboardDriving || Math.abs(steer - 90) > 1 || throttle !== 1500) {
+          const steeringNorm = hasWheel ? (wheel.rawSteer || 0) : ((steer - 90) / 45.0);
+          const steerAngleDeg = hasWheel ? (wheel.steerAngleDeg || 0) : (steeringNorm * 45.0);
+          const throttleNorm = (throttle - 1500) / 350.0;
+          const gasPct = hasWheel ? (wheel.gasPercent || 0) : Math.max(0, throttleNorm * 100);
+          const revPct = hasWheel ? (wheel.reversePercent || 0) : (throttleNorm < 0 ? Math.abs(throttleNorm * 100) : 0);
+          const brkPct = hasWheel ? (wheel.brakePercent || 0) : (isHardBraking ? 100 : 0);
+
+          mpSocket.send(JSON.stringify({
+            type: 'WHEEL_BRIDGE_INPUT',
+            connected: true,
+            deviceId: hasWheel ? (wheel.deviceName || 'GOG R808') : 'PC Keyboard (WASD)',
+            steeringNorm,
+            steerAngleDeg,
+            gasPercent: gasPct,
+            brakePercent: brkPct,
+            reversePercent: revPct,
+            gear: (state.gearIndex === 1 || revPct > 5) ? 'R' : 'D',
+            steer,
+            throttle
+          }));
+        }`;
+
+if (oldBridgeSendRegex.test(appCode)) {
+  appCode = appCode.replace(oldBridgeSendRegex, newBridgeSendCode);
+  console.log('✅ Đã cập nhật chặn gửi ngược WHEEL_BRIDGE_INPUT từ kính Quest');
+}
+
 // Part 3: Thay thế khối cuối file app.js bằng V504 Gold Master
 const v504GoldMasterModule = `// ============================================================================
 // [PATCH V504 GOLD MASTER - CLIENT] ĐỒNG BỘ TOÀN DIỆN VÔ LĂNG GOG R808,
@@ -264,6 +302,7 @@ const v504GoldMasterModule = `// ===============================================
   if (window.__V504_GOLD_MASTER_ACTIVE__) return;
   window.__V504_GOLD_MASTER_ACTIVE__ = true;
   window.__V500_DUAL_BRIDGE_ACTIVE__ = true;
+  window.__UNIFIED_VEHICLE_CONTROL_ACTIVE__ = true;
 
   window.__V200_DEVICE_ROLE__ = 'META_QUEST';
   window.__DETECTED_DEVICE_TYPE__ = 'META_QUEST';
@@ -279,8 +318,8 @@ const v504GoldMasterModule = `// ===============================================
     }
   } catch (e) {}
 
-  const bakedIps = Array.isArray(window.__BAKED_LAPTOP_IPS__) ? window.__BAKED_LAPTOP_IPS__ : [];
-  let activeLaptopIp = storage.getItem('V500_LAPTOP_IP') || bakedIps[0] || (loc && loc.hostname) || '127.0.0.1';
+  const bakedIps = Array.isArray(window.__BAKED_LAPTOP_IPS__) ? window.__BAKED_LAPTOP_IPS__ : ['192.168.1.21', '192.168.1.60'];
+  let activeLaptopIp = storage.getItem('pc_server_ip') || storage.getItem('V500_LAPTOP_IP') || bakedIps[0] || '192.168.1.21';
   let wsConn = null;
   let isConnected = false;
   let lastProcessedSeq = -1;
@@ -404,10 +443,14 @@ const v504GoldMasterModule = `// ===============================================
   // --------------------------------------------------------------------------
   function getCandidateIps() {
     const list = [];
-    if (activeLaptopIp) list.push(activeLaptopIp);
+    const pcIp = storage.getItem('pc_server_ip');
+    if (pcIp && !list.includes(pcIp) && pcIp !== 'localhost' && pcIp !== '127.0.0.1') list.push(pcIp);
+    if (activeLaptopIp && !list.includes(activeLaptopIp) && activeLaptopIp !== 'localhost' && activeLaptopIp !== '127.0.0.1') list.push(activeLaptopIp);
     const saved = storage.getItem('V500_LAPTOP_IP');
-    if (saved && !list.includes(saved)) list.push(saved);
-    bakedIps.forEach((ip) => { if (ip && !list.includes(ip)) list.push(ip); });
+    if (saved && !list.includes(saved) && saved !== 'localhost' && saved !== '127.0.0.1') list.push(saved);
+    bakedIps.forEach((ip) => { if (ip && !list.includes(ip) && ip !== 'localhost' && ip !== '127.0.0.1') list.push(ip); });
+    if (!list.includes('192.168.1.21')) list.push('192.168.1.21');
+    if (!list.includes('192.168.1.60')) list.push('192.168.1.60');
     if (loc && loc.hostname && loc.hostname !== 'localhost' && !list.includes(loc.hostname)) {
       list.push(loc.hostname);
     }
@@ -543,13 +586,15 @@ const v504GoldMasterModule = `// ===============================================
       state.engineRunning = true;
       state.gearIndex = 3;
       if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
-      if (typeof chassisGroup !== 'undefined' && typeof cameraRig !== 'undefined' && chassisGroup && cameraRig) {
-        chassisGroup.add(cameraRig);
-        cameraRig.position.set(-0.38, 0.88, 0.08);
-        cameraRig.rotation.set(0, 0, 0);
-      }
       if (typeof resetAndCenterViewpoint === 'function') {
         try { resetAndCenterViewpoint('DRIVING', 0); } catch (e) {}
+      } else if (typeof driverSeatMount !== 'undefined' && driverSeatMount && typeof cameraRig !== 'undefined' && cameraRig) {
+        if (typeof SEAT_POSITIONS !== 'undefined' && SEAT_POSITIONS[0]) {
+          driverSeatMount.position.copy(SEAT_POSITIONS[0].pos);
+        }
+        driverSeatMount.add(cameraRig);
+        cameraRig.position.set(0, 0, 0);
+        cameraRig.rotation.set(0, 0, 0);
       }
     }
   }
@@ -733,9 +778,19 @@ if (oldTailRegex.test(appCode)) {
 // Ghi đè vào tất cả mirror của app.js
 const appMirrors = ['app.js', 'www/app.js', 'server/public/app.js', 'android/app/src/main/assets/public/app.js'];
 appMirrors.forEach(p => {
-  if (fs.existsSync(p)) {
+  if (fs.existsSync(path.dirname(p))) {
     fs.writeFileSync(p, appCode, 'utf8');
-    console.log(`✅ Đã đồng bộ sang ${p}`);
+    console.log(`✅ Đã đồng bộ app.js sang ${p}`);
+  }
+});
+
+// Ghi đè vào tất cả mirror của index.html
+const indexMirrors = ['index.html', 'www/index.html', 'server/public/index.html', 'android/app/src/main/assets/public/index.html'];
+const indexCode = fs.readFileSync('index.html', 'utf8');
+indexMirrors.forEach(p => {
+  if (fs.existsSync(path.dirname(p))) {
+    fs.writeFileSync(p, indexCode, 'utf8');
+    console.log(`✅ Đã đồng bộ index.html sang ${p}`);
   }
 });
 

@@ -21971,9 +21971,14 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           }
         }
 
-        // Phát Bridge State cho Quest 3 (Vô lăng GOG R808 HOẶC Bàn phím Laptop WASD / Mũi tên)
-        const isKeyboardDriving = (wantGas || wantRev || keys.a || keys.d || keys.ArrowLeft || keys.ArrowRight);
-        const hasWheel = (wheel && wheel.connected);
+        // Phát Bridge State cho Quest 3 (CHỈ GỬI TỪ LAPTOP HOST, Kính Quest & Điện thoại là thiết bị NHẬN)
+        const isHeadsetOrMobile = (typeof window !== 'undefined') && (
+          window.QuestVRBridge ||
+          window.Capacitor ||
+          (typeof navigator !== 'undefined' && /android|quest|mobile/i.test(navigator.userAgent || ''))
+        );
+        const isKeyboardDriving = !isHeadsetOrMobile && (wantGas || wantRev || keys.a || keys.d || keys.ArrowLeft || keys.ArrowRight);
+        const hasWheel = !isHeadsetOrMobile && (wheel && wheel.connected && !wheel.isRemoteBridge);
         if (hasWheel || isKeyboardDriving || Math.abs(steer - 90) > 1 || throttle !== 1500) {
           const steeringNorm = hasWheel ? (wheel.rawSteer || 0) : ((steer - 90) / 45.0);
           const steerAngleDeg = hasWheel ? (wheel.steerAngleDeg || 0) : (steeringNorm * 45.0);
@@ -23278,6 +23283,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   if (window.__V504_GOLD_MASTER_ACTIVE__) return;
   window.__V504_GOLD_MASTER_ACTIVE__ = true;
   window.__V500_DUAL_BRIDGE_ACTIVE__ = true;
+  window.__UNIFIED_VEHICLE_CONTROL_ACTIVE__ = true;
 
   window.__V200_DEVICE_ROLE__ = 'META_QUEST';
   window.__DETECTED_DEVICE_TYPE__ = 'META_QUEST';
@@ -23293,8 +23299,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   } catch (e) {}
 
-  const bakedIps = Array.isArray(window.__BAKED_LAPTOP_IPS__) ? window.__BAKED_LAPTOP_IPS__ : [];
-  let activeLaptopIp = storage.getItem('V500_LAPTOP_IP') || bakedIps[0] || (loc && loc.hostname) || '127.0.0.1';
+  const bakedIps = Array.isArray(window.__BAKED_LAPTOP_IPS__) ? window.__BAKED_LAPTOP_IPS__ : ['192.168.1.21', '192.168.1.60'];
+  let activeLaptopIp = storage.getItem('pc_server_ip') || storage.getItem('V500_LAPTOP_IP') || bakedIps[0] || '192.168.1.21';
   let wsConn = null;
   let isConnected = false;
   let lastProcessedSeq = -1;
@@ -23418,10 +23424,14 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // --------------------------------------------------------------------------
   function getCandidateIps() {
     const list = [];
-    if (activeLaptopIp) list.push(activeLaptopIp);
+    const pcIp = storage.getItem('pc_server_ip');
+    if (pcIp && !list.includes(pcIp) && pcIp !== 'localhost' && pcIp !== '127.0.0.1') list.push(pcIp);
+    if (activeLaptopIp && !list.includes(activeLaptopIp) && activeLaptopIp !== 'localhost' && activeLaptopIp !== '127.0.0.1') list.push(activeLaptopIp);
     const saved = storage.getItem('V500_LAPTOP_IP');
-    if (saved && !list.includes(saved)) list.push(saved);
-    bakedIps.forEach((ip) => { if (ip && !list.includes(ip)) list.push(ip); });
+    if (saved && !list.includes(saved) && saved !== 'localhost' && saved !== '127.0.0.1') list.push(saved);
+    bakedIps.forEach((ip) => { if (ip && !list.includes(ip) && ip !== 'localhost' && ip !== '127.0.0.1') list.push(ip); });
+    if (!list.includes('192.168.1.21')) list.push('192.168.1.21');
+    if (!list.includes('192.168.1.60')) list.push('192.168.1.60');
     if (loc && loc.hostname && loc.hostname !== 'localhost' && !list.includes(loc.hostname)) {
       list.push(loc.hostname);
     }
@@ -23557,13 +23567,15 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.engineRunning = true;
       state.gearIndex = 3;
       if (typeof avatarBodyMesh !== 'undefined' && avatarBodyMesh) avatarBodyMesh.visible = false;
-      if (typeof chassisGroup !== 'undefined' && typeof cameraRig !== 'undefined' && chassisGroup && cameraRig) {
-        chassisGroup.add(cameraRig);
-        cameraRig.position.set(-0.38, 0.88, 0.08);
-        cameraRig.rotation.set(0, 0, 0);
-      }
       if (typeof resetAndCenterViewpoint === 'function') {
         try { resetAndCenterViewpoint('DRIVING', 0); } catch (e) {}
+      } else if (typeof driverSeatMount !== 'undefined' && driverSeatMount && typeof cameraRig !== 'undefined' && cameraRig) {
+        if (typeof SEAT_POSITIONS !== 'undefined' && SEAT_POSITIONS[0]) {
+          driverSeatMount.position.copy(SEAT_POSITIONS[0].pos);
+        }
+        driverSeatMount.add(cameraRig);
+        cameraRig.position.set(0, 0, 0);
+        cameraRig.rotation.set(0, 0, 0);
       }
     }
   }
