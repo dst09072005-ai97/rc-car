@@ -12,6 +12,7 @@ meta_quest_3/
 *.zip
 *.aar
 *.exe
+!tools/gog808_native_bridge.exe
 oculus-go-adb-driver-2.0/
 
 # Blender & Godot temporary/cache files
