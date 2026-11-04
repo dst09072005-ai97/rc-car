@@ -74,5 +74,31 @@ public class MainActivity extends BridgeActivity {
         public String getDefaultHostIp() {
             return "192.168.1.228";
         }
+
+        @JavascriptInterface
+        public String getDeviceIp() {
+            try {
+                java.util.List<java.net.NetworkInterface> interfaces = java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces());
+                for (java.net.NetworkInterface intf : interfaces) {
+                    java.util.List<java.net.InetAddress> addrs = java.util.Collections.list(intf.getInetAddresses());
+                    for (java.net.InetAddress addr : addrs) {
+                        if (!addr.isLoopbackAddress() && addr instanceof java.net.Inet4Address) {
+                            return addr.getHostAddress();
+                        }
+                    }
+                }
+            } catch (Exception e) {}
+            return "";
+        }
+
+        @JavascriptInterface
+        public String getDeviceSubnet() {
+            String ip = getDeviceIp();
+            if (ip != null && ip.contains(".")) {
+                int lastDot = ip.lastIndexOf('.');
+                return ip.substring(0, lastDot);
+            }
+            return "";
+        }
     }
 }

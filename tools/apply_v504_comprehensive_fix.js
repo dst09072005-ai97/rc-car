@@ -391,6 +391,14 @@ const v504FullBlock = `// ======================================================
   // 3. TỰ ĐỘNG DÒ TÌM IP LAPTOP QUA WI-FI (HỖ TRỢ MỌI DẢI MẠNG & HOTSPOT)
   function getCandidateIps() {
     const list = [];
+    let nativeSubnet = null;
+    if (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDeviceSubnet === 'function') {
+      try { nativeSubnet = window.QuestVRBridge.getDeviceSubnet(); } catch (e) {}
+    }
+    if (nativeSubnet) {
+      const gw = nativeSubnet + '.1';
+      if (!list.includes(gw)) list.push(gw);
+    }
     bakedIps.forEach((ip) => { if (ip && !list.includes(ip) && ip !== 'localhost' && ip !== '127.0.0.1') list.push(ip); });
     const pcIp = storage.getItem('pc_server_ip');
     if (pcIp && !list.includes(pcIp) && pcIp !== 'localhost' && pcIp !== '127.0.0.1') list.push(pcIp);
@@ -483,9 +491,13 @@ const v504FullBlock = `// ======================================================
       }
 
       updateV500Banner(false, '🔍 Đang tự động quét Wi-Fi tìm Laptop & Xe RC...');
-      const detectedSubnet = await detectSubnetViaWebRtc();
+      let nativeSubnet = null;
+      if (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDeviceSubnet === 'function') {
+        try { nativeSubnet = window.QuestVRBridge.getDeviceSubnet(); } catch (e) {}
+      }
+      const detectedSubnet = nativeSubnet || (await detectSubnetViaWebRtc());
       const subnets = [];
-      if (detectedSubnet) subnets.push(detectedSubnet);
+      if (detectedSubnet && !subnets.includes(detectedSubnet)) subnets.push(detectedSubnet);
 
       const commonSubnets = ['192.168.1', '192.168.43', '192.168.137', '192.168.0', '172.20.10', '10.0.0', '192.168.2'];
       commonSubnets.forEach((s) => { if (!subnets.includes(s)) subnets.push(s); });
