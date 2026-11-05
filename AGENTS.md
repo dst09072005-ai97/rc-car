@@ -40,4 +40,17 @@ Chỉ đọc skill tương ứng khi thực hiện tác vụ chuyên biệt:
 - **Đồng bộ Bảng Chức Năng (Function Panel Live Sync)**:
   - Khi WebSocket nhận `WHEEL_BRIDGE_STATE`, hàm `syncWheelToFunctionPanel(w)` lập tức cập nhật toàn bộ thanh đo (`#pedal-gas-bar`, `#pedal-brake-bar`, `#pedal-reverse-bar`, `#wheel-steer-bar`), live monitor text và xung ESP32.
   - IP mạng nội bộ mặc định là `192.168.1.60` (hoặc tự động cập nhật qua subnet discovery `/api/bridge-ping`).
+- **Triệt tiêu Echo Loop & Chống Nhảy Góc Lái Kính VR (Anti-Echo Loop & Angle Lock)**:
+  - Khi Kính Quest 3 nhận tín hiệu Remote Bridge từ Laptop (`window._racingWheel.isRemoteBridge === true`), Kính đóng vai trò hiển thị buồng lái VR và **TUYỆT ĐỐI KHÔNG gửi ngược gói `CAR_CONTROL` hoặc `WHEEL_BRIDGE_INPUT` về server**.
+  - Hàm `pollGamepadRacingWheel(dt)` trên kính bắt buộc kiểm tra `isRemoteBridge` và thoát sớm (`return`), tuyệt đối không để Touch Controller đè lên hoặc vô tình set `racingWheel.connected = false`.
+- **Đường cong ga lũy tiến Smooth Expo Curve (1.6) & Slew Rate Limiter (Anti-Jerk Throttle)**:
+  - Deadzone: `|d| <= 0.02` (1500µs).
+  - Ga tiến: Ramping mượt mà từ `1518µs` (sát ngưỡng kích hoạt ESC 1515µs) theo lũy thừa `1518 + Math.pow(normD, 1.6) * 332` lên `1850µs`. Khi nhấn nhẹ 5-10%, xung ra chỉ `1519µs ~ 1524µs`, giúp xe bò từ từ cực êm, triệt tiêu hoàn toàn giật bắn.
+  - Ga lùi: Ramping mượt mà từ `1482µs` xuống `1100µs` theo lũy thừa 1.35 (chuẩn lùi v504).
+  - Bộ lọc Slew Rate Limiter tối đa 45µs/frame (~1800µs/giây) chống sốc dòng điện khi đạp thốc ga đột ngột.
+- **Thống nhất Kênh UDP 4210 & Khóa Trọng tài Phần cứng (Unified UDP Arbitration)**:
+  - Toàn bộ gói tin UDP 4210 gửi tới ESP32 Car Controller bắt buộc đi qua **duy nhất 1 hàm `sendRateLimitedEsp32Udp`** và 1 socket `udpOutSocket`.
+  - Hàm `sendUdpCarCommand` ủy thác toàn bộ cho `sendRateLimitedEsp32Udp`.
+  - Khi vô lăng host đang hoạt động (`rcArbitration.lastPhysicalWheelActiveAt` < 350ms), tự động khóa mọi lệnh điều khiển từ web/kính. ESP32 nhận đúng 1 gói tin 4-bytes chứa đồng thời `[steerDeg (45..135°), escPulseUs (1100..1850µs)]` trong cùng một frame, triệt tiêu 100% hiện tượng xung đột góc lái khiến xe chỉ chạy thẳng khi ga.
+
 
