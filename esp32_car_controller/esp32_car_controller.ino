@@ -118,7 +118,7 @@ void setup() {
   Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + L298N (IN1=14, IN2=27, PWM=13)");
 #endif
 
-  // Kết nối Wi-Fi
+  // Kết nối Wi-Fi (Tự động hỗ trợ cả mạng BETEA và Hotspot Maximus)
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -126,12 +126,30 @@ void setup() {
   Serial.println(WIFI_SSID);
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
     delay(300);
     Serial.print(".");
     digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
     attempts++;
   }
+
+#if defined(WIFI_BACKUP_SSID)
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("
+[WiFi] Không thấy mạng chính, thử kết nối Hotspot dự phòng: ");
+    Serial.println(WIFI_BACKUP_SSID);
+    WiFi.disconnect();
+    delay(200);
+    WiFi.begin(WIFI_BACKUP_SSID, WIFI_BACKUP_PASS);
+    attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+      delay(300);
+      Serial.print(".");
+      digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED));
+      attempts++;
+    }
+  }
+#endif
 
   if (WiFi.status() == WL_CONNECTED) {
     digitalWrite(PIN_STATUS_LED, HIGH);

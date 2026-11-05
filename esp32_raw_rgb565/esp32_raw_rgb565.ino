@@ -106,7 +106,7 @@ void setup() {
     Serial.println("[OK] Cảm biến camera QVGA JPEG sẵn sàng (10MHz ổn định)!");
   }
 
-  // Kết nối Wi-Fi với công suất cực đại 19.5dBm
+  // Kết nối Wi-Fi với công suất cực đại 19.5dBm (Hỗ trợ cả BETEA và Hotspot Maximus)
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -119,6 +119,23 @@ void setup() {
     Serial.print(".");
     attempts++;
   }
+
+#if defined(WIFI_BACKUP_SSID)
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("
+[WiFi] Không thấy mạng chính, thử kết nối Hotspot dự phòng: ");
+    Serial.println(WIFI_BACKUP_SSID);
+    WiFi.disconnect();
+    delay(200);
+    WiFi.begin(WIFI_BACKUP_SSID, WIFI_BACKUP_PASS);
+    attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+      delay(300);
+      Serial.print(".");
+      attempts++;
+    }
+  }
+#endif
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\n[WiFi] Đã kết nối thành công!");

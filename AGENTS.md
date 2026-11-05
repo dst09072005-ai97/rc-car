@@ -60,6 +60,12 @@ Chỉ đọc skill tương ứng khi thực hiện tác vụ chuyên biệt:
   - Hàm `connectEsp32Windshield(rawUrl)` và `connectRearEsp32Camera(rawUrl)` bắt buộc kiểm tra trạng thái socket: Nếu socket đang ở trạng thái `CONNECTING` hoặc `OPEN` với đúng URL đích, tuyệt đối không đóng socket và không tạo socket mới.
   - Hàm `applyEsp32CameraIps` chỉ kích hoạt kết nối khi chưa có socket, socket đã đóng hoặc IP camera thực sự thay đổi.
   - Polling dự phòng giãn cách tối thiểu 1500ms khi mất kết nối và tự động ngắt hoàn toàn khi WebSocket chính đã mở (`isConnected === true`), triệt tiêu 100% hiện tượng nhảy IP liên tục làm nghẽn mạng và rớt camera trên kính.
+- **Xác thực Tay Cầm Kính VR & Mở Khóa Điều Khiển Xe Thật (Zero-Wheel VR Driver Rule)**:
+  - Khi cắm USB GOG808 vào laptop: Vô lăng chiếm quyền lái phần cứng (`source: 'WINMM_USB'`).
+  - Khi rút USB GOG808 (hoặc vô lăng host không hoạt động): `canControlHardware` lập tức mở quyền điều khiển cho Kính Meta Quest 3 (`deviceType === 'META_QUEST'` hoặc `source === 'VR_CONTROLLER'`). Server điều hướng trực tiếp lệnh lái và ga từ Touch Controller xuống ESP32 UDP 4210 qua `sendRateLimitedEsp32Udp(..., 'QUEST_CAR_CONTROL')`, giúp xe thật ngoài đời bẻ lái và tăng tốc 100% đồng bộ với buồng lái VR.
+- **Quy tắc Kết nối Wi-Fi & Hotspot 4G (Zero-Flash Quick Connect Rule)**:
+  - **Phương án 1 (Không cần nạp lại code - Khuyên dùng 100%)**: Trên điện thoại, đặt tên Điểm phát sóng cá nhân (Hotspot) là `BETEA` và mật khẩu là `daihongbao`. Cả 3 mạch ESP32 (Xe, Cam Trước, Cam Sau), Laptop và Kính VR sẽ tự động kết nối ngay trong 5 giây mà không cần cắm dây nạp code.
+  - **Phương án 2 (Đa mạng Multi-SSID dự phòng)**: Mã nguồn đã tích hợp sẵn cơ chế tự động thử mạng chính `BETEA` và mạng dự phòng `Maximus` / `12345678`. Nếu có nạp lại code bằng Arduino IDE sau này, mạch tự nhận diện cả 2 mạng mà không lo bị kẹt.
 
 
 

@@ -4078,6 +4078,13 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     mpSocket.onopen = () => {
       console.log('[Multiplayer] ✅ Đã kết nối WebSocket thành công tới server:', hostTarget);
       state.lastActionLog = '📶 Đã kết nối Server Máy tính! Nhận tín hiệu Vô lăng GOG808 & Xe.';
+      try {
+        mpSocket.send(JSON.stringify({
+          type: 'PLAYER_HELLO',
+          deviceType: (typeof isQuestHeadset !== 'undefined' && isQuestHeadset) ? 'META_QUEST' : 'PC',
+          isQuestVR: Boolean(typeof isQuestHeadset !== 'undefined' && isQuestHeadset)
+        }));
+      } catch (e) {}
     };
 
     mpSocket.onclose = () => {
@@ -23850,17 +23857,26 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // 5. ĐỌC TAY CẦM VR (META QUEST TOUCH CONTROLLERS) TRÊN KÍNH
   // --------------------------------------------------------------------------
   function readXrControllerDriveInput() {
-    if (typeof renderer === 'undefined' || !renderer || !renderer.xr) return null;
-    const session = renderer.xr.getSession ? renderer.xr.getSession() : null;
-    if (!session || !session.inputSources) return null;
-
     let steerNorm = 0;
     let gasNorm = 0;
     let brakeNorm = 0;
     let active = false;
 
-    for (const src of session.inputSources) {
-      const gp = src && src.gamepad;
+    // 1. Đọc từ WebXR inputSources nếu đang trong immersive session
+    const session = (typeof renderer !== 'undefined' && renderer && renderer.xr) ? (renderer.xr.getSession ? renderer.xr.getSession() : null) : null;
+    const xrSources = (session && session.inputSources) ? Array.from(session.inputSources) : [];
+
+    // 2. Đọc từ Standard Gamepad API (WebXR Gamepad hoặc Touch Controller)
+    const navGamepads = (typeof navigator !== 'undefined' && navigator.getGamepads)
+      ? Array.from(navigator.getGamepads()).filter(gp => gp && (typeof isRacingWheelDevice !== 'function' || !isRacingWheelDevice(gp)))
+      : [];
+
+    const padList = [
+      ...xrSources.map(s => ({ gp: s.gamepad, hand: s.handedness })).filter(i => i.gp),
+      ...navGamepads.map(gp => ({ gp, hand: gp.hand || '' }))
+    ];
+
+    for (const { gp, hand } of padList) {
       if (!gp) continue;
       const axes = gp.axes || [];
       const btns = gp.buttons || [];
@@ -23869,8 +23885,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       const stickX = (Math.abs(axes[2] || 0) > Math.abs(axes[0] || 0)) ? (axes[2] || 0) : (axes[0] || 0);
       const stickY = (Math.abs(axes[3] || 0) > Math.abs(axes[1] || 0)) ? (axes[3] || 0) : (axes[1] || 0);
 
-      const deadX = applyDeadzone(stickX, CFG.xrStickDeadzone);
-      const deadY = applyDeadzone(stickY, CFG.xrStickDeadzone);
+      const deadX = applyDeadzone(stickX, CFG.xrStickDeadzone || 0.10);
+      const deadY = applyDeadzone(stickY, CFG.xrStickDeadzone || 0.10);
 
       if (Math.abs(deadX) > Math.abs(steerNorm)) {
         steerNorm = deadX;
@@ -23891,18 +23907,21 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       // Cò Trigger: Tay phải làm Ga, Tay trái làm Phanh/Lùi
       const trigVal = btns[0] ? (typeof btns[0].value === 'number' ? btns[0].value : (btns[0].pressed ? 1 : 0)) : 0;
       if (trigVal > 0.08) {
-        if (src.handedness === 'right') {
+        if (hand === 'right') {
           gasNorm = Math.max(gasNorm, applyDeadzone(trigVal, 0.08));
           active = true;
-        } else if (src.handedness === 'left') {
+        } else if (hand === 'left') {
           brakeNorm = Math.max(brakeNorm, applyDeadzone(trigVal, 0.08));
+          active = true;
+        } else {
+          gasNorm = Math.max(gasNorm, applyDeadzone(trigVal, 0.08));
           active = true;
         }
       }
 
-      // Nút Grip (Cò báng cầm): Phanh dừng xe
+      // Nút Grip (Cò báng cầm btns[1]): Phanh dừng xe
       const gripVal = btns[1] ? (typeof btns[1].value === 'number' ? btns[1].value : (btns[1].pressed ? 1 : 0)) : 0;
-      if (gripVal > 0.5) {
+      if (gripVal > 0.35) {
         brakeNorm = Math.max(brakeNorm, 1.0);
         active = true;
       }
@@ -23912,7 +23931,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   // --------------------------------------------------------------------------
-  // 6. HỢP NHẤT NGUỒN ĐIỀU KHIỂN & VẬT LÝ XE THỐNG NHẤT CHO ADMIN & VR PLAYER
+    // 6. HỢP NHẤT NGUỒN ĐIỀU KHIỂN & VẬT LÝ XE THỐNG NHẤT CHO ADMIN & VR PLAYER
   // --------------------------------------------------------------------------
   function resolveActiveDrivingCommand(now) {
     // Nguồn 1: Vô lăng GOG R808 cắm trực tiếp (trên Localhost Admin)
@@ -24132,6 +24151,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
             const driveNorm = cmd.active ? clamp(cmd.gasNorm - cmd.brakeNorm, -1, 1) : 0;
             sock.send(JSON.stringify({
               type: 'RC_CONTROL_CMD',
+              source: cmd.source,
+              deviceType: (typeof isQuestHeadset !== 'undefined' && isQuestHeadset) ? 'META_QUEST' : 'PC',
               steeringNorm: Number(cmd.steerNorm.toFixed(4)),
               throttleNorm: Number(driveNorm.toFixed(4)),
               gear: state.gear || 'D'
@@ -24601,7 +24622,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           true,
           `🟢 ĐÃ KẾT NỐI LAPTOP (${ip}:8080) | XE: ${carLabel}`
         );
-        try { sock.send(JSON.stringify({ type: 'PLAYER_HELLO', deviceType: 'META_QUEST' })); } catch (e) {}
+        try { sock.send(JSON.stringify({ type: 'PLAYER_HELLO', deviceType: 'META_QUEST', isQuestVR: true })); } catch (e) {}
       };
 
       sock.onmessage = (ev) => {

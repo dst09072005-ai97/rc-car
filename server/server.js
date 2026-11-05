@@ -888,6 +888,9 @@ function proxyEsp32WebSocket(clientWs, targetIp, targetPort, roleName) {
 function attachMultiplayerServer(serverInstance) {
   const wss = new WebSocket.Server({ server: serverInstance });
   wss.on('error', () => {});
+  if (typeof bindUnifiedWss === 'function') {
+    bindUnifiedWss(wss);
+  }
 
   wss.on('connection', (ws, req) => {
     activeMultiplayerSockets.add(ws);
@@ -1047,7 +1050,27 @@ function attachMultiplayerServer(serverInstance) {
         const p = players.get(playerId);
         if (!p) return;
 
-                if (data.type === 'ESP32_CAM_FRAME_RELAY' && data.dataUrl) {
+                if (data.type === 'PLAYER_HELLO') {
+          if (data.deviceType) p.deviceType = data.deviceType;
+          if (data.deviceType === 'META_QUEST' || data.isQuestVR) {
+            p.isQuestVR = true;
+            console.log(`🥽 [VR CLIENT] Meta Quest 3 đã xác thực kết nối WebSocket (${p.playerId})`);
+            if (!seat0OccupantId || seat0OccupantId === playerId || !players.get(seat0OccupantId)?.isQuestVR) {
+              if (seat0OccupantId && seat0OccupantId !== playerId && players.has(seat0OccupantId)) {
+                players.get(seat0OccupantId).seatIndex = 1;
+                players.get(seat0OccupantId).isHost = false;
+                if (hostCar) hostCar.occupants[1] = seat0OccupantId;
+              }
+              p.seatIndex = 0;
+              p.isHost = true;
+              seat0OccupantId = playerId;
+              if (hostCar) hostCar.occupants[0] = playerId;
+            }
+          }
+          return;
+        }
+
+        if (data.type === 'ESP32_CAM_FRAME_RELAY' && data.dataUrl) {
           latestEsp32CamFramePacket = JSON.stringify({
             type: 'ESP32_CAM_FRAME_RELAY',
             role: data.role || 'front',
@@ -1072,7 +1095,8 @@ function attachMultiplayerServer(serverInstance) {
         } else if (data.type === 'CAR_SYNC' && data.carId && cars.has(data.carId)) {
           // CHỈ TÀI XẾ (Seat 0) hoặc Laptop Admin MỚI ĐƯỢC ĐỒNG BỘ TỌA ĐỘ VỊ TRÍ XE:
           // Người ngồi ghế phụ (Seat 1, 2, 3) tuyệt đối không được ghi đè tọa độ xe!
-          const canSyncCar = (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin);
+          const isVrController = Boolean(p.isQuestVR || p.deviceType === 'META_QUEST');
+          const canSyncCar = (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin || isVrController);
           if (canSyncCar) {
             const c = cars.get(data.carId);
             c.x = clampFinite(data.x, -250, 250, c.x);
@@ -1211,45 +1235,50 @@ function computeSafeEscPulseUs(msg) {
 }
 
         } else if (data.type === 'CAR_CONTROL' || data.type === 'RC_CONTROL_CMD') {
-          // CHỈ TÀI XẾ (Seat 0) hoặc Laptop Admin hoặc Tay Cầm Kính VR MỚI ĐƯỢC PHÉP ĐIỀU KHIỂN XE THẬT:
-          const canControlHardware = (p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin || p.deviceType === 'META_QUEST');
+          // BỘ TRỌNG TÀI ĐIỀU KHIỂN XE THẬT 2 CHIỀU (Seamless Dual-Mode Arbitration):
+          // Khi vô lăng host GOG808 đang quay/đạp ga, vô lăng DirectInput/WinMM chiếm ưu tiên tuyệt đối
+          const now = Date.now();
+          const isPhysicalWheelDriving = (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS);
+          const isVrController = Boolean(p.isQuestVR || p.deviceType === 'META_QUEST' || data.source === 'VR_CONTROLLER' || data.deviceType === 'META_QUEST');
+          const canControlHardware = isVrController || p.seatIndex === 0 || p.isHost || p.isLocalhostAdmin || !isPhysicalWheelDriving;
           if (!canControlHardware) {
             return;
           }
-          // BỘ TRỌNG TÀI LÁI XE DUY NHẤT (Active Driver Arbitration):
-          let steer = 90;
+          if (isPhysicalWheelDriving && isVrController) {
+            // Đang có vô lăng host thao tác: Bỏ qua lệnh từ tay cầm kính để chống xung đột góc lái
+            return;
+          }
+
+          let sNorm = 0;
           if (data.steeringNorm !== undefined || data.steerNorm !== undefined) {
-            const sNorm = Math.max(-1, Math.min(1, Number(data.steeringNorm ?? data.steerNorm) || 0));
-            steer = Math.round(90 - sNorm * 45); // Chú ý: 90 - sNorm*45 đồng bộ góc lái
+            sNorm = Math.max(-1, Math.min(1, Number(data.steeringNorm ?? data.steerNorm) || 0));
           } else if (data.steeringDeg !== undefined || (data.steer !== undefined && Math.abs(Number(data.steer)) > 1.5)) {
-            steer = Math.max(45, Math.min(135, Math.round(Number(data.steeringDeg ?? data.steer) || 90)));
+            const rawS = Math.max(45, Math.min(135, Math.round(Number(data.steeringDeg ?? data.steer) || 90)));
+            sNorm = (90 - rawS) / 45;
           }
-          let throttle = 1500;
+
+          let dNorm = 0;
+          let explicitPulse = null;
           if (data.throttleNorm !== undefined || data.driveNorm !== undefined) {
-            const dNorm = Math.max(-1, Math.min(1, Number(data.throttleNorm ?? data.driveNorm) || 0));
-            throttle = computeAsymmetricEscPulseUs(dNorm, null, data.gear || (dNorm < -0.02 ? 'R' : 'D'));
-          } else {
-            const rawThrottle = typeof computeSafeEscPulseUs === 'function' ? computeSafeEscPulseUs(data) : (Number(data.throttle) || 1500);
-            throttle = Math.abs(rawThrottle - 1500) < 15 ? 1500 : rawThrottle;
+            dNorm = Math.max(-1, Math.min(1, Number(data.throttleNorm ?? data.driveNorm) || 0));
+          } else if (data.throttle !== undefined || data.escPulseUs !== undefined) {
+            const rawT = Math.max(1050, Math.min(1950, Math.round(Number(data.throttle ?? data.escPulseUs) || 1500)));
+            explicitPulse = rawT;
+            dNorm = (rawT - 1500) / 350;
           }
-          if (Math.abs(steer - 90) < 3) steer = 90;
-          const isActivelyDriving = (throttle !== 1500 || steer !== 90);
-          const now = Date.now();
+
+          const isActivelyDriving = (Math.abs(sNorm) > 0.02 || Math.abs(dNorm) > 0.02 || (explicitPulse && Math.abs(explicitPulse - 1500) > 15));
 
           if (isActivelyDriving) {
-            // Client này đang đạp ga hoặc bẻ lái -> Chiếm quyền Active Driver
             activeDriverClient = ws;
             activeDriverLastActiveTime = now;
-            sendUdpCarCommand(steer, throttle);
+            sendRateLimitedEsp32Udp(sNorm, dNorm, explicitPulse, data.gear || (dNorm < -0.02 ? 'R' : 'D'), isVrController ? 'QUEST_CAR_CONTROL' : 'CAR_CONTROL');
           } else {
-            // Lệnh trả về trung tính (90°, 1500µs):
-            // Chỉ chấp nhận nếu do chính Active Driver gửi, HOẶC không có ai lái trong 600ms qua
-            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 600)) {
+            if (activeDriverClient === ws || (now - activeDriverLastActiveTime > 400)) {
               if (activeDriverClient === ws) {
-                // Active driver vừa nhả ga dừng xe
                 activeDriverLastActiveTime = 0;
               }
-              sendUdpCarCommand(steer, throttle);
+              sendRateLimitedEsp32Udp(0, 0, 1500, 'D', isVrController ? 'QUEST_CAR_CONTROL' : 'CAR_CONTROL');
             }
           }
         } else if (data.type === 'WHEEL_BRIDGE_INPUT' || data.type === 'WHEEL_BRIDGE_STATE') {
@@ -2364,6 +2393,19 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             type: 'WHEEL_BRIDGE_STATE',
             ...latestBridgeState
           }));
+        } else {
+          ws.send(JSON.stringify({
+            type: 'WHEEL_BRIDGE_STATE',
+            connected: false,
+            source: 'NONE',
+            deviceId: 'None (Disconnected)',
+            steerNorm: 0,
+            gasNorm: 0,
+            brakeNorm: 0,
+            driveNorm: 0,
+            gear: 'D',
+            timestamp: Date.now()
+          }));
         }
       }
 
@@ -2584,7 +2626,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, null, data.gear, 'WINMM_USB');
           } else {
             // Khi rút dây USB GOG808 hoặc không tìm thấy joystick:
-            if (latestBridgeState.connected) {
+            if (latestBridgeState.connected || rcArbitration.lastPhysicalWheelActiveAt > 0) {
               latestBridgeState.connected = false;
               rcArbitration.lastPhysicalWheelActiveAt = 0;
               console.log('🔌 [GOG808] Vô lăng USB ngắt kết nối -> Nhượng quyền điều khiển cho Kính VR / Tay cầm!');
