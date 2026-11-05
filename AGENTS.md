@@ -52,5 +52,14 @@ Chỉ đọc skill tương ứng khi thực hiện tác vụ chuyên biệt:
   - Toàn bộ gói tin UDP 4210 gửi tới ESP32 Car Controller bắt buộc đi qua **duy nhất 1 hàm `sendRateLimitedEsp32Udp`** và 1 socket `udpOutSocket`.
   - Hàm `sendUdpCarCommand` ủy thác toàn bộ cho `sendRateLimitedEsp32Udp`.
   - Khi vô lăng host đang hoạt động (`rcArbitration.lastPhysicalWheelActiveAt` < 350ms), tự động khóa mọi lệnh điều khiển từ web/kính. ESP32 nhận đúng 1 gói tin 4-bytes chứa đồng thời `[steerDeg (45..135°), escPulseUs (1100..1850µs)]` trong cùng một frame, triệt tiêu 100% hiện tượng xung đột góc lái khiến xe chỉ chạy thẳng khi ga.
+- **Chuyển quyền Lái 2 Chiều: Vô lăng Host GOG808 ↔ Tay Cầm Kính VR (Seamless Dual-Mode Arbitration)**:
+  - Khi cắm USB GOG808 vào laptop: Vô lăng DirectInput chiếm quyền ưu tiên lái xe thật và xe ảo. Kính VR hiển thị buồng lái mượt mà, không gửi ngược tín hiệu để chống echo loop.
+  - Khi rút USB GOG808 (hoặc server chưa nhận vô lăng): Server lập tức phát `WHEEL_BRIDGE_STATE` có `connected: false` và mở khóa trọng tài (`lastPhysicalWheelActiveAt = 0`). Kính VR nhận diện `isRemoteBridgeActive() === false`, lập tức cho phép Tay Cầm Kính VR (Touch Controller - Thumbstick X/Y, Cò Trigger) lái và tăng tốc cả xe ảo lẫn xe RC ngoài đời thật qua cổng UDP 4210.
+  - Cắm/rút USB GOG808 tuyệt đối không làm mất kết nối hoặc reset IP mạch xe (`esp32CarConfig.ip`) và IP Camera.
+- **Khóa chống hủy kết nối Camera ESP32 (Anti-Thrash Camera Connection Lock)**:
+  - Hàm `connectEsp32Windshield(rawUrl)` và `connectRearEsp32Camera(rawUrl)` bắt buộc kiểm tra trạng thái socket: Nếu socket đang ở trạng thái `CONNECTING` hoặc `OPEN` với đúng URL đích, tuyệt đối không đóng socket và không tạo socket mới.
+  - Hàm `applyEsp32CameraIps` chỉ kích hoạt kết nối khi chưa có socket, socket đã đóng hoặc IP camera thực sự thay đổi.
+  - Polling dự phòng giãn cách tối thiểu 1500ms khi mất kết nối và tự động ngắt hoàn toàn khi WebSocket chính đã mở (`isConnected === true`), triệt tiêu 100% hiện tượng nhảy IP liên tục làm nghẽn mạng và rớt camera trên kính.
+
 
 

@@ -1331,6 +1331,7 @@ D:\XE_RC_FPV_V10\tools\apply_v502_pedal_rules.js	tools/apply_v502_pedal_rules.js
 D:\XE_RC_FPV_V10\tools\apply_v503_smooth_streaming.js	tools/apply_v503_smooth_streaming.js
 D:\XE_RC_FPV_V10\tools\apply_v504_comprehensive_fix.js	tools/apply_v504_comprehensive_fix.js
 D:\XE_RC_FPV_V10\tools\apply_v504_native_host_bridge.js	tools/apply_v504_native_host_bridge.js
+D:\XE_RC_FPV_V10\tools\apply_wheel_disconnect_and_camera_fix.py	tools/apply_wheel_disconnect_and_camera_fix.py
 D:\XE_RC_FPV_V10\tools\audit_individual_meshes.js	tools/audit_individual_meshes.js
 D:\XE_RC_FPV_V10\tools\build_v260_module.js	tools/build_v260_module.js
 D:\XE_RC_FPV_V10\tools\check_env.js	tools/check_env.js
@@ -1340,6 +1341,7 @@ D:\XE_RC_FPV_V10\tools\create_zip_3.ps1	tools/create_zip_3.ps1
 D:\XE_RC_FPV_V10\tools\debug_2_file_list.txt	tools/debug_2_file_list.txt
 D:\XE_RC_FPV_V10\tools\debug_3_file_list.txt	tools/debug_3_file_list.txt
 D:\XE_RC_FPV_V10\tools\extract_guide_sources.py	tools/extract_guide_sources.py
+D:\XE_RC_FPV_V10\tools\fix_server_braces.py	tools/fix_server_braces.py
 D:\XE_RC_FPV_V10\tools\generate_v60_app.py	tools/generate_v60_app.py
 D:\XE_RC_FPV_V10\tools\inspect_graybox.py	tools/inspect_graybox.py
 D:\XE_RC_FPV_V10\tools\inspect_vertical_slice.py	tools/inspect_vertical_slice.py
@@ -1357,7 +1359,6 @@ D:\XE_RC_FPV_V10\tools\patch_native_bridge_stability.js	tools/patch_native_bridg
 D:\XE_RC_FPV_V10\tools\patch_server_multiplayer.js	tools/patch_server_multiplayer.js
 D:\XE_RC_FPV_V10\tools\patch_server_stability.js	tools/patch_server_stability.js
 D:\XE_RC_FPV_V10\tools\patch_snippet.js	tools/patch_snippet.js
-D:\XE_RC_FPV_V10\tools\patch_steering_throttle.py	tools/patch_steering_throttle.py
 D:\XE_RC_FPV_V10\tools\patch_steer_and_cam_perf.js	tools/patch_steer_and_cam_perf.js
 D:\XE_RC_FPV_V10\tools\patch_websocket_and_bridge.js	tools/patch_websocket_and_bridge.js
 D:\XE_RC_FPV_V10\tools\restore-golden-baseline.js	tools/restore-golden-baseline.js

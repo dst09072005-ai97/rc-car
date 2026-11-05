@@ -1512,6 +1512,11 @@ function decodeLatestRawFrame() {
 }
 
 function connectEsp32Windshield(rawUrl) {
+  if (!rawUrl) return;
+  // [ANTI-THRASH] Nếu socket đang kết nối hoặc đã mở với đúng URL này, không đóng kết nối!
+  if (esp32Socket && (esp32Socket.readyState === WebSocket.CONNECTING || esp32Socket.readyState === WebSocket.OPEN)) {
+    if (state.esp32StreamUrl === rawUrl) return;
+  }
   state.esp32StreamUrl = rawUrl;
   if (esp32Socket) {
     try { esp32Socket.close(); } catch (e) {}
@@ -3289,6 +3294,10 @@ function decodePendingRearFrame() {
 
 function connectRearEsp32Camera(rawUrl) {
   if (!rawUrl) return;
+  // [ANTI-THRASH] Nếu socket đang kết nối hoặc đã mở với đúng URL này, không đóng kết nối!
+  if (esp32RearSocket && (esp32RearSocket.readyState === WebSocket.CONNECTING || esp32RearSocket.readyState === WebSocket.OPEN)) {
+    if (state.esp32RearStreamUrl === rawUrl) return;
+  }
   state.esp32RearStreamUrl = rawUrl;
   manualRearDisconnect = false;
   if (esp32RearSocket) {
@@ -20773,10 +20782,25 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   }
 
+    function isRemoteBridgeActive() {
+    const w = (typeof window !== 'undefined') ? window._racingWheel : null;
+    if (!w || !w.isRemoteBridge || !w.connected) return false;
+    const nowPerf = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (w.lastInputTime && (nowPerf - w.lastInputTime > 800)) {
+      w.isRemoteBridge = false;
+      w.connected = false;
+      if (typeof racingWheel !== 'undefined' && racingWheel) {
+        racingWheel.isRemoteBridge = false;
+        racingWheel.connected = false;
+      }
+      return false;
+    }
+    return true;
+  }
   function pollGamepadRacingWheel(dt) {
-    // [ANTI-CONFLICT] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm vào laptop):
+    // [ANTI-CONFLICT] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm vào laptop và đang hoạt động):
     // Không cho Gamepad / Touch Controller trên kính tự ý ghi đè hoặc set racingWheel.connected = false!
-    if (racingWheel.isRemoteBridge || (window._racingWheel && window._racingWheel.isRemoteBridge)) {
+    if (isRemoteBridgeActive()) {
       return;
     }
     if (!navigator.getGamepads) return;
@@ -21423,7 +21447,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       if (frontInput && (frontInput.value !== expectedFrontUrl || !frontInput.value)) {
         frontInput.value = expectedFrontUrl;
       }
-      if (!state.esp32Connected || (state.esp32StreamUrl && !state.esp32StreamUrl.includes(front.ip) && !state.esp32StreamUrl.includes('esp32-front-ws'))) {
+      const isFrontConnectingOrOpen = esp32Socket && (esp32Socket.readyState === WebSocket.CONNECTING || esp32Socket.readyState === WebSocket.OPEN);
+      if (!isFrontConnectingOrOpen || state.esp32StreamUrl !== expectedFrontUrl) {
         console.log('📹 [VR CAM FRONT] Đang tự động kết nối Cam Trước:', expectedFrontUrl);
         connectEsp32Windshield(expectedFrontUrl);
         if (state.windshieldMode !== 'TRANSPARENT' && state.windshieldMode !== 'ESP32_PIP') {
@@ -21440,7 +21465,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       if (rearInput && (rearInput.value !== expectedRearUrl || !rearInput.value)) {
         rearInput.value = expectedRearUrl;
       }
-      if (!state.esp32RearConnected && !manualRearDisconnect) {
+      const isRearConnectingOrOpen = esp32RearSocket && (esp32RearSocket.readyState === WebSocket.CONNECTING || esp32RearSocket.readyState === WebSocket.OPEN);
+      if ((!isRearConnectingOrOpen || state.esp32RearStreamUrl !== expectedRearUrl) && !manualRearDisconnect) {
         console.log('📹 [VR CAM REAR] Đang tự động kết nối Cam Lùi:', expectedRearUrl);
         connectRearEsp32Camera(expectedRearUrl);
       }
@@ -21868,10 +21894,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (now - lastCarControlSendTime >= 40) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
-        // [ANTI-ECHO] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm máy tính):
+        // [ANTI-ECHO] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm máy tính và đang phát sóng):
         // Laptop đã là master điều khiển xe RC và phát broadcast.
         // Client (Kính VR) KHÔNG gửi ngược CAR_CONTROL hay WHEEL_BRIDGE_INPUT về server để triệt tiêu vĩnh viễn echo loop nhảy loạn góc lái!
-        if (window._racingWheel && window._racingWheel.isRemoteBridge) {
+        if (isRemoteBridgeActive()) {
           return;
         }
         const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
@@ -22002,6 +22028,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           carControlPacket.escPulseUs = throttle;
         }
         carControlPacket.gear = state.gearIndex === 1 ? 'R' : 'D';
+        carControlPacket.steeringNorm = Number(((90 - steer) / 45.0).toFixed(4));
+        carControlPacket.throttleNorm = Number(((throttle - 1500) / 350.0).toFixed(4));
         mpSocket.send(JSON.stringify(carControlPacket));
 
         // Phát Bridge State cho Quest 3 (Vô lăng GOG R808 HOẶC Bàn phím Laptop WASD / Mũi tên)
@@ -24269,6 +24297,20 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const nowPerf = performance.now();
     const nowDate = Date.now();
 
+    if (w.connected === false) {
+      liveWheel.connected = false;
+      liveWheel.isRemoteBridge = false;
+      if (window._racingWheel) {
+        window._racingWheel.connected = false;
+        window._racingWheel.isRemoteBridge = false;
+      }
+      if (typeof racingWheel !== 'undefined' && racingWheel) {
+        racingWheel.connected = false;
+        racingWheel.isRemoteBridge = false;
+      }
+      return;
+    }
+
     liveWheel.connected = true;
     liveWheel.isRemoteBridge = true;
 
@@ -24536,7 +24578,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   function connectWebSocketToIp(ip) {
     if (!ip || ip === 'localhost' || ip === '127.0.0.1') return;
-    if (wsConn && wsConn.readyState === WebSocket.OPEN && activeLaptopIp === ip) return;
+    if (wsConn && (wsConn.readyState === WebSocket.OPEN || wsConn.readyState === WebSocket.CONNECTING) && activeLaptopIp === ip) return;
     if (wsConn) {
       try { wsConn.close(); } catch (e) {}
     }
@@ -24592,29 +24634,37 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     } catch (e) {}
   }
 
-  // 4. HTTP POLLING DỰ PHÒNG 180MS (KHI WEBSOCKET ĐANG NỐI LẠI)
+  // 4. HTTP POLLING DỰ PHÒNG (KHI WEBSOCKET ĐANG NỐI LẠI)
   let candidatePollIdx = 0;
+  let lastCandidatePollMs = 0;
   setInterval(async () => {
     hookMainMpSocket();
+    const nowMs = Date.now();
+    // Nếu WebSocket đã kết nối ổn định: Tuyệt đối không nhảy IP khác làm nghẽn mạng!
+    if (isConnected && wsConn && wsConn.readyState === WebSocket.OPEN) return;
+
+    // Giãn khoảng cách thăm dò tối thiểu 1500ms để kết nối TCP/WS kịp hoàn tất handshake
+    if (nowMs - lastCandidatePollMs < 1500) return;
+    lastCandidatePollMs = nowMs;
+
     const ips = getCandidateIps();
     if (ips.length === 0) return;
 
-    const testIp = isConnected && activeLaptopIp ? activeLaptopIp : ips[candidatePollIdx % ips.length];
-    if (!isConnected) {
-      candidatePollIdx++;
-      connectWebSocketToIp(testIp);
-    }
+    // Nếu socket đang trong quá trình CONNECTING, cho nó tối đa 2500ms hoàn thành, không vội đóng
+    if (wsConn && wsConn.readyState === WebSocket.CONNECTING) return;
 
-    if (!wsConn || wsConn.readyState !== WebSocket.OPEN) {
-      try {
-        const hit = await checkHostAlive(testIp, 250);
-        if (hit) {
-          isConnected = true;
-          onServerFound(hit.ip, hit.data);
-        }
-      } catch (e) {}
-    }
-  }, 180);
+    const testIp = activeLaptopIp || ips[candidatePollIdx % ips.length];
+    candidatePollIdx++;
+    connectWebSocketToIp(testIp);
+
+    try {
+      const hit = await checkHostAlive(testIp, 500);
+      if (hit) {
+        isConnected = true;
+        onServerFound(hit.ip, hit.data);
+      }
+    } catch (e) {}
+  }, 1000);
 
   // 5. ĐIỀU KHIỂN BUỒNG LÁI & CÂN BẰNG TÂM GÓC NHÌN
   function ensureSeatedInDriverChair() {
