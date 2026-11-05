@@ -4156,6 +4156,10 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           }
         } else if (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT') {
           // Cầu nối vô lăng GOG R808 & Bàn phím Laptop sang kính Meta Quest 3
+          const srcData = msg.payload || msg;
+          if (typeof ingestWheelData === 'function') {
+            ingestWheelData(srcData);
+          }
           if (!window._racingWheel) {
             window._racingWheel = {
               connected: true,
@@ -20770,6 +20774,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   function pollGamepadRacingWheel(dt) {
+    // [ANTI-CONFLICT] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm vào laptop):
+    // Không cho Gamepad / Touch Controller trên kính tự ý ghi đè hoặc set racingWheel.connected = false!
+    if (racingWheel.isRemoteBridge || (window._racingWheel && window._racingWheel.isRemoteBridge)) {
+      return;
+    }
     if (!navigator.getGamepads) return;
     const gamepads = navigator.getGamepads();
     if (!gamepads) return;
@@ -21859,6 +21868,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (now - lastCarControlSendTime >= 40) {
       lastCarControlSendTime = now;
       if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+        // [ANTI-ECHO] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm máy tính):
+        // Laptop đã là master điều khiển xe RC và phát broadcast.
+        // Client (Kính VR) KHÔNG gửi ngược CAR_CONTROL hay WHEEL_BRIDGE_INPUT về server để triệt tiêu vĩnh viễn echo loop nhảy loạn góc lái!
+        if (window._racingWheel && window._racingWheel.isRemoteBridge) {
+          return;
+        }
         const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
         const maxRevDelta = Math.max(40, Math.min(260, 1500 - (state.rcMaxReversePulse || 1320)));
 
@@ -24255,7 +24270,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const nowDate = Date.now();
 
     liveWheel.connected = true;
-    liveWheel.steerNorm = Number(w.steerNorm ?? w.steeringNorm ?? w.steer ?? 0) || 0;
+    liveWheel.isRemoteBridge = true;
+
+    // Chuẩn hóa sNorm [-1..1]
+    const rawS = typeof w.steerNorm === 'number' ? w.steerNorm :
+                 (typeof w.steeringNorm === 'number' ? w.steeringNorm :
+                 (typeof w.steer === 'number' && w.steer > 1.5 ? (w.steer - 90) / 45 : (Number(w.steer) || 0)));
+    liveWheel.steerNorm = Math.max(-1, Math.min(1, rawS));
     liveWheel.gasNorm = Number(w.gasNorm ?? (w.gasPercent ? w.gasPercent / 100 : 0)) || 0;
     liveWheel.brakeNorm = Number(w.brakeNorm ?? (w.brakePercent ? w.brakePercent / 100 : 0)) || 0;
     liveWheel.driveNorm = w.driveNorm !== undefined
