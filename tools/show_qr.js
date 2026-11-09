@@ -31,9 +31,17 @@ const ips = getAllNetworkIps();
 const lan = ips.lanIp;
 const pub = ips.publicIp;
 
+const urlFpvDuck = `https://vr-cam-fpv.duckdns.org:8443/fpv-cam.html`;
+const urlFpvLan = `https://${lan}:8443/fpv-cam.html`;
 const urlIphoneLan = `http://${lan}:8080/?mode=passenger_mobile`;
 const urlIphonePub = `http://${pub}:8080/?mode=passenger_mobile`;
 const urlVR = `https://${lan}:8443/?vr=immersive`;
+
+console.log('\n==========================================================');
+console.log('📱 MÃ QR DÙNG ĐIỆN THOẠI LÀM CAMERA FPV CHO XE:');
+console.log('Đường dẫn DuckDNS (SSL Miễn Phí):', urlFpvDuck);
+console.log('==========================================================');
+qrcode.generate(urlFpvDuck, { small: true });
 
 console.log('\n==========================================================');
 console.log('📱 MÃ QR CHO SAFARI IPHONE / ANDROID (WI-FI LAN):');

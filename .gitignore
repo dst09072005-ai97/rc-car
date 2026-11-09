@@ -6,7 +6,11 @@ node_modules/
 dist/
 build/
 backups/
-meta_quest_3/
+meta_quest_3/apk/
+meta_quest_3/simulator/
+meta_quest_3/android/.gradle/
+meta_quest_3/android/app/build/
+meta_quest_3/android/capacitor-cordova-android-plugins/build/
 *.apk
 *.aab
 *.zip

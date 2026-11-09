@@ -41,8 +41,10 @@ if (foundBlender) {
   }
 }
 
-const godotPath = 'D:\\XE_RC_FPV_V10\\Godot_v4.7.2-stable_win64_console.exe';
-console.log('Godot 4.7.2 executable exists:', fs.existsSync(godotPath));
+const godotPath = fs.existsSync('D:\\XE_RC_FPV_V10\\tools\\godot\\Godot_v4.7.2-stable_win64_console.exe')
+  ? 'D:\\XE_RC_FPV_V10\\tools\\godot\\Godot_v4.7.2-stable_win64_console.exe'
+  : 'D:\\XE_RC_FPV_V10\\Godot_v4.7.2-stable_win64_console.exe';
+console.log('Godot 4.7.2 executable exists:', fs.existsSync(godotPath), `(${godotPath})`);
 
 console.log('\n--- Checking Models Directory ---');
 const modelsDir = 'D:\\XE_RC_FPV_V10\\models';

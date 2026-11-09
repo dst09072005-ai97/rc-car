@@ -1,8 +1,22 @@
 {
+  "name": "xe-rc-fpv-v10",
+  "version": "10.1.0",
+  "private": true,
+  "description": "Meta Quest 3 Immersive WebXR & Dual-Telemetry FPV RC Car",
+  "scripts": {
+    "start": "node server/server.js",
+    "doctor": "node tools/xr-doctor.js",
+    "test": "node tools/test_runtime_load.js",
+    "build:apk": "powershell -ExecutionPolicy Bypass -File meta_quest_3/scripts/build_apk.ps1"
+  },
   "dependencies": {
+    "@capacitor/android": "^5.7.8",
+    "@capacitor/core": "^5.7.8",
     "express": "^5.3.0",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "selfsigned": "^5.5.0",
+    "three": "^0.170.0",
     "ws": "^8.22.0"
   }
 }

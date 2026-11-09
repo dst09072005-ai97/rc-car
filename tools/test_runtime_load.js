@@ -229,7 +229,8 @@ global.location = global.window.location;
 async function run() {
   console.log('🔍 [1/3] Đang nạp app.js vào môi trường giả lập Headless Browser...');
   try {
-    await import('../app.js');
+    const appTarget = fs.existsSync(path.resolve(__dirname, '../www/app.js')) ? '../www/app.js' : '../app.js';
+    await import(appTarget);
     console.log('✅ [2/3] app.js nạp và khởi tạo thành công 100% (Không có ReferenceError / TDZ / SyntaxError)!');
 
     console.log('🔍 [3/3] Đang chạy mô phỏng các vòng lặp Render Frame...');

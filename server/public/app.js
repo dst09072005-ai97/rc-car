@@ -125,7 +125,7 @@ async function setupSeamless3D2DSwitcher() {
   if (typeof localStorage !== 'undefined' && !localStorage.getItem('pc_server_ip')) {
     const fallbackDefaultIp = (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function')
       ? window.QuestVRBridge.getDefaultHostIp()
-      : '192.168.1.228';
+      : '192.168.1.76';
     localStorage.setItem('pc_server_ip', fallbackDefaultIp);
   }
 
@@ -133,7 +133,7 @@ async function setupSeamless3D2DSwitcher() {
   const pcIpInput = document.getElementById('pc-server-ip-input');
   const btnSavePcIp = document.getElementById('btn-save-pc-ip');
   if (pcIpInput) {
-    const curIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.228';
+    const curIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.76';
     pcIpInput.value = curIp;
     const saveIp = () => {
       const val = pcIpInput.value.trim();
@@ -181,7 +181,7 @@ async function setupSeamless3D2DSwitcher() {
       if (!pcIp && typeof window.QuestVRBridge !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function') {
         try { pcIp = window.QuestVRBridge.getDefaultHostIp(); } catch (e) {}
       }
-      if (!pcIp) pcIp = '192.168.1.228';
+      if (!pcIp) pcIp = '192.168.1.76';
       if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
 
       const vrTargetUrl = `https://${pcIp}:8443/?vr=immersive`;
@@ -1444,7 +1444,7 @@ function decodePendingFrontFrame() {
     }
     esp32Bitmap = bmp;
     state.esp32Connected = true;
-    if (state.windshieldMode !== 'TRANSPARENT' && state.windshieldMode !== 'ESP32_PIP') {
+    if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
       state.windshieldMode = 'ESP32_LIVE';
     }
     // DIRECT ZERO-LATENCY DRAW: Vẽ trực tiếp lên kính lái ngay khi giải mã xong bitmap, không viền, không lag
@@ -1527,7 +1527,7 @@ function connectEsp32Windshield(rawUrl) {
       let targetWs = rawUrl;
       const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
       if (!isApkEnv && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
-        const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.228';
+        const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
         const host = (window.location.hostname && window.location.hostname !== 'localhost') ? window.location.host : `${pcIp}:8443`;
         targetWs = `wss://${host}/esp32-front-ws`;
       }
@@ -1535,7 +1535,7 @@ function connectEsp32Windshield(rawUrl) {
       esp32Socket.binaryType = 'arraybuffer';
       esp32Socket.onopen = () => {
         state.esp32Connected = true;
-        if (state.windshieldMode !== 'TRANSPARENT' && state.windshieldMode !== 'ESP32_PIP') {
+        if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
           state.windshieldMode = 'ESP32_LIVE';
         }
         state.lastActionLog = '🟢 Da ket noi WebSocket ESP32-CAM!';
@@ -1571,7 +1571,7 @@ function connectEsp32Windshield(rawUrl) {
       esp32Socket.onerror = () => {
         state.lastActionLog = '⚠️ Lỗi kết nối direct ESP32 Cam, chuyển sang Proxy Server...';
         const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
-        const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.228';
+        const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
         const isHttps = !isApkEnv && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
         const proxyProto = isHttps ? 'wss:' : 'ws:';
         const proxyPort = isHttps ? ((window.location && window.location.port) || '8443') : '8080';
@@ -1594,26 +1594,34 @@ function connectEsp32Windshield(rawUrl) {
       ? `/api/esp32-proxy?url=${encodeURIComponent(rawUrl)}`
       : rawUrl;
     esp32MjpegImg.src = finalUrl;
-    if (state.windshieldMode !== 'TRANSPARENT' && state.windshieldMode !== 'ESP32_PIP') {
+    if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
       state.windshieldMode = 'ESP32_LIVE';
     }
   }
 }
 
 document.getElementById('btn-connect-esp32')?.addEventListener('click', () => {
-  const url = document.getElementById('esp32-front-ip')?.value.trim() || 'ws://192.168.1.184:4213';
+  const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+  const fallbackUrl = `ws://${pcIp}:8080/esp32-front-ws`;
+  const raw = document.getElementById('esp32-front-ip')?.value.trim();
+  const url = (raw && !raw.includes('192.168.1.88') && !raw.includes('192.168.1.184')) ? raw : fallbackUrl;
+  if (document.getElementById('esp32-front-ip')) document.getElementById('esp32-front-ip').value = url;
   connectEsp32Windshield(url);
   state.windshieldMode = 'ESP32_LIVE';
   if (typeof updateCamRoadUiButtons === 'function') updateCamRoadUiButtons();
 });
 // Tu dong ket noi ESP32-CAM sau 1 giay khi mo Web
 setTimeout(() => {
-  const url = document.getElementById('esp32-front-ip')?.value.trim();
+  const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+  const fallbackUrl = `ws://${pcIp}:8080/esp32-front-ws`;
+  const raw = document.getElementById('esp32-front-ip')?.value.trim();
+  const url = (raw && !raw.includes('192.168.1.88') && !raw.includes('192.168.1.184')) ? raw : fallbackUrl;
+  if (document.getElementById('esp32-front-ip')) document.getElementById('esp32-front-ip').value = url;
   if (url && (url.startsWith('ws://') || url.startsWith('http://'))) {
     console.log('[AUTO CONNECT] Tu dong ket noi ESP32-CAM:', url);
-    const prevMode = state.windshieldMode;
+    // auto connect without resetting mode
     connectEsp32Windshield(url);
-    if (prevMode === 'TRANSPARENT') {
+    if (false) {
       state.windshieldMode = 'TRANSPARENT';
       if (typeof updateCamRoadUiButtons === 'function') updateCamRoadUiButtons();
     }
@@ -3292,6 +3300,27 @@ function decodePendingRearFrame() {
   });
 }
 
+function handleIncomingFpvBinary(arrayBuffer) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 8) return;
+  const bytes = new Uint8Array(arrayBuffer);
+  let target = 'front';
+  let offset = 0;
+  if (bytes[0] === 0x52 && bytes[1] === 0x43 && bytes[2] === 0x46) {
+    target = bytes[3] === 0x02 ? 'rear' : 'front';
+    offset = 4;
+  }
+  if (bytes.length - offset < 4 || bytes[offset] !== 0xFF || bytes[offset + 1] !== 0xD8) return;
+  const jpegBlob = new Blob([bytes.subarray(offset)], { type: 'image/jpeg' });
+  if (target === 'rear') {
+    pendingRearBlob = jpegBlob;
+    decodePendingRearFrame();
+  } else {
+    pendingFrontBlob = jpegBlob;
+    decodePendingFrontFrame();
+  }
+}
+window.handleIncomingFpvBinary = handleIncomingFpvBinary;
+
 function connectRearEsp32Camera(rawUrl) {
   if (!rawUrl) return;
   // [ANTI-THRASH] Nếu socket đang kết nối hoặc đã mở với đúng URL này, không đóng kết nối!
@@ -3310,7 +3339,7 @@ function connectRearEsp32Camera(rawUrl) {
       let targetWs = rawUrl;
       const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
       if (!isApkEnv && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
-        const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.228';
+        const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
         const host = (window.location.hostname && window.location.hostname !== 'localhost') ? window.location.host : `${pcIp}:8443`;
         targetWs = `wss://${host}/esp32-rear-ws`;
       }
@@ -3341,7 +3370,7 @@ function connectRearEsp32Camera(rawUrl) {
       esp32RearSocket.onerror = () => {
         state.lastActionLog = '⚠️ Lỗi kết nối direct ESP32 Cam Lùi (' + rawUrl + '), chuyển sang Proxy Server...';
         const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
-        const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.228';
+        const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
         const isHttps = !isApkEnv && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
         const proxyProto = isHttps ? 'wss:' : 'ws:';
         const proxyPort = isHttps ? ((window.location && window.location.port) || '8443') : '8080';
@@ -3380,7 +3409,11 @@ function connectRearEsp32Camera(rawUrl) {
 
 document.getElementById('btn-connect-rear-esp32')?.addEventListener('click', () => {
   manualRearDisconnect = false;
-  const url = document.getElementById('esp32-rear-ip')?.value.trim() || state.esp32RearStreamUrl || 'ws://192.168.1.90:4213';
+  const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+  const fallbackUrl = `ws://${pcIp}:8080/esp32-rear-ws`;
+  const raw = document.getElementById('esp32-rear-ip')?.value.trim();
+  const url = (raw && !raw.includes('192.168.1.90')) ? raw : fallbackUrl;
+  if (document.getElementById('esp32-rear-ip')) document.getElementById('esp32-rear-ip').value = url;
   connectRearEsp32Camera(url);
 });
 document.getElementById('btn-rear-to-windshield')?.addEventListener('click', () => {
@@ -4066,7 +4099,7 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     if (isApkEnvironment) {
       let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
       if (!pcIp || pcIp === 'localhost' || pcIp === '127.0.0.1' || pcIp === 'null' || pcIp === 'undefined') {
-        pcIp = '192.168.1.228';
+        pcIp = '192.168.1.76';
         if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
       }
       hostTarget = `${pcIp}:8080`;
@@ -4074,6 +4107,7 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     }
 
     mpSocket = new WebSocket(`${wsProto}//${hostTarget}`);
+    mpSocket.binaryType = 'arraybuffer';
 
     mpSocket.onopen = () => {
       console.log('[Multiplayer] ✅ Đã kết nối WebSocket thành công tới server:', hostTarget);
@@ -4101,6 +4135,10 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     };
 
     mpSocket.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        handleIncomingFpvBinary(event.data);
+        return;
+      }
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'SERVER_LAN_INFO') {
@@ -4117,6 +4155,8 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           if (typeof window.applyEsp32CameraIps === 'function') {
             window.applyEsp32CameraIps(msg.cams || msg);
           }
+        } else if (msg.type === 'FPV_HOT_SWAP_ACTIVE') {
+          state.lastActionLog = '📱 Đã thay nóng điện thoại FPV mới!';
         } else if (msg.type === 'WELCOME') {
           state.playerId = msg.playerId;
           state.ownCarId = msg.ownCarId;
@@ -21448,7 +21488,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // 2. Tự động cập nhật IP Cam Trước
     if (front && front.ip) {
-      const expectedFrontUrl = `ws://${front.ip}:${front.port || 4213}`;
+      const expectedFrontUrl = front.path ? `ws://${front.ip}:${front.port || 8080}${front.path}` : `ws://${front.ip}:${front.port || 4213}`;
       state.esp32FrontIp = front.ip;
       if (typeof localStorage !== 'undefined') localStorage.setItem('rc_front_cam_ip', front.ip);
       if (frontInput && (frontInput.value !== expectedFrontUrl || !frontInput.value)) {
@@ -21458,7 +21498,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       if (!isFrontConnectingOrOpen || state.esp32StreamUrl !== expectedFrontUrl) {
         console.log('📹 [VR CAM FRONT] Đang tự động kết nối Cam Trước:', expectedFrontUrl);
         connectEsp32Windshield(expectedFrontUrl);
-        if (state.windshieldMode !== 'TRANSPARENT' && state.windshieldMode !== 'ESP32_PIP') {
+        if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
           state.windshieldMode = 'ESP32_LIVE';
         }
       }
@@ -21466,7 +21506,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // 3. Tự động cập nhật IP Cam Lùi
     if (rear && rear.ip) {
-      const expectedRearUrl = `ws://${rear.ip}:${rear.port || 4213}`;
+      const expectedRearUrl = rear.path ? `ws://${rear.ip}:${rear.port || 8080}${rear.path}` : `ws://${rear.ip}:${rear.port || 4213}`;
       state.esp32RearIp = rear.ip;
       if (typeof localStorage !== 'undefined') localStorage.setItem('rc_rear_cam_ip', rear.ip);
       if (rearInput && (rearInput.value !== expectedRearUrl || !rearInput.value)) {
@@ -21483,8 +21523,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   async function checkDiscoveredEsp32Ips() {
     try {
-      const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || ((typeof window !== 'undefined' && window.location && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.hostname : '127.0.0.1');
-      const baseUrl = (pcIp && pcIp !== 'localhost' && pcIp !== '127.0.0.1') ? `http://${pcIp}:8080` : '';
+      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
+      const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
+      const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+      const isHttps = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol === 'https:';
+      const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && (window.location.hostname === pcIp || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const baseUrl = isCurrentHost ? '' : (isHttps ? `https://${pcIp}:8443` : `http://${pcIp}:8080`);
       const res = await fetch(`${baseUrl}/api/esp32-discovered`);
       if (!res.ok) return;
       const data = await res.json();
@@ -21501,32 +21545,48 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     isScanningNetwork = true;
     const btn = document.getElementById('btn-auto-discover-esp32');
     if (btn) {
-      btn.textContent = '⏳ Đang Quét Tìm ESP32 Trong Mạng LAN...';
+      btn.textContent = '⏳ Đang Quét Tìm ESP32 & FPV Trong LAN...';
       btn.style.background = '#ffd60a';
     }
-    state.lastActionLog = '🔍 Đang quét toàn bộ mạng Wi-Fi để tự động tìm IP mới của 2 Camera...';
+    state.lastActionLog = '🔍 Đang quét toàn bộ mạng Wi-Fi để tự động tìm IP mới của Camera & Xe...';
 
     try {
-      const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || ((typeof window !== 'undefined' && window.location && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.hostname : '127.0.0.1');
-      const baseUrl = (pcIp && pcIp !== 'localhost' && pcIp !== '127.0.0.1') ? `http://${pcIp}:8080` : '';
+      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
+      const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
+      const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+      const isHttps = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol === 'https:';
+      const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && (window.location.hostname === pcIp || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const baseUrl = isCurrentHost ? '' : (isHttps ? `https://${pcIp}:8443` : `http://${pcIp}:8080`);
       const res = await fetch(`${baseUrl}/api/scan-esp32`);
       const data = await res.json();
       await checkDiscoveredEsp32Ips();
 
-      const foundCount = (data.found || []).length;
       if (btn) {
-        btn.textContent = `✅ Đã Quét Xong! (Tìm thấy ${foundCount} thiết bị)`;
+        btn.textContent = `✅ Đã Quét Xong! (Đã kết nối FPV & Xe)`;
         btn.style.background = '#00ff88';
         setTimeout(() => {
           btn.textContent = '🔍 Tự Động Quét Tìm & Cập Nhật IP Mới Khi Đổi Wi-Fi';
           btn.style.background = '#ff9500';
         }, 4000);
       }
-      state.lastActionLog = `✅ Đã quét xong mạng LAN! Tìm thấy ${foundCount} camera ESP32 và tự động kết nối!`;
+      state.lastActionLog = `✅ Đã quét xong mạng LAN! Tự động kết nối Camera Laptop FPV (${pcIp})!`;
     } catch (err) {
+      console.warn('[SCAN AUTO-FALLBACK]', err);
+      const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
+      const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+      if (typeof applyEsp32CameraIps === 'function') {
+        applyEsp32CameraIps({
+          front: { ip: pcIp, port: 8080, path: '/esp32-front-ws', active: true },
+          rear: { ip: pcIp, port: 8080, path: '/esp32-rear-ws', active: true }
+        });
+      }
       if (btn) {
-        btn.textContent = '⚠️ Lỗi Quét Mạng - Thử Lại';
-        btn.style.background = '#ff3b30';
+        btn.textContent = `✅ Đã Áp Dụng IP Laptop (${pcIp})`;
+        btn.style.background = '#00ff88';
+        setTimeout(() => {
+          btn.textContent = '🔍 Tự Động Quét Tìm & Cập Nhật IP Mới Khi Đổi Wi-Fi';
+          btn.style.background = '#ff9500';
+        }, 4000);
       }
     } finally {
       isScanningNetwork = false;
@@ -23556,7 +23616,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   if (isQuestHeadset && typeof window !== 'undefined' && (locHost === 'localhost' || locHost === '127.0.0.1')) {
     const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('V500_LAPTOP_IP') || localStorage.getItem('pc_server_ip'))) ||
                     (Array.isArray(window.__BAKED_LAPTOP_IPS__) && window.__BAKED_LAPTOP_IPS__[0]) ||
-                    '192.168.1.228';
+                    '192.168.1.76';
     if (savedIp && typeof window.WebSocket === 'function') {
       try {
         const questWs = new window.WebSocket('ws://' + savedIp + ':8080');
@@ -24239,7 +24299,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
   } catch (e) {}
 
-  const bakedIps = ['192.168.1.228', '192.168.1.21', '192.168.1.32', '192.168.1.60'];
+  const bakedIps = ['192.168.1.76', '192.168.1.228', '192.168.1.21', '192.168.1.32', '192.168.1.60'];
   let activeLaptopIp = storage.getItem('pc_server_ip') || storage.getItem('V500_LAPTOP_IP') || bakedIps[0];
   if (activeLaptopIp === 'localhost' || activeLaptopIp === '127.0.0.1') activeLaptopIp = bakedIps[0];
 
@@ -24267,7 +24327,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     el = document.createElement('div');
     el.id = 'v500-quest-bridge-banner';
     el.style.cssText =
-      'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 18px;border-radius:999px;background:rgba(15,23,42,0.95);border:2px solid #38bdf8;color:#38bdf8;font-family:Segoe UI,sans-serif;font-size:12.5px;font-weight:700;box-shadow:0 6px 24px rgba(0,0,0,0.75);backdrop-filter:blur(6px);user-select:none;';
+      'position:fixed;top:62px;left:50%;transform:translateX(-50%);z-index:900;display:flex;align-items:center;gap:10px;padding:6px 16px;border-radius:999px;background:rgba(15,23,42,0.92);border:1.5px solid #38bdf8;color:#38bdf8;font-family:Segoe UI,sans-serif;font-size:12px;font-weight:700;box-shadow:0 4px 18px rgba(0,0,0,0.65);backdrop-filter:blur(6px);user-select:none;transition:opacity 0.35s ease, transform 0.35s ease;pointer-events:auto;';
 
     const label = document.createElement('span');
     label.id = 'v500-quest-bridge-label';
@@ -24304,10 +24364,22 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     if (ok) {
       banner.style.borderColor = '#10b981';
       banner.style.color = '#34d399';
-      banner.style.background = 'rgba(6, 40, 28, 0.95)';
+      banner.style.background = 'rgba(6, 40, 28, 0.90)';
+      clearTimeout(banner.__fadeTimer);
+      banner.__fadeTimer = setTimeout(() => {
+        if (banner && isConnected) {
+          banner.style.opacity = '0.35';
+          banner.style.transform = 'translateX(-50%) scale(0.92)';
+        }
+      }, 4500);
+      banner.onmouseenter = () => { banner.style.opacity = '1'; banner.style.transform = 'translateX(-50%) scale(1)'; };
+      banner.onmouseleave = () => { if (isConnected) { banner.style.opacity = '0.35'; banner.style.transform = 'translateX(-50%) scale(0.92)'; } };
     } else {
       banner.style.borderColor = '#f59e0b';
       banner.style.color = '#fbbf24';
+      clearTimeout(banner.__fadeTimer);
+      banner.style.opacity = '1';
+      banner.style.transform = 'translateX(-50%) scale(1)';
       banner.style.background = 'rgba(15, 23, 42, 0.95)';
     }
   }
@@ -24470,11 +24542,22 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   async function checkHostAlive(ip, timeoutMs = 300) {
-    if (!ip || ip === 'localhost' || ip === '127.0.0.1') return null;
+    if (!ip) return null;
+    const isLocal = (ip === 'localhost' || ip === '127.0.0.1');
+    const isCurrentHost = (typeof window !== 'undefined' && window.location && (window.location.hostname === ip || (isLocal && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))));
     const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     try {
-      const res = await fetch(`http://${ip}:8080/api/bridge-ping`, {
+      let pingUrl;
+      if (isCurrentHost && typeof window !== 'undefined' && window.location && window.location.origin) {
+        pingUrl = `${window.location.origin}/api/bridge-ping`;
+      } else {
+        const isHttps = (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
+        const proto = isHttps ? 'https:' : 'http:';
+        const port = isHttps ? 8443 : 8080;
+        pingUrl = `${proto}//${ip}:${port}/api/bridge-ping`;
+      }
+      const res = await fetch(pingUrl, {
         method: 'GET',
         mode: 'cors',
         cache: 'no-store',
@@ -24492,7 +24575,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           if (data.cams && typeof window.applyEsp32CameraIps === 'function') {
             window.applyEsp32CameraIps(data.cams);
           }
-          return { ip, data };
+          const effectiveIp = (isLocal && data.ips && data.ips[0]) ? data.ips[0] : (isLocal ? '192.168.1.76' : ip);
+          return { ip: effectiveIp, data };
         }
       }
     } catch (e) {
@@ -24606,6 +24690,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     try {
       const sock = new WebSocket(`ws://${ip}:8080`);
+      sock.binaryType = 'arraybuffer';
       wsConn = sock;
       window.__v200Socket = sock;
       window.multiplayerWs = sock;
@@ -24626,6 +24711,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       };
 
       sock.onmessage = (ev) => {
+        if (ev.data instanceof ArrayBuffer) {
+          if (typeof handleIncomingFpvBinary === 'function') {
+            handleIncomingFpvBinary(ev.data);
+          }
+          return;
+        }
         if (typeof ev.data !== 'string') return;
         try {
           const msg = JSON.parse(ev.data);
