@@ -63,6 +63,8 @@ app.use((req, res, next) => {
     reqPath.includes('package-lock.json') ||
     reqPath.includes('.git') ||
     reqPath.includes('.agent') ||
+    reqPath.startsWith('/config') ||
+    reqPath.startsWith('/firmware') ||
     reqPath.startsWith('/tools') ||
     reqPath.startsWith('/esp32') ||
     reqPath.startsWith('/node_modules');
@@ -72,7 +74,60 @@ app.use((req, res, next) => {
   }
   next();
 });
-const wwwPath = fs.existsSync(path.resolve(__dirname, '../www')) ? path.resolve(__dirname, '../www') : __dirname;
+// Multi-Path Static File Server (Khắc phục triệt để lỗi Cannot GET /fpv-cam.html dù chạy từ root hay server/)
+const candidateStaticDirs = [
+  path.resolve(__dirname, 'www'),
+  path.resolve(__dirname, '../www'),
+  path.resolve(__dirname, 'server/public'),
+  path.resolve(__dirname, 'public'),
+  __dirname
+];
+for (const dir of candidateStaticDirs) {
+  if (fs.existsSync(dir)) {
+    app.use(express.static(dir));
+  }
+}
+
+// Tuyến đường chuyên dụng trả về trực tiếp trang FPV Camera Điện Thoại
+app.get('/fpv-cam.html', (req, res) => {
+  const candidates = [
+    path.resolve(__dirname, 'www/fpv-cam.html'),
+    path.resolve(__dirname, '../www/fpv-cam.html'),
+    path.resolve(__dirname, 'server/public/fpv-cam.html'),
+    path.resolve(__dirname, 'fpv-cam.html')
+  ];
+  const file = candidates.find(f => fs.existsSync(f));
+  if (file) return res.sendFile(file);
+  res.status(404).send('fpv-cam.html not found');
+});
+
+// Tuyến đường chuyên dụng trả về trang WebXR chính
+app.get('/', (req, res) => {
+  const candidates = [
+    path.resolve(__dirname, 'www/index.html'),
+    path.resolve(__dirname, '../www/index.html'),
+    path.resolve(__dirname, 'server/public/index.html'),
+    path.resolve(__dirname, 'index.html')
+  ];
+  const file = candidates.find(f => fs.existsSync(f));
+  if (file) return res.sendFile(file);
+  res.status(404).send('index.html not found');
+});
+
+// Trạng thái vô lăng GOG R808 toàn cục
+if (!globalThis.latestBridgeState) {
+  globalThis.latestBridgeState = {
+    connected: false,
+    steerNorm: 0,
+    gasNorm: 0,
+    brakeNorm: 0,
+    driveNorm: 0,
+    gear: 'D',
+    seq: 0,
+    timestamp: 0
+  };
+}
+const latestBridgeState = globalThis.latestBridgeState;
 
 // [PATCH V400] API PING CHO KÍNH META QUEST 3 TỰ ĐỘNG DÒ TÌM LAPTOP QUA WI-FI
 app.get('/api/bridge-ping', (req, res) => {
@@ -94,13 +149,6 @@ app.get('/api/bridge-ping', (req, res) => {
     timestamp: Date.now()
   });
 });
-
-app.use(express.static(wwwPath));
-app.use(express.static(__dirname));
-const v2Www = path.resolve(__dirname, 'v2/golden_baseline_v2_20261020/www');
-if (fs.existsSync(v2Www)) {
-  app.use(express.static(v2Www));
-}
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
@@ -468,6 +516,36 @@ const discoveredEsp32Cams = {
   rear: { ip: null, port: 4213, lastSeen: 0 }
 };
 
+const emulatedFrontCamSockets = new Set();
+const emulatedRearCamSockets = new Set();
+
+function getEffectiveCamEndpoints() {
+  const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.76';
+  const now = Date.now();
+  const frontHw = discoveredEsp32Cams.front && discoveredEsp32Cams.front.ip && (now - (discoveredEsp32Cams.front.lastSeen || 0) < 20000);
+  const rearHw = discoveredEsp32Cams.rear && discoveredEsp32Cams.rear.ip && (now - (discoveredEsp32Cams.rear.lastSeen || 0) < 20000);
+
+  const front = frontHw ? discoveredEsp32Cams.front : {
+    ip: lanIp,
+    port: 8080,
+    path: '/esp32-front-ws',
+    active: true,
+    lastSeen: now,
+    isEmulatedPhone: true
+  };
+
+  const rear = rearHw ? discoveredEsp32Cams.rear : {
+    ip: lanIp,
+    port: 8080,
+    path: '/esp32-rear-ws',
+    active: true,
+    lastSeen: now,
+    isEmulatedPhone: true
+  };
+
+  return { front, rear };
+}
+
 let lastUdpCommandLog = '';
 // Cấu hình mạch điều khiển xe RC thật (ESP32 Car Controller - GPIO 12/13 qua UDP 4210)
 const esp32CarConfig = {
@@ -629,16 +707,17 @@ app.all('/api/set-esp32-car-ip', (req, res) => {
 // Endpoint cho Web Client hỏi danh sách IP Camera & Mạch Lái Xe vừa phát hiện
 app.get('/api/esp32-discovered', (req, res) => {
   const now = Date.now();
+  const effective = getEffectiveCamEndpoints();
   res.json({
     front: {
-      ...discoveredEsp32Cams.front,
-      active: (now - (discoveredEsp32Cams.front.lastSeen || 0)) < 20000,
-      ageSec: Math.round((now - (discoveredEsp32Cams.front.lastSeen || 0)) / 1000)
+      ...effective.front,
+      active: true,
+      ageSec: 0
     },
     rear: {
-      ...discoveredEsp32Cams.rear,
-      active: (now - (discoveredEsp32Cams.rear.lastSeen || 0)) < 20000,
-      ageSec: Math.round((now - (discoveredEsp32Cams.rear.lastSeen || 0)) / 1000)
+      ...effective.rear,
+      active: true,
+      ageSec: 0
     },
     car: {
       ...esp32CarConfig,
@@ -704,9 +783,9 @@ app.get('/api/scan-esp32', async (req, res) => {
   } catch (err) {
     console.error('[SCAN ESP32 ERROR]', err);
   }
+  const effective = getEffectiveCamEndpoints();
   if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
-  if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
-  res.json({ found: results, discovered: discoveredEsp32Cams });
+  res.json({ found: results, discovered: effective, cams: effective });
 });
 
 // Proxy truyền tải luồng video MP4 về thẻ <video> trong xe không bị lỗi CORS (SSRF Protected)
@@ -797,15 +876,16 @@ let activeDriverLastActiveTime = 0;
 
 function broadcastCameraIpUpdate() {
   if (typeof activeMultiplayerSockets === 'undefined' || !activeMultiplayerSockets) return;
+  const effective = getEffectiveCamEndpoints();
   const camPacket = JSON.stringify({
     type: 'CAM_IP_UPDATED',
     cams: {
-      front: discoveredEsp32Cams.front,
-      rear: discoveredEsp32Cams.rear
+      front: effective.front,
+      rear: effective.rear
     },
     car: esp32CarConfig,
-    front: discoveredEsp32Cams.front,
-    rear: discoveredEsp32Cams.rear
+    front: effective.front,
+    rear: effective.rear
   });
   for (const client of activeMultiplayerSockets) {
     if (client.readyState === 1) { // WebSocket.OPEN
@@ -814,17 +894,40 @@ function broadcastCameraIpUpdate() {
   }
 }
 
+function getPublicPlayers() {
+  const list = [];
+  for (const p of players.values()) {
+    if (!p) continue;
+    list.push({
+      playerId: p.playerId,
+      clientIp: p.clientIp,
+      isQuestVR: Boolean(p.isQuestVR),
+      isMobileDevice: Boolean(p.isMobileDevice),
+      isLocalhostAdmin: Boolean(p.isLocalhostAdmin),
+      name: p.name || 'Người chơi',
+      ownCarId: p.ownCarId || 'car_host',
+      seatIndex: p.seatIndex ?? 0,
+      isHost: Boolean(p.isHost)
+    });
+  }
+  return list;
+}
+
 function broadcastWorldState() {
   if (activeMultiplayerSockets.size === 0) return;
-  const payload = JSON.stringify({
-    type: 'WORLD_STATE',
-    cars: compressCarsState(),
-    players: Array.from(players.values())
-  });
-  for (const client of activeMultiplayerSockets) {
-    if (client.readyState === WebSocket.OPEN) {
-      try { client.send(payload); } catch (e) {}
+  try {
+    const payload = JSON.stringify({
+      type: 'WORLD_STATE',
+      cars: compressCarsState(),
+      players: getPublicPlayers()
+    });
+    for (const client of activeMultiplayerSockets) {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        try { client.send(payload); } catch (e) {}
+      }
     }
+  } catch (err) {
+    console.error('⚠️ [BROADCAST ERROR - RECOVERED]', err.message);
   }
 }
 
@@ -893,18 +996,32 @@ function attachMultiplayerServer(serverInstance) {
   }
 
   wss.on('connection', (ws, req) => {
-    activeMultiplayerSockets.add(ws);
     const reqUrl = (req && req.url) || '';
     if (reqUrl.includes('/esp32-front-ws')) {
-      const front = discoveredEsp32Cams.front;
-      const targetIp = front.ip || '192.168.1.237';
-      return proxyEsp32WebSocket(ws, targetIp, front.port || 4213, 'Front Cam');
+      const now = Date.now();
+      const isPhysicalFrontAlive = discoveredEsp32Cams.front && discoveredEsp32Cams.front.ip && (now - (discoveredEsp32Cams.front.lastSeen || 0) < 15000);
+      if (isPhysicalFrontAlive) {
+        return proxyEsp32WebSocket(ws, discoveredEsp32Cams.front.ip, discoveredEsp32Cams.front.port || 4213, 'Front Cam');
+      }
+      emulatedFrontCamSockets.add(ws);
+      console.log('🪟 [EMULATOR] Kính VR APK đã kết nối vào luồng Kính Chắn Gió (/esp32-front-ws)');
+      ws.on('close', () => { emulatedFrontCamSockets.delete(ws); });
+      ws.on('error', () => { emulatedFrontCamSockets.delete(ws); });
+      return;
     }
     if (reqUrl.includes('/esp32-rear-ws')) {
-      const rear = discoveredEsp32Cams.rear;
-      const targetIp = rear.ip || '192.168.1.239';
-      return proxyEsp32WebSocket(ws, targetIp, rear.port || 4213, 'Rear Cam');
+      const now = Date.now();
+      const isPhysicalRearAlive = discoveredEsp32Cams.rear && discoveredEsp32Cams.rear.ip && (now - (discoveredEsp32Cams.rear.lastSeen || 0) < 15000);
+      if (isPhysicalRearAlive) {
+        return proxyEsp32WebSocket(ws, discoveredEsp32Cams.rear.ip, discoveredEsp32Cams.rear.port || 4213, 'Rear Cam');
+      }
+      emulatedRearCamSockets.add(ws);
+      console.log('🔙 [EMULATOR] Kính VR APK đã kết nối vào luồng Kính Hậu (/esp32-rear-ws)');
+      ws.on('close', () => { emulatedRearCamSockets.delete(ws); });
+      ws.on('error', () => { emulatedRearCamSockets.delete(ws); });
+      return;
     }
+    activeMultiplayerSockets.add(ws);
 
     const ua = (req && req.headers && req.headers['user-agent']) || '';
     // Chặn các kết nối từ ESP32, Arduino, curl, router probe không phải trình duyệt người chơi thật
@@ -999,7 +1116,7 @@ function attachMultiplayerServer(serverInstance) {
         ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
         port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
       },
-      cams: {
+      cams: typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
         front: discoveredEsp32Cams.front,
         rear: discoveredEsp32Cams.rear
       }
@@ -1008,7 +1125,7 @@ function attachMultiplayerServer(serverInstance) {
       try {
         ws.send(JSON.stringify({
           type: 'CAM_IP_UPDATED',
-          cams: {
+          cams: typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
             front: discoveredEsp32Cams.front,
             rear: discoveredEsp32Cams.rear
           },
@@ -1037,16 +1154,56 @@ function attachMultiplayerServer(serverInstance) {
     broadcastWorldState();
 
     ws.on('message', (msg, isBinary) => {
-      if (isBinary || (msg instanceof Buffer && msg[0] === 0xff && msg[1] === 0xd8)) {
+      const isBuf = Buffer.isBuffer(msg) || (msg instanceof Uint8Array);
+      const isRcf = isBuf && msg.length >= 8 && msg[0] === 0x52 && msg[1] === 0x43 && msg[2] === 0x46; // 'RCF'
+      const isRawJpeg = isBuf && msg.length >= 4 && msg[0] === 0xff && msg[1] === 0xd8;
+
+      if (isRcf) {
+        const isRear = msg[3] === 0x02;
+        const rawJpeg = msg.subarray(4);
+        const targetCamSet = isRear ? emulatedRearCamSockets : emulatedFrontCamSockets;
+        for (const camWs of targetCamSet) {
+          if (camWs.readyState === 1 && camWs.bufferedAmount < 128 * 1024) {
+            try { camWs.send(rawJpeg, { binary: true }); } catch (e) {}
+          }
+        }
         for (const client of activeMultiplayerSockets) {
-          if (client !== ws && client.readyState === WebSocket.OPEN && client.bufferedAmount < 512 * 1024) {
+          if (client !== ws && client.readyState === 1 && client.bufferedAmount < 192 * 1024) {
             try { client.send(msg, { binary: true }); } catch (e) {}
           }
         }
         return;
       }
+
+      if (isBinary || isRawJpeg) {
+        for (const camWs of emulatedFrontCamSockets) {
+          if (camWs.readyState === 1 && camWs.bufferedAmount < 128 * 1024) {
+            try { camWs.send(msg, { binary: true }); } catch (e) {}
+          }
+        }
+        for (const client of activeMultiplayerSockets) {
+          if (client !== ws && client.readyState === 1 && client.bufferedAmount < 192 * 1024) {
+            try { client.send(msg, { binary: true }); } catch (e) {}
+          }
+        }
+        return;
+      }
+
       try {
         const data = JSON.parse(msg.toString());
+        if (data.type === 'FPV_PHONE_PUBLISHER_INIT') {
+          console.log('📱 [FPV PHONE] Điện thoại FPV đã kết nối phát hình (' + (data.surface || 'front') + ', mode: ' + (data.mode || 'SINGLE_PHONE_AUTO_DR') + ')');
+          try {
+            ws.send(JSON.stringify({
+              type: 'FPV_PHONE_PUBLISHER_ACK',
+              ok: true,
+              role: data.surface || 'front'
+            }));
+          } catch (e) {}
+          if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+          return;
+        }
+
         const p = players.get(playerId);
         if (!p) return;
 
@@ -1078,7 +1235,7 @@ function attachMultiplayerServer(serverInstance) {
             timestamp: Date.now()
           });
           for (const client of activeMultiplayerSockets) {
-            if (client !== ws && client.readyState === WebSocket.OPEN && client.bufferedAmount < 512 * 1024) {
+            if (client !== ws && client.readyState === WebSocket.OPEN && client.bufferedAmount < 192 * 1024) {
               try { client.send(latestEsp32CamFramePacket); } catch (e) {}
             }
           }
@@ -1456,6 +1613,65 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`[HTTP] Server đang chạy tại: http://localhost:${HTTP_PORT}`);
 });
 
+
+function loadEnvConfig() {
+  const envPaths = [
+    path.resolve(__dirname, 'config/.env'),
+    path.resolve(__dirname, '../config/.env'),
+    path.resolve(__dirname, '.env')
+  ];
+  for (const envPath of envPaths) {
+    if (fs.existsSync(envPath)) {
+      try {
+        const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx !== -1) {
+            const key = trimmed.slice(0, eqIdx).trim();
+            const val = trimmed.slice(eqIdx + 1).trim();
+            if (!process.env[key]) {
+              process.env[key] = val;
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  }
+}
+
+function setupFpvPhoneAndDuckDnsManager() {
+  loadEnvConfig();
+  const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.76';
+  const rawDomain = process.env.DUCKDNS_DOMAIN || 'vr-cam-fpv';
+  const token = process.env.DUCKDNS_TOKEN;
+  const domain = rawDomain.replace(/\.duckdns\.org/g, '');
+  const primarySubdomain = domain.split(',')[0].trim();
+  const fullDomain = `${primarySubdomain}.duckdns.org`;
+
+  if (domain && token) {
+    // [NAT LOOPBACK GUARD] Luôn truyền đích danh &ip=${lanIp} để DuckDNS trỏ thẳng về IP Laptop trong mạng Wi-Fi
+    // Tránh bị Router nhà mạng chặn gói tin (NAT Hairpinning / CGNAT) gây hiện tượng "Máy chủ không phản hồi"
+    const updateUrl = `https://www.duckdns.org/update?domains=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&ip=${encodeURIComponent(lanIp)}`;
+    https.get(updateUrl, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (data.trim() === 'OK') {
+          console.log(`🦆 [DuckDNS] Tự động ánh xạ ${domain}.duckdns.org -> ${lanIp}: THÀNH CÔNG (OK)`);
+        } else {
+          console.log(`🦆 [DuckDNS] Cập nhật ${domain}.duckdns.org: ${data.trim()}`);
+        }
+      });
+    }).on('error', (err) => {
+      console.warn(`🦆 [DuckDNS] Không thể kết nối cập nhật DuckDNS: ${err.message}`);
+    });
+  }
+
+  return { domain, fullDomain, lanIp };
+}
+
 const certPath = fs.existsSync(path.resolve(__dirname, 'tools/cert.pem')) ? path.resolve(__dirname, 'tools/cert.pem') : path.resolve(__dirname, '../tools/cert.pem');
 const keyPath = fs.existsSync(path.resolve(__dirname, 'tools/key.pem')) ? path.resolve(__dirname, 'tools/key.pem') : path.resolve(__dirname, '../tools/key.pem');
 if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
@@ -1473,16 +1689,36 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
   attachMultiplayerServer(httpsServer);
   httpsServer.listen(8443, '0.0.0.0', () => {
     const lan = getLocalLanIp();
+    const { fullDomain } = (typeof setupFpvPhoneAndDuckDnsManager === 'function')
+      ? setupFpvPhoneAndDuckDnsManager()
+      : { fullDomain: 'vr-cam-fpv.duckdns.org' };
+
     console.log(`[HTTPS WebXR 360] Mở trên Meta Quest Browser (như dmnshd.gg) tại: https://localhost:8443`);
     console.log(`[HTTPS LAN] https://${lan}:8443`);
+    console.log(`[HTTPS DuckDNS] https://${fullDomain}:8443`);
+
     try {
       const qrcode = require('qrcode-terminal');
-      console.log('\n==========================================================');
-      console.log('📱 QUÉT MÃ QR DƯỚI ĐÂY BẰNG CAMERA ĐIỆN THOẠI (9:16):');
-      console.log(`URL: https://${lan}:8443/?mode=passenger_mobile`);
-      console.log('==========================================================');
-      qrcode.generate(`https://${lan}:8443/?mode=passenger_mobile`, { small: true });
-      console.log('==========================================================\n');
+      const fpvDuckUrl = `https://${fullDomain}:8443/fpv-cam.html`;
+      const fpvLanUrl = `http://${lan}:8080/fpv-cam.html`;
+      const passengerDuckUrl = `https://${fullDomain}:8443/?mode=passenger_mobile`;
+      const passengerLanUrl = `http://${lan}:8080/?mode=passenger_mobile`;
+
+      console.log('\n======================================================================');
+      console.log('📷 [MÃ QR 1] ĐIỆN THOẠI LÀM CAMERA FPV (THAY THẾ 2 MẠCH ESP32-CAM):');
+      console.log('👉 Quét bằng iPhone/Android kẹp trên xe để phát Camera Kính Lái & Kính Hậu');
+      console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${fpvDuckUrl}`);
+      console.log('======================================================================');
+      qrcode.generate(fpvDuckUrl, { small: true });
+      console.log(`ℹ️ Link Camera FPV dự phòng Wi-Fi LAN: ${fpvLanUrl}`);
+
+      console.log('\n======================================================================');
+      console.log('📱 [MÃ QR 2] ĐIỆN THOẠI HÀNH KHÁCH / GHẾ PHỤ (XEM 3D & ĐIỀU KHIỂN YOUTUBE):');
+      console.log('👉 Quét bằng điện thoại để ngồi ghế sau xe Rolls-Royce nghe nhạc & xem phim');
+      console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${passengerDuckUrl}`);
+      console.log('======================================================================');
+      qrcode.generate(passengerDuckUrl, { small: true });
+      console.log(`ℹ️ Link Ghế Phụ dự phòng Wi-Fi LAN (HTTP 0 Cảnh Báo): ${passengerLanUrl}\n`);
     } catch (e) {}
   });
 }
@@ -2239,6 +2475,19 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       return;
     }
 
+    // Tự động báo Điện Thoại FPV đổi mặt camera khi vào số lùi (R) hoặc tiến (D)
+    const currentGearStr = String(gear || 'D').toUpperCase();
+    const desiredSurface = currentGearStr === 'R' ? 'rear' : 'front';
+    if (globalThis.__lastFpvSurface !== desiredSurface) {
+      globalThis.__lastFpvSurface = desiredSurface;
+      const switchPkt = JSON.stringify({ type: 'FPV_SWITCH_CAMERA', surface: desiredSurface });
+      for (const client of activeMultiplayerSockets) {
+        if (client.readyState === 1) {
+          try { client.send(switchPkt); } catch (e) {}
+        }
+      }
+    }
+
     // Góc lái chuẩn: 45° (phải) .. 90° (thẳng) .. 135° (trái)
     const steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
     const targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, gear);
@@ -2313,16 +2562,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     return list.length ? list : ['127.0.0.1'];
   }
 
-  const latestBridgeState = {
-    connected: false,
-    steerNorm: 0,
-    gasNorm: 0,
-    brakeNorm: 0,
-    driveNorm: 0,
-    gear: 'D',
-    seq: 0,
-    timestamp: 0
-  };
+  const latestBridgeState = globalThis.latestBridgeState;
 
   // Endpoint nhẹ cho phép kính VR khám phá IP LAN một lần khi khởi động
   if (!http.Server.prototype.__unifiedBridgePingBound) {
@@ -2354,7 +2594,11 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     if (!wssInstance || wssInstance.__unifiedInputBound) return;
     wssInstance.__unifiedInputBound = true;
 
-    wssInstance.on('connection', (ws) => {
+    wssInstance.on('connection', (ws, req) => {
+      const reqUrl = (req && req.url) || '';
+      if (reqUrl.includes('/esp32-front-ws') || reqUrl.includes('/esp32-rear-ws')) {
+        return;
+      }
       if (ws.readyState === WebSocket.OPEN) {
         if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
         activeMultiplayerSockets.add(ws);

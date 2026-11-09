@@ -1,71 +1,64 @@
 # AGENTS.md — Meta Quest 3 Immersive WebXR Engineering Rules
 
 ## 1. Mục tiêu & Source of Truth
-- **Mục tiêu chính**: Trải nghiệm WebXR 6DoF mượt mà (72Hz/90Hz) trên **Meta Quest Browser**, có chế độ dự phòng 3D/2D cho PC và Mobile (9:16).
+- **Mục tiêu**: WebXR 6DoF mượt 72Hz/90Hz trên **Meta Quest Browser**; dự phòng 3D/2D PC/Mobile.
 - **Source of Truth**:
-  - `index.html`: Giao diện HTML/CSS, import map Three.js và các nút điều khiển nhanh.
-  - `app.js`: Scene Three.js, WebXR session, Controller/Hand tracking, vật lý xe, Gara Toàn & Spatial UI.
-  - `server.js`: Express HTTP/HTTPS, WebSocket Multiplayer, UDP Telemetry (cổng 4210) và Proxy.
-  - `youtube-dom-extractor.js`: Đồng bộ trình phát MP4/YouTube đa màn hình.
-  - `AndroidManifest.xml`: Cấu hình đóng gói Capacitor 2D panel (không tự biến thành native OpenXR nếu chỉ đổi manifest).
+  - `www/index.html`: UI/CSS, Three.js import map, nút điều khiển.
+  - `www/app.js`: Three.js scene, WebXR session, Controller/Hands, vật lý, Gara & Spatial UI.
+  - `server/server.js`: Express HTTP/HTTPS, WebSocket Multiplayer, UDP Telemetry (4210), Proxy.
+  - `www/youtube-dom-extractor.js`: Đồng bộ MP4/YouTube.
+  - `meta_quest_3/android/app/src/main/AndroidManifest.xml`: Capacitor 2D panel.
 
 ## 2. Quy tắc Bảo toàn & Sửa Code
-- **Cấm xóa tính năng đang chạy**: Giữ nguyên Multiplayer, ESP32 Cam Trước/Lùi, UDP Telemetry, Radar Minimap, Gara 3 siêu xe và hệ thống NPC.
-- **Ưu tiên bản vá nhỏ (Additive / Modular Patch)**: Không viết lại toàn bộ file lớn hoặc tự ý nâng cấp phiên bản Three.js không đồng bộ.
-- **Single Render Pipeline**: Chỉ dùng `renderer.setAnimationLoop()` kết hợp hook `scene.onBeforeRender`; không tạo thêm vòng lặp `requestAnimationFrame` gây xung đột tọa độ.
-- **Zero Per-Frame Allocation**: Không khởi tạo `new THREE.Vector3/Matrix4/Euler` hoặc tạo `CanvasTexture` mới liên tục trong mỗi frame.
-- **Chống lỗi Temporal Dead Zone (TDZ) & Độc lập khởi tạo**: Tuyệt đối không gọi các hàm tạo đối tượng hoặc truy cập cache khai báo ở cuối file từ các hàm spawn ở đầu file. Mọi component spawn sớm phải tự chủ vật liệu/geometry hoặc nằm sau khối định nghĩa tài nguyên.
-- **Bảo toàn Scene Graph Three.js**: Khi thiết lập `light.target`, phải dùng `new THREE.Object3D()` chuyên dụng thêm vào cùng container, không gán node con đang thuộc về group khác (`bayGroup.add(plinth)`) để tránh bị Three.js gỡ khỏi cha và sai lệch vị trí hiển thị.
+- **Bảo toàn**: Không xóa Multiplayer, ESP32 Cam Trước/Lùi, UDP 4210, Radar Minimap, Gara 3 xe, NPC.
+- **Ưu tiên bản vá nhỏ**: Additive/Modular patch, không viết lại file lớn hoặc nâng Three.js tùy tiện.
+- **Single Render Pipeline**: Chỉ dùng `renderer.setAnimationLoop()` + `scene.onBeforeRender`; cấm `requestAnimationFrame` phụ.
+- **Zero Per-Frame Allocation**: Không tạo `new THREE.Vector3/Matrix4/Euler` hay `CanvasTexture` trong render loop.
+- **Chống TDZ**: Không gọi hàm khởi tạo/cache ở cuối file từ các hàm spawn ở đầu file.
+- **Bảo toàn Scene Graph**: Khi set `light.target`, dùng `new THREE.Object3D()` riêng trong cùng container; cấm gán node thuộc group khác (`bayGroup.add(plinth)`).
 
-## 3. Quy tắc Bảo mật & Mạng
-- Mọi Proxy nhận URL từ client (`/api/esp32-proxy`, `/api/yt-stream-proxy`) bắt buộc qua bộ lọc chống SSRF (kiểm tra scheme, port, phân giải DNS, chặn `127.0.0.1`, `::1`, `169.254.169.254`).
-- Mọi dữ liệu WebSocket và UDP phải được ép kiểu và giới hạn biên (`clampFinite`), dọn dẹp entity khi disconnect để không nhân bản xe vô hạn.
+## 3. Bảo Mật & Mạng
+- **SSRF Guard**: Proxy `/api/esp32-proxy` và `/api/yt-stream-proxy` bắt buộc lọc DNS, scheme, port, chặn `127.0.0.1`, `::1`, `169.254.169.254`.
+- **WebSocket/UDP Validation**: Ép kiểu, giới hạn `clampFinite`, dọn entity khi disconnect để chống nhân bản xe.
 
-## 4. Progressive Disclosure Skills & Cổng Kiểm thử Tự động (Verification Gate)
-Chỉ đọc skill tương ứng khi thực hiện tác vụ chuyên biệt:
-- `.agents/skills/meta-quest-webxr/SKILL.md`: Khi sửa WebXR session, Controller, Hand Tracking, Spatial UI hoặc Comfort mode.
-- **Cổng Kiểm Định Bắt Buộc (Bắt lỗi trước khi F5)**: Sau MỌI thay đổi mã nguồn, BẮT BUỘC chạy `node tools/xr-doctor.js`. Lệnh này tự động kích hoạt kiểm tra tĩnh (`node --check`) và mô phỏng nạp runtime (`tools/test_runtime_load.js`). Nếu chưa đạt `[VERIFIED]` 100% ở mục Runtime Integrity thì TUYỆT ĐỐI KHÔNG BÁO HOÀN THÀNH hoặc yêu cầu user F5.
+## 4. Verification Gate Bắt Buộc
+- **Quy tắc**: Sau MỌI thay đổi mã nguồn, BẮT BUỘC chạy `node tools/xr-doctor.js` (`node --check` + `tools/test_runtime_load.js`). Phải đạt `[VERIFIED]` 100% Runtime Integrity trước khi báo hoàn thành hoặc yêu cầu user F5.
 
-## 5. Quy tắc Vô lăng GOG R808, Bàn đạp & Cân bằng Tâm Buồng lái (Chuẩn hóa V504)
-- **Native Host USB Wheel Bridge (Zero-Browser Dependency)**:
-  - Máy tính Windows host đọc trực tiếp thiết bị vô lăng DirectInput/WinMM (`winmm.dll`) qua tiến trình native `tools/gog808_native_bridge.exe` tại tần số 50Hz.
-  - Ngay khi khởi động `node server.js`, tiến trình ngầm tự động phát sóng tín hiệu đã chuẩn hóa qua WebSocket (port 8080 / 8443) và UDP 4210 (ESP32). Kính Meta Quest 3 và các thiết bị khác nhận tín hiệu lái độc lập mà **không cần mở trình duyệt localhost trên máy tính**.
-  - Server in log trạng thái điều khiển mượt mà: `🛞 [GOG808 50Hz MƯỢT] Lái: ... | Ga: ... | Phanh: ... | Số ... | Kính: ...`.
-- **Chống Phanh Ảo 100% (Anti-Phantom Brake)**:
-  - Trên kính Meta Quest 3 / Android WebView: Hàm `findGog808Gamepad` tuyệt đối không dùng cơ chế fallback nhận diện thiết bị ảo hoặc Touch Controller làm vô lăng USB nếu tên không chứa từ khóa phần cứng thật (`808|wheel|racing|steering|logitech|thrustmaster`).
-  - Bộ chuẩn hóa bàn đạp (`readPedalAxis`) bắt buộc bỏ qua frame 0 chưa ổn định của driver Windows và áp dụng deadzone an toàn 0.08, triệt tiêu hoàn toàn hiện tượng cấn phanh 100%.
-- **Tự động Cân Bằng Tâm Góc Nhìn (Auto Viewpoint Centering)**:
-  - BẮT BUỘC tự động kích hoạt `resetAndCenterViewpoint()` khi: Lên xe, Xuống xe, Đổi ghế lái/ghế phụ hoặc kết nối phòng.
-  - Trong WebXR, tự động bù trừ góc xoay vật lý của đầu trong phòng (`cameraRig.rotation.y = -headEuler.y`), căn thẳng hướng nhìn 100% xuyên qua kính chắn gió (-Z) khi ngồi vào ghế mà không bắt người dùng phải bấm nút cân bằng tâm thủ công.
-- **Đồng bộ Bảng Chức Năng (Function Panel Live Sync)**:
-  - Khi WebSocket nhận `WHEEL_BRIDGE_STATE`, hàm `syncWheelToFunctionPanel(w)` lập tức cập nhật toàn bộ thanh đo (`#pedal-gas-bar`, `#pedal-brake-bar`, `#pedal-reverse-bar`, `#wheel-steer-bar`), live monitor text và xung ESP32.
-  - IP mạng nội bộ mặc định là `192.168.1.60` (hoặc tự động cập nhật qua subnet discovery `/api/bridge-ping`).
-- **Triệt tiêu Echo Loop & Chống Nhảy Góc Lái Kính VR (Anti-Echo Loop & Angle Lock)**:
-  - Khi Kính Quest 3 nhận tín hiệu Remote Bridge từ Laptop (`window._racingWheel.isRemoteBridge === true`), Kính đóng vai trò hiển thị buồng lái VR và **TUYỆT ĐỐI KHÔNG gửi ngược gói `CAR_CONTROL` hoặc `WHEEL_BRIDGE_INPUT` về server**.
-  - Hàm `pollGamepadRacingWheel(dt)` trên kính bắt buộc kiểm tra `isRemoteBridge` và thoát sớm (`return`), tuyệt đối không để Touch Controller đè lên hoặc vô tình set `racingWheel.connected = false`.
-- **Đường cong ga lũy tiến Smooth Expo Curve (1.6) & Slew Rate Limiter (Anti-Jerk Throttle)**:
+## 5. Vô lăng GOG R808, Bàn đạp & Cân bằng Tâm (Chuẩn V504)
+- **Native Host Wheel Bridge**: Host đọc DirectInput qua `tools/gog808_native_bridge.exe` 50Hz, tự động phát WebSocket (8080/8443) & UDP 4210 khi start `server.js`.
+- **Anti-Phantom Brake**: `findGog808Gamepad` chỉ nhận tên chứa `808|wheel|racing|steering|logitech|thrustmaster`. `readPedalAxis` bỏ qua frame 0, deadzone an toàn 0.08.
+- **Auto Viewpoint Centering**: Tự động gọi `resetAndCenterViewpoint()` khi lên/xuống/đổi ghế/kết nối phòng. WebXR bù trừ `cameraRig.rotation.y = -headEuler.y` căn thẳng kính chắn gió (-Z).
+- **Function Panel Live Sync**: WS `WHEEL_BRIDGE_STATE` cập nhật ngay `#pedal-gas-bar`, `#pedal-brake-bar`, `#pedal-reverse-bar`, `#wheel-steer-bar`, live monitor và xung ESP32. Default IP: `192.168.1.60`.
+- **Anti-Echo Loop & Angle Lock**: Khi `isRemoteBridge === true`, Kính Quest đóng vai trò hiển thị VR, cấm gửi ngược `CAR_CONTROL`/`WHEEL_BRIDGE_INPUT`. `pollGamepadRacingWheel(dt)` return sớm nếu `isRemoteBridge`.
+- **Smooth Expo Curve (1.6) & Slew Rate Limiter**:
   - Deadzone: `|d| <= 0.02` (1500µs).
-  - Ga tiến: Ramping mượt mà từ `1518µs` (sát ngưỡng kích hoạt ESC 1515µs) theo lũy thừa `1518 + Math.pow(normD, 1.6) * 332` lên `1850µs`. Khi nhấn nhẹ 5-10%, xung ra chỉ `1519µs ~ 1524µs`, giúp xe bò từ từ cực êm, triệt tiêu hoàn toàn giật bắn.
-  - Ga lùi: Ramping mượt mà từ `1482µs` xuống `1100µs` theo lũy thừa 1.35 (chuẩn lùi v504).
-  - Bộ lọc Slew Rate Limiter tối đa 45µs/frame (~1800µs/giây) chống sốc dòng điện khi đạp thốc ga đột ngột.
-- **Thống nhất Kênh UDP 4210 & Khóa Trọng tài Phần cứng (Unified UDP Arbitration)**:
-  - Toàn bộ gói tin UDP 4210 gửi tới ESP32 Car Controller bắt buộc đi qua **duy nhất 1 hàm `sendRateLimitedEsp32Udp`** và 1 socket `udpOutSocket`.
-  - Hàm `sendUdpCarCommand` ủy thác toàn bộ cho `sendRateLimitedEsp32Udp`.
-  - Khi vô lăng host đang hoạt động (`rcArbitration.lastPhysicalWheelActiveAt` < 350ms), tự động khóa mọi lệnh điều khiển từ web/kính. ESP32 nhận đúng 1 gói tin 4-bytes chứa đồng thời `[steerDeg (45..135°), escPulseUs (1100..1850µs)]` trong cùng một frame, triệt tiêu 100% hiện tượng xung đột góc lái khiến xe chỉ chạy thẳng khi ga.
-- **Chuyển quyền Lái 2 Chiều: Vô lăng Host GOG808 ↔ Tay Cầm Kính VR (Seamless Dual-Mode Arbitration)**:
-  - Khi cắm USB GOG808 vào laptop: Vô lăng DirectInput chiếm quyền ưu tiên lái xe thật và xe ảo. Kính VR hiển thị buồng lái mượt mà, không gửi ngược tín hiệu để chống echo loop.
-  - Khi rút USB GOG808 (hoặc server chưa nhận vô lăng): Server lập tức phát `WHEEL_BRIDGE_STATE` có `connected: false` và mở khóa trọng tài (`lastPhysicalWheelActiveAt = 0`). Kính VR nhận diện `isRemoteBridgeActive() === false`, lập tức cho phép Tay Cầm Kính VR (Touch Controller - Thumbstick X/Y, Cò Trigger) lái và tăng tốc cả xe ảo lẫn xe RC ngoài đời thật qua cổng UDP 4210.
-  - Cắm/rút USB GOG808 tuyệt đối không làm mất kết nối hoặc reset IP mạch xe (`esp32CarConfig.ip`) và IP Camera.
-- **Khóa chống hủy kết nối Camera ESP32 (Anti-Thrash Camera Connection Lock)**:
-  - Hàm `connectEsp32Windshield(rawUrl)` và `connectRearEsp32Camera(rawUrl)` bắt buộc kiểm tra trạng thái socket: Nếu socket đang ở trạng thái `CONNECTING` hoặc `OPEN` với đúng URL đích, tuyệt đối không đóng socket và không tạo socket mới.
-  - Hàm `applyEsp32CameraIps` chỉ kích hoạt kết nối khi chưa có socket, socket đã đóng hoặc IP camera thực sự thay đổi.
-  - Polling dự phòng giãn cách tối thiểu 1500ms khi mất kết nối và tự động ngắt hoàn toàn khi WebSocket chính đã mở (`isConnected === true`), triệt tiêu 100% hiện tượng nhảy IP liên tục làm nghẽn mạng và rớt camera trên kính.
-- **Xác thực Tay Cầm Kính VR & Mở Khóa Điều Khiển Xe Thật (Zero-Wheel VR Driver Rule)**:
-  - Khi cắm USB GOG808 vào laptop: Vô lăng chiếm quyền lái phần cứng (`source: 'WINMM_USB'`).
-  - Khi rút USB GOG808 (hoặc vô lăng host không hoạt động): `canControlHardware` lập tức mở quyền điều khiển cho Kính Meta Quest 3 (`deviceType === 'META_QUEST'` hoặc `source === 'VR_CONTROLLER'`). Server điều hướng trực tiếp lệnh lái và ga từ Touch Controller xuống ESP32 UDP 4210 qua `sendRateLimitedEsp32Udp(..., 'QUEST_CAR_CONTROL')`, giúp xe thật ngoài đời bẻ lái và tăng tốc 100% đồng bộ với buồng lái VR.
-- **Quy tắc Kết nối Wi-Fi & Hotspot 4G (Zero-Flash Quick Connect Rule)**:
-  - **Phương án 1 (Không cần nạp lại code - Khuyên dùng 100%)**: Trên điện thoại, đặt tên Điểm phát sóng cá nhân (Hotspot) là `BETEA` và mật khẩu là `daihongbao`. Cả 3 mạch ESP32 (Xe, Cam Trước, Cam Sau), Laptop và Kính VR sẽ tự động kết nối ngay trong 5 giây mà không cần cắm dây nạp code.
-  - **Phương án 2 (Đa mạng Multi-SSID dự phòng)**: Mã nguồn đã tích hợp sẵn cơ chế tự động thử mạng chính `BETEA` và mạng dự phòng `Maximus` / `12345678`. Nếu có nạp lại code bằng Arduino IDE sau này, mạch tự nhận diện cả 2 mạng mà không lo bị kẹt.
+  - Tiến: `1518 + Math.pow(normD, 1.6) * 332` lên 1850µs (5-10% ra 1519-1524µs cực êm).
+  - Lùi: `1482µs` xuống `1100µs` (pow 1.35).
+  - Slew Limiter: tối đa 45µs/frame (~1800µs/s) chống sốc dòng.
+- **Unified UDP Arbitration**: Duy nhất qua `sendRateLimitedEsp32Udp` & `udpOutSocket`. Khi vô lăng host hoạt động (`lastPhysicalWheelActiveAt < 350ms`), khóa lệnh web/quest. ESP32 nhận 1 gói 4-byte `[steerDeg (45..135°), escPulseUs (1100..1850µs)]`.
+- **Dual-Mode Arbitration**: Cắm USB GOG808 -> host lái (`WINMM_USB`). Rút USB -> server phát `connected: false`, Quest 3 (`META_QUEST`/`VR_CONTROLLER`) lái xe thật qua `sendRateLimitedEsp32Udp`. Cắm/rút không làm mất IP xe/cam.
+- **Anti-Thrash Camera Lock**: `connectEsp32Windshield` & `connectRearEsp32Camera` kiểm tra `CONNECTING`/`OPEN` giữ nguyên kết nối; polling giãn cách >=1500ms khi mất kết nối, tự ngắt khi WS chính mở.
+- **Wi-Fi Hotspot**: Phương án 1 (Hotspot điện thoại): SSID `BETEA` / pass `daihongbao`. Phương án 2 (Dự phòng): `Maximus` / `12345678`.
 
+## 6. Quy Tắc Quản Trị Từng Node & Kỷ Luật Token (Node Governance & Token Discipline)
+- **Node Chuyên Biệt**: Mọi tập tin phải nằm đúng node được chỉ định:
+  - `www/`: Duy nhất chứa mã nguồn WebXR Client (`app.js`, `index.html`, `fpv-cam.html`, `models/`, `textures/`, `libs/`). CẤM nhân bản ra root.
+  - `server/`: Duy nhất chứa Backend server (`server.js`, `package.json`, tests).
+  - `config/`: Duy nhất chứa cấu hình nhạy cảm (`.env`, `wifi_credentials.h.example`). CẤM để lộ ở root.
+  - `meta_quest_3/`: Duy nhất chứa hệ sinh thái Quest 3 / Android (`android/`, `apk/`, `scripts/`, `simulator/`, `tools/`). CẤM tạo node build riêng rẽ ở root.
+  - `tools/`: Duy nhất chứa công cụ kiểm định và runtime (`xr-doctor.js`, `gog808 bridge`, certs). CẤM tạo file vá tạm thời (`apply_patch_*.js`, `patch_*.js`, `debug_*.txt`).
+  - `firmware/`: Duy nhất chứa toàn bộ mã nguồn ESP32 (`esp32_car_controller`, `esp32cam`, `esp32_rear_cam`, `esp32_raw_rgb565`, `esp32car`). CẤM để thư mục `esp32_*` rời rạc ở root.
+  - `models/`: Duy nhất chứa tệp nguồn Blender 3D `.blend`. CẤM lưu trữ `.glb` trùng lặp tại đây.
+  - `blender_scripts/`: Duy nhất chứa script Python tự động hóa Blender asset pipeline.
+  - `controller_godot/`: Duy nhất chứa trạm điều khiển FPV Godot Desktop.
+  - `docs/`: Duy nhất chứa tài liệu kỹ thuật, kiến trúc, hướng dẫn và báo cáo kiểm định.
+  - `backups/`: Chứa các bản sao lưu lịch sử, baseline và bản vá cũ. CẤM agent quét tự do gây hao token.
+- **Chống Đọc Toàn Bộ (Zero Unbounded Ingestion)**: Khi truy vấn hoặc sửa lỗi, agent chỉ được nạp file liên quan trực tiếp. CẤM đọc toàn bộ codebase hoặc quét các thư mục cache (`node_modules/`, `android/.gradle/`, `backups/`) gây hao phí token.
+- **Sửa Trực Tiếp (Canonical In-Place Patching)**: Mọi bản vá đã kiểm định phải được áp dụng trực tiếp vào Source of Truth, không tạo file script trung gian một lần rồi bỏ xó.
 
+## 7. Bảo Toàn Tính Năng Thay Thế Camera ESP32 Bằng Điện Thoại (Phone FPV Camera Invariant)
+- **Giao thức FPV Phone**: Server bắt buộc duy trì module `setupFpvPhoneAndDuckDnsManager` với giao thức `FPV_PHONE_PUBLISHER_INIT` và cơ chế Hot-swap điện thoại.
+- **Giao diện Camera Di Động**: File `www/fpv-cam.html` là cổng thu phát camera trực tiếp từ trình duyệt điện thoại (iOS Safari/Android Chrome) qua cổng HTTPS 8443 (Let's Encrypt / DuckDNS / Self-signed).
+- **Tự Động Chuyển Góc Cam Buồng Lái**: Khi xe vào số lùi (R) hoặc tiến (D), server và buồng lái tự động hoán đổi hình ảnh camera điện thoại giữa kính chắn gió trước và gương chiếu hậu mà không cần thao tác thủ công.
+- **Dự phòng Không Cần ESP32**: Người dùng hoàn toàn có thể dùng 1-2 chiếc điện thoại kẹp lên xe làm camera FPV trước/sau thay thế 100% cho module ESP32-CAM.
 
