@@ -1641,25 +1641,101 @@ function loadEnvConfig() {
   }
 }
 
+let cloudflareTunnelProcess = null;
+let cloudflareTunnelUrl = null;
+
+function startCloudflareTunnelManager(httpPort = 8080) {
+  if (cloudflareTunnelProcess) return;
+  const binaryCandidates = [
+    'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe',
+    'C:\\Program Files\\cloudflared\\cloudflared.exe',
+    'cloudflared'
+  ];
+  let binaryPath = binaryCandidates.find(p => fs.existsSync(p));
+  if (!binaryPath) {
+    try {
+      require('child_process').execSync('where cloudflared', { stdio: 'ignore' });
+      binaryPath = 'cloudflared';
+    } catch (e) {
+      return;
+    }
+  }
+
+  try {
+    const cp = require('child_process');
+    cloudflareTunnelProcess = cp.spawn(binaryPath, ['tunnel', '--url', `http://127.0.0.1:${httpPort}`, '--no-autoupdate'], {
+      windowsHide: true
+    });
+
+    let urlCaptured = false;
+    cloudflareTunnelProcess.stderr.on('data', (data) => {
+      if (urlCaptured) return;
+      const str = data.toString();
+      const match = str.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/i);
+      if (match) {
+        urlCaptured = true;
+        cloudflareTunnelUrl = match[0].trim();
+        printCloudflareTunnelQr(cloudflareTunnelUrl);
+      }
+    });
+
+    const cleanup = () => {
+      if (cloudflareTunnelProcess) {
+        try { cloudflareTunnelProcess.kill(); } catch (e) {}
+        cloudflareTunnelProcess = null;
+      }
+    };
+    process.on('exit', cleanup);
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+  } catch (err) {
+    console.warn(`[Cloudflare Tunnel] Không thể khởi động đường hầm: ${err.message}`);
+  }
+}
+
+function printCloudflareTunnelQr(tunnelUrl) {
+  try {
+    const qrcode = require('qrcode-terminal');
+    const fpvTunnelUrl = `${tunnelUrl}/fpv-cam.html`;
+    const passengerTunnelUrl = `${tunnelUrl}/?mode=passenger_mobile`;
+
+    console.log('\n======================================================================');
+    console.log('🌐 [MÃ QR 1B - TOÀN NĂNG XUYÊN WI-FI CÔNG CỘNG & 4G/5G] (CLOUDFLARE SSL XANH):');
+    console.log('👉 Quét bằng BẤT KỲ điện thoại nào (kể cả Wi-Fi quán cafe bật cô lập thiết bị AP Isolation)');
+    console.log('👉 100% Khóa Xanh SSL Quốc Tế - Tuyệt đối không cảnh báo riêng tư - Không cần cài đặt!');
+    console.log(`🔗 URL SSL Công Cộng (Cloudflare): ${fpvTunnelUrl}`);
+    console.log('======================================================================');
+    qrcode.generate(fpvTunnelUrl, { small: true });
+    console.log(`📱 Link Ghế Phụ công cộng (Xem 3D & YouTube): ${passengerTunnelUrl}\n`);
+  } catch (e) {}
+}
+
 function setupFpvPhoneAndDuckDnsManager() {
   loadEnvConfig();
-  const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.76';
+  let lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.76';
   const rawDomain = process.env.DUCKDNS_DOMAIN || 'vr-cam-fpv';
   const token = process.env.DUCKDNS_TOKEN;
   const domain = rawDomain.replace(/\.duckdns\.org/g, '');
   const primarySubdomain = domain.split(',')[0].trim();
   const fullDomain = `${primarySubdomain}.duckdns.org`;
 
-  if (domain && token) {
-    // [NAT LOOPBACK GUARD] Luôn truyền đích danh &ip=${lanIp} để DuckDNS trỏ thẳng về IP Laptop trong mạng Wi-Fi
-    // Tránh bị Router nhà mạng chặn gói tin (NAT Hairpinning / CGNAT) gây hiện tượng "Máy chủ không phản hồi"
-    const updateUrl = `https://www.duckdns.org/update?domains=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&ip=${encodeURIComponent(lanIp)}`;
+  function pushDuckDnsUpdate(targetIp, isDynamicChange = false) {
+    if (!domain || !token) return;
+    const updateUrl = `https://www.duckdns.org/update?domains=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&ip=${encodeURIComponent(targetIp)}`;
     https.get(updateUrl, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         if (data.trim() === 'OK') {
-          console.log(`🦆 [DuckDNS] Tự động ánh xạ ${domain}.duckdns.org -> ${lanIp}: THÀNH CÔNG (OK)`);
+          if (isDynamicChange) {
+            console.log(`\n======================================================================`);
+            console.log(`🔄 [MẠNG ĐÃ THAY ĐỔI] Phát hiện Wi-Fi mới! IP chuyển: ➔ ${targetIp}`);
+            console.log(`🦆 [DuckDNS] Đã tự động cập nhật ${fullDomain} -> ${targetIp}: THÀNH CÔNG (OK)!`);
+            console.log(`👉 Điện thoại khác chỉ cần quét mã QR là vào ngay IP mới!`);
+            console.log(`======================================================================\n`);
+          } else {
+            console.log(`🦆 [DuckDNS] Tự động ánh xạ ${domain}.duckdns.org -> ${targetIp}: THÀNH CÔNG (OK)`);
+          }
         } else {
           console.log(`🦆 [DuckDNS] Cập nhật ${domain}.duckdns.org: ${data.trim()}`);
         }
@@ -1667,6 +1743,23 @@ function setupFpvPhoneAndDuckDnsManager() {
     }).on('error', (err) => {
       console.warn(`🦆 [DuckDNS] Không thể kết nối cập nhật DuckDNS: ${err.message}`);
     });
+  }
+
+  // Cập nhật ngay khi khởi động
+  pushDuckDnsUpdate(lanIp, false);
+
+  // [DYNAMIC NETWORK WATCHER] Giám sát mạng động định kỳ 6 giây: Tự động đổi IP DuckDNS khi đổi Wi-Fi / Hotspot
+  if (!globalThis.__networkWatcherStarted) {
+    globalThis.__networkWatcherStarted = true;
+    let lastIp = lanIp;
+    setInterval(() => {
+      const currentIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : lastIp;
+      if (currentIp && currentIp !== 'localhost' && currentIp !== lastIp) {
+        lastIp = currentIp;
+        lanIp = currentIp;
+        pushDuckDnsUpdate(currentIp, true);
+      }
+    }, 6000);
   }
 
   return { domain, fullDomain, lanIp };
@@ -1705,15 +1798,11 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       const passengerLanUrl = `http://${lan}:8080/?mode=passenger_mobile`;
 
       console.log('\n======================================================================');
-      console.log('📷 [MÃ QR 1] ĐIỆN THOẠI LÀM CAMERA FPV (THAY THẾ 2 MẠCH ESP32-CAM):');
-      console.log('👉 Quét bằng iPhone/Android kẹp trên xe để phát Camera Kính Lái & Kính Hậu');
+      console.log('🏠 [MÃ QR 1A - NỘI BỘ WI-FI / HOTSPOT] CAMERA FPV (LET\'S ENCRYPT SSL XANH):');
+      console.log('👉 Quét bằng iPhone/Android kẹp trên xe khi dùng Wi-Fi cá nhân hoặc Hotspot');
       console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${fpvDuckUrl}`);
       console.log('======================================================================');
       qrcode.generate(fpvDuckUrl, { small: true });
-      console.log(`ℹ️ Link Camera FPV dự phòng LAN HTTPS: ${fpvLanUrl}`);
-      console.log(`💡 MẸO FIX TIMEOUT CHO MÁY KHÁC (do Apple iCloud Private Relay / DoH chặn tên miền nội bộ):`);
-      console.log(`   1. Trên iPhone máy kia: Vào Cài đặt -> Wi-Fi -> Bấm chữ (i) -> TẮT "Giới hạn theo dõi địa chỉ IP"`);
-      console.log(`   2. Hoặc mở trực tiếp link LAN: ${fpvLanUrl} (Bấm "Xem chứng nhận" -> "Tiếp tục truy cập")`);
 
       console.log('\n======================================================================');
       console.log('📱 [MÃ QR 2] ĐIỆN THOẠI HÀNH KHÁCH / GHẾ PHỤ (XEM 3D & ĐIỀU KHIỂN YOUTUBE):');
@@ -1722,6 +1811,11 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       console.log('======================================================================');
       qrcode.generate(passengerDuckUrl, { small: true });
       console.log(`ℹ️ Link Ghế Phụ dự phòng Wi-Fi LAN (HTTP 0 Cảnh Báo): ${passengerLanUrl}\n`);
+
+      // Tự động khởi động Cloudflare Quick Tunnel cho Wi-Fi công cộng (AP Isolation Bypass)
+      if (typeof startCloudflareTunnelManager === 'function') {
+        startCloudflareTunnelManager(HTTP_PORT || 8080);
+      }
     } catch (e) {}
   });
 }
