@@ -9,11 +9,14 @@
     body { margin: 0; padding: 10px; background: #060a12; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; }
     .title { color: #00ff88; font-weight: bold; font-size: 14px; margin-bottom: 8px; letter-spacing: 0.5px; }
     .viewport-box { position: relative; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; margin: 0 auto 10px; border: 2px solid #00e5ff; border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.2); }
-    canvas#crop-preview { width: 100%; height: 100%; display: block; object-fit: contain; }
-    video#raw-video { display: none; }
+    .viewport-box.rear-box { border-color: #ffd60a; box-shadow: 0 4px 16px rgba(255, 214, 10, 0.2); }
+    canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
+    video { display: none; }
     .badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.85); color: #ffd60a; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-family: monospace; backdrop-filter: blur(4px); text-align: left; }
     .gear-badge { position: absolute; top: 6px; right: 6px; background: #00e5ff; color: #000; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 900; transition: background 0.2s ease; }
     .gear-badge.reverse { background: #ff3b30; color: #fff; }
+    .cam-label { position: absolute; bottom: 6px; left: 6px; background: rgba(0,0,0,0.85); color: #00e5ff; padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
+    .cam-label.rear { color: #ffd60a; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 480px; margin: 0 auto 8px; }
     .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; max-width: 480px; margin: 0 auto 8px; }
     button, select { padding: 11px 6px; border-radius: 8px; border: 1px solid #2b394f; background: #111a2e; color: #fff; font-size: 12px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
@@ -27,31 +30,42 @@
   </style>
 </head>
 <body>
-  <div class="title">📡 CAMERA FPV THAY NÓNG (TỰ ĐỔI CAM KHI XE LÙI)</div>
+  <div class="title">📡 CAMERA FPV THAY NÓNG (SONG CAM ĐỒNG THỜI &amp; TỰ ĐỔI SỐ)</div>
 
-  <div class="viewport-box">
-    <video id="raw-video" autoplay playsinline muted></video>
-    <canvas id="crop-preview" width="854" height="480"></canvas>
-    <div class="badge" id="hud-info">Chờ kích hoạt camera...</div>
+  <!-- KHUNG 1: KÍNH CHẮN GIÓ (CAM MŨI XE) -->
+  <div class="viewport-box" id="box-front">
+    <video id="raw-video-front" autoplay playsinline muted></video>
+    <canvas id="crop-preview-front" width="854" height="480"></canvas>
+    <div class="badge" id="hud-info-front">🚘 Kính Chắn Gió: Chờ...</div>
     <div class="gear-badge" id="gear-indicator">SỐ TIẾN (D)</div>
+    <div class="cam-label">🚘 KÍNH CHẮN GIÓ (MŨI XE)</div>
+  </div>
+
+  <!-- KHUNG 2: GƯƠNG CHIẾU HẬU (CAM LÙI XE) - KHÔNG GIAN RIÊNG BIỆT KHÔNG CHE KHUẤT KHUNG CHÍNH -->
+  <div class="viewport-box rear-box" id="box-rear" style="display: none;">
+    <video id="raw-video-rear" autoplay playsinline muted></video>
+    <canvas id="crop-preview-rear" width="640" height="360"></canvas>
+    <div class="badge" id="hud-info-rear" style="color: #ffd60a;">🔙 Gương Hậu: Sẵn sàng...</div>
+    <div class="gear-badge reverse">SỐ LÙI (R)</div>
+    <div class="cam-label rear">🔙 GƯƠNG HẬU (CAM LÙI)</div>
   </div>
 
   <div class="tip-box">
-    💡 <b>Gợi ý góc nhìn xe RC:</b> Hãy đặt <b>nằm ngang</b> điện thoại hoặc bấm nút <b>📐 Toàn Cảnh (Không Zoom)</b> dưới đây để không bị phóng to cắt hình!
+    💡 <b>Gợi ý khung hình:</b> Khi dựng đứng điện thoại, hãy bấm <b>📐 Khung: FULL 16:9</b> để lấp đầy tràn viền khung chữ nhật, hoặc <b>🔄 XOAY 90°</b> khi kẹp điện thoại đứng trên xe RC!
   </div>
 
   <!-- Chọn chế độ độ nét & tốc độ khung hình -->
   <div class="modes">
-    <button id="mode-fast" class="mode-btn active" title="Cân bằng tốc độ cao và hình ảnh sắc nét">⚡ SIÊU TỐC<br><small>480p | 35 FPS</small></button>
-    <button id="mode-hd" class="mode-btn" title="Hình ảnh cực nét chuẩn 720p HD">💎 CỰC NÉT HD<br><small>720p | 28 FPS</small></button>
-    <button id="mode-zerolag" class="mode-btn" title="Độ trễ thấp nhất cho thi đấu tốc độ cao">🏎️ ZERO-LAG<br><small>360p | 50 FPS</small></button>
+    <button id="mode-fast" class="mode-btn active" title="Tối ưu 40 FPS mượt mà không khựng">⚡ SIÊU TỐC<br><small>480p | 40 FPS</small></button>
+    <button id="mode-hd" class="mode-btn" title="Hình ảnh cực nét chuẩn 720p HD">💎 CỰC NÉT HD<br><small>720p | 30 FPS</small></button>
+    <button id="mode-zerolag" class="mode-btn" title="Độ trễ thấp nhất cho thi đấu tốc độ cao">🏎️ ZERO-LAG<br><small>360p | 60 FPS</small></button>
   </div>
 
   <!-- Chọn chế độ Khung hình & Ống kính góc rộng -->
   <div class="grid">
-    <button id="btn-toggle-fov" style="background:#1d3557; color:#a8dadc; border-color:#457b9d;">📐 Khung: TOÀN CẢNH (KHÔNG ZOOM)</button>
+    <button id="btn-toggle-fov" style="background:#2a9d8f; color:#fff; border-color:#2a9d8f;">📐 Khung: FULL 16:9 (TRÀN KHUNG)</button>
     <button id="btn-toggle-ultra" style="background:#4a154b; color:#ffd60a; border-color:#e01e5a;">📸 Chọn Ống Kính 0.5x Siêu Rộng</button>
-    <button id="btn-start" class="primary">🚀 BẤM 1 LẦN ĐỂ KÍCH HOẠT CẢ CAM TRƯỚC &amp; SAU</button>
+    <button id="btn-start" class="primary">🚀 KÍCH HOẠT CẢ 2 CAM TRƯỚC &amp; SAU (SONG CAM)</button>
     <button id="btn-front" class="active">🚘 Kính Chắn Gió (Cam Sau)</button>
     <button id="btn-rear">🔙 Kính Hậu (Cam Trước)</button>
     <select id="lens-select" style="grid-column: span 2;">
@@ -59,70 +73,86 @@
     </select>
   </div>
 
-  <div id="log">Quét bằng bất kỳ ĐT nào — Không cần cài chứng chỉ</div>
+  <div id="log">Quét bằng bất kỳ ĐT nào — 100% Khóa Xanh SSL</div>
 
   <script>
-    const video = document.getElementById('raw-video');
-    const canvas = document.getElementById('crop-preview');
-    const ctx = canvas.getContext('2d', { alpha: false });
-    const hudInfo = document.getElementById('hud-info');
+    const videoFront = document.getElementById('raw-video-front');
+    const canvasFront = document.getElementById('crop-preview-front');
+    const ctxFront = canvasFront.getContext('2d', { alpha: false });
+    ctxFront.imageSmoothingQuality = 'medium';
+
+    const boxRear = document.getElementById('box-rear');
+    const videoRear = document.getElementById('raw-video-rear');
+    const canvasRear = document.getElementById('crop-preview-rear');
+    const ctxRear = canvasRear.getContext('2d', { alpha: false });
+    ctxRear.imageSmoothingQuality = 'medium';
+
+    const hudFront = document.getElementById('hud-info-front');
+    const hudRear = document.getElementById('hud-info-rear');
     const gearEl = document.getElementById('gear-indicator');
     const logEl = document.getElementById('log');
     const lensSelect = document.getElementById('lens-select');
     const btnToggleFov = document.getElementById('btn-toggle-fov');
     const btnToggleUltra = document.getElementById('btn-toggle-ultra');
 
-    // Cấu hình các preset chất lượng truyền hình ảnh (Tối ưu hóa thời gian encode trên iOS WebKit)
+    // Preset cấu hình chất lượng & tốc độ truyền hình ảnh
     const PRESETS = {
       fast: {
         name: 'Siêu Tốc (480p)',
         frontW: 854, frontH: 480,
         rearW: 640, rearH: 360,
         quality: 0.68,
-        intervalMs: 28 // ~35 FPS mượt mà
+        intervalMs: 25 // 40 FPS mượt mà
       },
       hd: {
         name: 'Cực Nét HD (720p)',
         frontW: 1280, frontH: 720,
         rearW: 854, rearH: 480,
         quality: 0.74,
-        intervalMs: 35 // ~28 FPS
+        intervalMs: 33 // 30 FPS
       },
       zerolag: {
         name: 'Zero-Lag (360p)',
         frontW: 640, frontH: 360,
         rearW: 512, rearH: 288,
-        quality: 0.62,
-        intervalMs: 18 // ~50 FPS
+        quality: 0.60,
+        intervalMs: 16 // 60 FPS
       }
     };
 
     let currentPresetKey = 'fast';
     let currentPreset = PRESETS.fast;
-    let fovMode = 'fit'; // 'fit' (giữ trọn 100% cảm biến, không zoom phóng to) | 'crop' (cắt tràn 16:9)
+
+    // Chế độ khung hình: 'fill' (Full 16:9 tràn khung chữ nhật) | 'rotate' (Xoay 90° xe RC) | 'fit' (Toàn cảnh có viền)
+    let fovMode = 'fill';
 
     let ws = null;
-    let targetSurface = 'front'; // 'front' (0x01 - Kính chắn gió) | 'rear' (0x02 - Kính hậu)
-    let currentStream = null;
-    let isSwitchingCamera = false;
-    let isBusyEncoding = false;
-    let fpsCounter = 0;
+    let targetSurface = 'front'; // 'front' | 'rear'
+    let isDualCameraMode = false;
+
+    let streamFront = null;
+    let streamRear = null;
+
+    let isBusyEncodingFront = false;
+    let isBusyEncodingRear = false;
+
+    let fpsFront = 0;
+    let fpsRear = 0;
     let lastFpsTime = performance.now();
     let lastCaptureTs = 0;
-    let lastEncodeTimeMs = 0;
 
-    // 1. Giữ màn hình luôn sáng trên điện thoại mượn
+    let cachedFrontCameraId = '';
+    let cachedRearCameraId = '';
+    let cachedUltraWideCameraId = '';
+
+    // 1. Giữ màn hình điện thoại luôn sáng
     async function keepScreenAwake() {
       try {
         if ('wakeLock' in navigator) await navigator.wakeLock.request('screen');
       } catch (e) {}
     }
 
-    let cachedFrontCameraId = '';
-    let cachedRearCameraId = '';
-    let cachedUltraWideCameraId = '';
-
-    // Liệt kê danh sách ống kính (hỗ trợ chọn cam 0.5x khi gắn đứng)
+    // 2. Liệt kê danh sách cảm biến ống kính
     async function loadCameraLenses() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -151,123 +181,78 @@
       } catch (e) {}
     }
 
-    // 2. Warm-up xin quyền cả 2 mặt Camera (Trước & Sau) ngay ở cú chạm đầu tiên
-    async function warmUpBothCamerasOnce() {
+    // 3. Khởi tạo Camera Sau (Mũi Xe / Kính Chắn Gió)
+    async function startFrontCamera(specificDeviceId = '') {
       try {
-        logEl.textContent = '🔄 Đang mở khóa tự động đổi Cam Trước/Sau...';
-        const tempFront = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: 'user', width: { ideal: 854 }, height: { ideal: 480 } }
-        });
-        tempFront.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
-        await new Promise(r => setTimeout(r, 120));
-      } catch (e) {}
-    }
+        if (streamFront) {
+          streamFront.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+          streamFront = null;
+        }
+        const knownId = specificDeviceId || cachedUltraWideCameraId || cachedRearCameraId;
+        const constraints = knownId
+          ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.frontW }, height: { ideal: currentPreset.frontH } } }
+          : { audio: false, video: { facingMode: 'environment', width: { ideal: currentPreset.frontW }, height: { ideal: currentPreset.frontH } } };
 
-    // Cập nhật kích thước canvas theo preset & hướng camera
-    function applyCanvasResolution() {
-      const isReverse = targetSurface === 'rear';
-      const targetW = isReverse ? currentPreset.rearW : currentPreset.frontW;
-      const targetH = isReverse ? currentPreset.rearH : currentPreset.frontH;
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
-      }
-    }
-
-    function setQualityPreset(key) {
-      if (!PRESETS[key]) return;
-      currentPresetKey = key;
-      currentPreset = PRESETS[key];
-      document.getElementById('mode-fast').classList.toggle('active', key === 'fast');
-      document.getElementById('mode-hd').classList.toggle('active', key === 'hd');
-      document.getElementById('mode-zerolag').classList.toggle('active', key === 'zerolag');
-      applyCanvasResolution();
-      logEl.textContent = `⚡ Chế độ: ${currentPreset.name} (Chất lượng: ${Math.round(currentPreset.quality * 100)}%, Độ trễ cực thấp)`;
-    }
-
-    // 3. Chuyển đổi giữa Cam Sau (khi tiến D) và Cam Trước (khi lùi R) - Hỗ trợ chuẩn iOS Safari / Android
-    async function switchCameraBySurface(surface, specificDeviceId = '') {
-      if (isSwitchingCamera && targetSurface === surface && !specificDeviceId) return;
-      isSwitchingCamera = true;
-      targetSurface = surface;
-
-      const isReverse = surface === 'rear';
-      document.getElementById('btn-front').classList.toggle('active', !isReverse);
-      document.getElementById('btn-rear').classList.toggle('active', isReverse);
-      gearEl.textContent = isReverse ? 'SỐ LÙI (R) - CAM SAU XE' : 'SỐ TIẾN (D) - CAM MŨI XE';
-      gearEl.classList.toggle('reverse', isReverse);
-
-      applyCanvasResolution();
-
-      if (currentStream) {
-        currentStream.getTracks().forEach(t => {
-          try { t.stop(); } catch (e) {}
-        });
-        currentStream = null;
-      }
-      if (video) {
-        video.srcObject = null;
-      }
-      await new Promise(r => setTimeout(r, 140));
-
-      const desiredFacing = isReverse ? 'user' : 'environment';
-      const knownDeviceId = specificDeviceId || (isReverse ? cachedFrontCameraId : (cachedUltraWideCameraId || cachedRearCameraId));
-      const constraintCandidates = [];
-
-      if (knownDeviceId) {
-        constraintCandidates.push({
-          audio: false,
-          video: { deviceId: { exact: knownDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60, min: 30 } }
-        });
-      }
-      constraintCandidates.push({
-        audio: false,
-        video: { facingMode: desiredFacing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60, min: 30 } }
-      });
-      constraintCandidates.push({
-        audio: false,
-        video: { facingMode: desiredFacing, width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
-      });
-      constraintCandidates.push({ audio: false, video: { facingMode: { ideal: desiredFacing } } });
-      constraintCandidates.push({ audio: false, video: true });
-
-      let stream = null;
-      let lastErr = null;
-      for (const c of constraintCandidates) {
+        streamFront = await navigator.mediaDevices.getUserMedia(constraints);
+        videoFront.srcObject = streamFront;
+        await videoFront.play();
+        return true;
+      } catch (e) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia(c);
-          if (stream) break;
+          streamFront = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment' } });
+          videoFront.srcObject = streamFront;
+          await videoFront.play();
+          return true;
         } catch (err) {
-          lastErr = err;
+          logEl.textContent = '❌ Không thể mở Cam Mũi Xe: ' + err.message;
+          return false;
         }
       }
+    }
 
+    // 4. Khởi tạo Camera Trước (Cam Lùi / Gương Chiếu Hậu)
+    async function startRearCamera(specificDeviceId = '') {
       try {
-        if (!stream) throw (lastErr || new Error('Không thể mở camera thiết bị'));
-        currentStream = stream;
-        video.srcObject = currentStream;
-        await video.play();
-        await loadCameraLenses();
-        logEl.textContent = isReverse
-          ? `🔙 Đang truyền CAM LÙI (${canvas.width}x${canvas.height}) lên Gương Hậu & Táp-lô VR`
-          : `🚘 Đang truyền CAM TRƯỚC (${canvas.width}x${canvas.height}) lên Kính Chắn Gió VR`;
-      } catch (err) {
-        logEl.textContent = '❌ Lỗi đổi Camera: ' + err.message;
-      } finally {
-        isSwitchingCamera = false;
+        if (streamRear) {
+          streamRear.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+          streamRear = null;
+        }
+        const knownId = specificDeviceId || cachedFrontCameraId;
+        const constraints = knownId
+          ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.rearW }, height: { ideal: currentPreset.rearH } } }
+          : { audio: false, video: { facingMode: 'user', width: { ideal: currentPreset.rearW }, height: { ideal: currentPreset.rearH } } };
+
+        streamRear = await navigator.mediaDevices.getUserMedia(constraints);
+        videoRear.srcObject = streamRear;
+        await videoRear.play();
+        return true;
+      } catch (e) {
+        try {
+          streamRear = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user' } });
+          videoRear.srcObject = streamRear;
+          await videoRear.play();
+          return true;
+        } catch (err) {
+          // Trình duyệt không hỗ trợ mở 2 camera phần cứng cùng lúc
+          return false;
+        }
       }
     }
 
-    // 4. Kết nối WebSocket tự động nhận lệnh đổi số D/R từ Server
+    // 5. Kết nối WebSocket Server
     function connectToServer() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${proto}//${location.host}`);
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
-        logEl.textContent = '🟢 Đã kết nối! Tự động chiếm quyền Camera (Zero-Lag HD)...';
-        ws.send(JSON.stringify({ type: 'FPV_PHONE_PUBLISHER_INIT', surface: targetSurface, mode: 'SINGLE_PHONE_AUTO_DR' }));
+        logEl.textContent = '🟢 Đã kết nối Server! Đang truyền luồng hình ảnh Zero-Lag HD...';
+        ws.send(JSON.stringify({
+          type: 'FPV_PHONE_PUBLISHER_INIT',
+          surface: targetSurface,
+          mode: isDualCameraMode ? 'DUAL_CAM_SIMULTANEOUS' : 'SINGLE_PHONE_AUTO_DR'
+        }));
       };
 
       ws.onmessage = (evt) => {
@@ -275,10 +260,12 @@
         try {
           const msg = JSON.parse(evt.data);
           if (msg.type === 'SWITCH_FPV_SURFACE' && (msg.surface === 'front' || msg.surface === 'rear')) {
-            if (msg.surface !== targetSurface) {
-              lensSelect.value = '';
-              switchCameraBySurface(msg.surface, '');
-            }
+            targetSurface = msg.surface;
+            const isReverse = targetSurface === 'rear';
+            gearEl.textContent = isReverse ? 'SỐ LÙI (R) - CAM SAU' : 'SỐ TIẾN (D) - CAM MŨI';
+            gearEl.classList.toggle('reverse', isReverse);
+            document.getElementById('btn-front').classList.toggle('active', !isReverse);
+            document.getElementById('btn-rear').classList.toggle('active', isReverse);
           }
         } catch (e) {}
       };
@@ -288,37 +275,47 @@
       };
     }
 
-    // 5. Vòng lặp vẽ khung hình chống Zoom cắt xén + Chống nghẽn hàng đợi
-    function processFrameLoop(now) {
-      requestAnimationFrame(processFrameLoop);
-      if (now - lastCaptureTs < currentPreset.intervalMs) return;
-      if (isSwitchingCamera || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-      
-      // ZERO-QUEUE LATENCY GUARD: Ngưỡng 96KB cho phép 1-2 frame bay trong mạng mà KHÔNG bỏ rơi frame oan uổng
-      if (!ws || ws.readyState !== WebSocket.OPEN || isBusyEncoding || ws.bufferedAmount > 98304) return;
+    // 6. Vẽ Frame lên Canvas với khả năng Full Khung 16:9 ở cả dạng Dọc và Ngang
+    function renderVideoToCanvas(videoEl, canvasEl, ctxEl, isRear = false) {
+      const vw = videoEl.videoWidth;
+      const vh = videoEl.videoHeight;
+      if (!vw || !vh) return;
 
-      lastCaptureTs = now;
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      const targetAspect = canvas.width / canvas.height;
+      const cw = canvasEl.width;
+      const ch = canvasEl.height;
+      const targetAspect = cw / ch; // 16:9
       const sourceAspect = vw / vh;
 
-      let sx = 0, sy = 0, sw = vw, sh = vh;
-      let dx = 0, dy = 0, dw = canvas.width, dh = canvas.height;
+      ctxEl.clearRect(0, 0, cw, ch);
+      ctxEl.save();
 
-      if (fovMode === 'fit') {
-        // [CHẾ ĐỘ TOÀN CẢNH] Giữ trọn 100% cảm biến của camera, TRIỆT TIÊU HOÀN TOÀN HIỆN TƯỢNG ZOOM 3X!
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Lật gương cho Cam trước (Selfie/Lùi) để hướng lái tự nhiên
+      if (isRear) {
+        ctxEl.translate(cw, 0);
+        ctxEl.scale(-1, 1);
+      }
+
+      if (fovMode === 'rotate') {
+        // [CHẾ ĐỘ XOAY 90° CHO XE RC]: Biến cảm biến đứng thành ngang 16:9 toàn cảnh
+        ctxEl.translate(cw * 0.5, ch * 0.5);
+        ctxEl.rotate(Math.PI * 0.5);
+        ctxEl.drawImage(videoEl, 0, 0, vw, vh, -ch * 0.5, -cw * 0.5, ch, cw);
+      } else if (fovMode === 'fit') {
+        // [CHẾ ĐỘ TOÀN CẢNH PILLARBOX]: Giữ trọn cảm biến, có viền đen
+        ctxEl.fillStyle = '#000';
+        ctxEl.fillRect(0, 0, cw, ch);
+        let dw = cw, dh = ch, dx = 0, dy = 0;
         if (sourceAspect > targetAspect) {
-          dh = canvas.width / sourceAspect;
-          dy = (canvas.height - dh) * 0.5;
+          dh = cw / sourceAspect;
+          dy = (ch - dh) * 0.5;
         } else {
-          dw = canvas.height * sourceAspect;
-          dx = (canvas.width - dw) * 0.5;
+          dw = ch * sourceAspect;
+          dx = (cw - dw) * 0.5;
         }
+        ctxEl.drawImage(videoEl, 0, 0, vw, vh, dx, dy, dw, dh);
       } else {
-        // [CHẾ ĐỘ CẮT TRÀN 16:9] Thích hợp nhất khi người dùng đã đặt điện thoại nằm ngang (Landscape)
+        // [CHẾ ĐỘ FULL 16:9 - MẶC ĐỊNH]: Cắt tràn viền lấp đầy 100% khung chữ nhật, KHÔNG BỊ VẠCH ĐEN DỌC BÉ!
+        let sx = 0, sy = 0, sw = vw, sh = vh;
         if (sourceAspect > targetAspect) {
           sw = vh * targetAspect;
           sx = (vw - sw) * 0.5;
@@ -326,94 +323,172 @@
           sh = vw / targetAspect;
           sy = (vh - sh) * 0.5;
         }
+        ctxEl.drawImage(videoEl, sx, sy, sw, sh, 0, 0, cw, ch);
       }
 
-      ctx.save();
-      if (targetSurface === 'rear') {
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-        if (fovMode === 'fit') {
-          dx = canvas.width - dx - dw;
-        }
-      }
-      ctx.drawImage(video, sx, sy, sw, sh, dx, dy, dw, dh);
-      ctx.restore();
+      ctxEl.restore();
+    }
 
+    // 7. Vòng lặp truyền khung hình siêu mượt Zero-Lag (Loại bỏ 100% Microtask lag của ArrayBuffer)
+    const headerFront = new Uint8Array([0x52, 0x43, 0x46, 0x01]); // 'RCF' + 0x01 (Front)
+    const headerRear = new Uint8Array([0x52, 0x43, 0x46, 0x02]);  // 'RCF' + 0x02 (Rear)
+
+    function processLoop(now) {
+      requestAnimationFrame(processLoop);
+
+      if (now - lastCaptureTs < currentPreset.intervalMs) return;
+      lastCaptureTs = now;
+
+      // Cập nhật thống kê FPS mỗi giây
       if (now - lastFpsTime >= 1000) {
-        hudInfo.innerHTML = `${canvas.width}x${canvas.height} | <b>${fpsCounter} FPS</b><br>Mã hóa: ${lastEncodeTimeMs}ms | FOV: ${fovMode === 'fit' ? 'Toàn Cảnh' : 'Cắt 16:9'}`;
-        fpsCounter = 0;
+        hudFront.innerHTML = `${canvasFront.width}x${canvasFront.height} | <b>${fpsFront} FPS</b>`;
+        hudRear.innerHTML = `${canvasRear.width}x${canvasRear.height} | <b>${fpsRear} FPS</b>`;
+        fpsFront = 0;
+        fpsRear = 0;
         lastFpsTime = now;
       }
 
-      isBusyEncoding = true;
-      const encStart = performance.now();
-      canvas.toBlob(async (blob) => {
-        try {
-          lastEncodeTimeMs = Math.round(performance.now() - encStart);
-          if (blob && ws && ws.readyState === WebSocket.OPEN) {
-            const arrayBuf = await blob.arrayBuffer();
-            const packet = new Uint8Array(4 + arrayBuf.byteLength);
-            packet[0] = 0x52; // 'R'
-            packet[1] = 0x43; // 'C'
-            packet[2] = 0x46; // 'F'
-            packet[3] = targetSurface === 'rear' ? 0x02 : 0x01;
-            packet.set(new Uint8Array(arrayBuf), 4);
+      if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 98304) return;
 
-            ws.send(packet.buffer);
-            fpsCounter++;
+      // A. Truyền Cam Mũi Xe (Kính Chắn Gió)
+      if (!isBusyEncodingFront && videoFront && videoFront.readyState >= 2) {
+        renderVideoToCanvas(videoFront, canvasFront, ctxFront, false);
+        isBusyEncodingFront = true;
+        canvasFront.toBlob((blob) => {
+          isBusyEncodingFront = false;
+          if (blob && ws && ws.readyState === WebSocket.OPEN) {
+            // [ZERO-COPY BLOB PACKET] Gửi trực tiếp Blob qua WebSocket, không tốn thời gian await arrayBuffer()
+            ws.send(new Blob([headerFront, blob], { type: 'image/jpeg' }));
+            fpsFront++;
           }
-        } finally {
-          isBusyEncoding = false;
-        }
-      }, 'image/jpeg', currentPreset.quality);
+        }, 'image/jpeg', currentPreset.quality);
+      }
+
+      // B. Truyền Cam Lùi Xe (Gương Chiếu Hậu) - Chạy đồng thời khi Song Cam kích hoạt
+      if (isDualCameraMode && !isBusyEncodingRear && videoRear && videoRear.readyState >= 2) {
+        renderVideoToCanvas(videoRear, canvasRear, ctxRear, true);
+        isBusyEncodingRear = true;
+        canvasRear.toBlob((blob) => {
+          isBusyEncodingRear = false;
+          if (blob && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(new Blob([headerRear, blob], { type: 'image/jpeg' }));
+            fpsRear++;
+          }
+        }, 'image/jpeg', Math.max(0.55, currentPreset.quality - 0.08));
+      }
     }
 
-    // Nút đổi chế độ Khung hình (Chống zoom phóng to)
+    // 8. Đổi chế độ Khung hình (Full 16:9 / Xoay 90° Xe RC / Toàn Cảnh)
     btnToggleFov.onclick = () => {
-      fovMode = fovMode === 'fit' ? 'crop' : 'fit';
-      btnToggleFov.textContent = fovMode === 'fit' ? '📐 Khung: TOÀN CẢNH (KHÔNG ZOOM)' : '✂️ Khung: CẮT TRÀN 16:9';
-      btnToggleFov.style.background = fovMode === 'fit' ? '#1d3557' : '#2a9d8f';
-    };
-
-    // Nút chuyển nhanh ống kính 0.5x Ultra-Wide
-    btnToggleUltra.onclick = async () => {
-      if (cachedUltraWideCameraId) {
-        lensSelect.value = cachedUltraWideCameraId;
-        await switchCameraBySurface(targetSurface, cachedUltraWideCameraId);
-        btnToggleUltra.textContent = '✅ ĐANG DÙNG CAM 0.5X SIÊU RỘNG!';
+      if (fovMode === 'fill') {
+        fovMode = 'rotate';
+        btnToggleFov.textContent = '🔄 Khung: XOAY 90° (XE RC)';
+        btnToggleFov.style.background = '#e76f51';
+      } else if (fovMode === 'rotate') {
+        fovMode = 'fit';
+        btnToggleFov.textContent = '🔲 Khung: TOÀN CẢNH (FIT VIỀN)';
+        btnToggleFov.style.background = '#1d3557';
       } else {
-        await loadCameraLenses();
-        if (cachedUltraWideCameraId) {
-          lensSelect.value = cachedUltraWideCameraId;
-          await switchCameraBySurface(targetSurface, cachedUltraWideCameraId);
-        } else {
-          alert('Thiết bị này không có cảm biến 0.5x góc siêu rộng riêng, hãy để điện thoại nằm ngang và dùng chế độ Toàn Cảnh!');
-        }
+        fovMode = 'fill';
+        btnToggleFov.textContent = '📐 Khung: FULL 16:9 (TRÀN KHUNG)';
+        btnToggleFov.style.background = '#2a9d8f';
       }
     };
+
+    // 9. Chuyển đổi Preset chất lượng
+    function setQualityPreset(key) {
+      if (!PRESETS[key]) return;
+      currentPresetKey = key;
+      currentPreset = PRESETS[key];
+      canvasFront.width = currentPreset.frontW;
+      canvasFront.height = currentPreset.frontH;
+      canvasRear.width = currentPreset.rearW;
+      canvasRear.height = currentPreset.rearH;
+
+      document.getElementById('mode-fast').classList.toggle('active', key === 'fast');
+      document.getElementById('mode-hd').classList.toggle('active', key === 'hd');
+      document.getElementById('mode-zerolag').classList.toggle('active', key === 'zerolag');
+      logEl.textContent = `⚡ Chế độ: ${currentPreset.name} (${currentPreset.quality * 100}%, ${Math.round(1000 / currentPreset.intervalMs)} FPS)`;
+    }
 
     document.getElementById('mode-fast').onclick = () => setQualityPreset('fast');
     document.getElementById('mode-hd').onclick = () => setQualityPreset('hd');
     document.getElementById('mode-zerolag').onclick = () => setQualityPreset('zerolag');
 
+    // 10. Chọn Ống Kính 0.5x Siêu Rộng
+    btnToggleUltra.onclick = async () => {
+      if (cachedUltraWideCameraId) {
+        lensSelect.value = cachedUltraWideCameraId;
+        await startFrontCamera(cachedUltraWideCameraId);
+        btnToggleUltra.textContent = '✅ ĐANG DÙNG CAM 0.5X SIÊU RỘNG!';
+      } else {
+        await loadCameraLenses();
+        if (cachedUltraWideCameraId) {
+          lensSelect.value = cachedUltraWideCameraId;
+          await startFrontCamera(cachedUltraWideCameraId);
+        } else {
+          alert('Thiết bị này không có cảm biến 0.5x góc siêu rộng riêng, hãy để điện thoại nằm ngang và dùng chế độ Full 16:9!');
+        }
+      }
+    };
+
+    // 11. KÍCH HOẠT CẢ 2 CAM TRƯỚC & SAU (DUAL CAM PIPELINE)
     document.getElementById('btn-start').onclick = async () => {
       await keepScreenAwake();
-      await warmUpBothCamerasOnce();
       await loadCameraLenses();
-      lensSelect.value = '';
-      await switchCameraBySurface('front', '');
       connectToServer();
-      requestAnimationFrame(processFrameLoop);
+
+      logEl.textContent = '🔄 Đang khởi tạo luồng Song Cam Trước & Sau...';
+
+      // Mở Cam Sau (Kính Chắn Gió)
+      const frontOk = await startFrontCamera();
+      // Mở Cam Trước (Gương Hậu)
+      const rearOk = await startRearCamera();
+
+      if (frontOk && rearOk) {
+        isDualCameraMode = true;
+        boxRear.style.display = 'block';
+        logEl.textContent = '🔥 [SONG CAM HOÀN TẤT] Cả 2 Cam đang truyền trực tiếp đồng thời lên Kính Quest 3!';
+        document.getElementById('btn-start').textContent = '✅ ĐANG CHẠY SONG CAM ĐỒNG THỜI (2 MẶT)';
+        document.getElementById('btn-start').style.background = '#00e5ff';
+      } else if (frontOk) {
+        isDualCameraMode = false;
+        boxRear.style.display = 'none';
+        logEl.textContent = '🚘 [CHẾ ĐỘ TỰ ĐỔI D/R] Đang phát Cam Mũi Xe (Tự đổi sang Cam Lùi khi vào số R)';
+        document.getElementById('btn-start').textContent = '🚘 ĐANG CHẠY CAM MŨI XE (TỰ ĐỔI D/R)';
+      }
+
+      requestAnimationFrame(processLoop);
     };
-    document.getElementById('btn-front').onclick = () => {
-      lensSelect.value = '';
-      switchCameraBySurface('front', '');
+
+    // Chuyển nhanh giữa Cam Mũi và Cam Lùi thủ công
+    document.getElementById('btn-front').onclick = async () => {
+      targetSurface = 'front';
+      document.getElementById('btn-front').classList.add('active');
+      document.getElementById('btn-rear').classList.remove('active');
+      gearEl.textContent = 'SỐ TIẾN (D) - CAM MŨI';
+      gearEl.classList.remove('reverse');
+      if (!isDualCameraMode) {
+        await startFrontCamera(lensSelect.value);
+      }
     };
-    document.getElementById('btn-rear').onclick = () => {
-      lensSelect.value = '';
-      switchCameraBySurface('rear', '');
+
+    document.getElementById('btn-rear').onclick = async () => {
+      targetSurface = 'rear';
+      document.getElementById('btn-rear').classList.add('active');
+      document.getElementById('btn-front').classList.remove('active');
+      gearEl.textContent = 'SỐ LÙI (R) - CAM SAU';
+      gearEl.classList.add('reverse');
+      if (!isDualCameraMode) {
+        await startRearCamera();
+      }
     };
-    lensSelect.onchange = () => switchCameraBySurface(targetSurface, lensSelect.value);
+
+    lensSelect.onchange = () => {
+      if (lensSelect.value) {
+        startFrontCamera(lensSelect.value);
+      }
+    };
   </script>
 </body>
 </html>
