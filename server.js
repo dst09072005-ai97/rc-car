@@ -577,7 +577,7 @@ function sendUdpCarCommand(steer, throttle) {
   // Ưu tiên ủy thác toàn bộ qua sendRateLimitedEsp32Udp duy nhất có bộ trọng tài phần cứng và slew rate chống giật
   if (typeof globalThis.sendRateLimitedEsp32Udp === 'function') {
     const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-    const sNorm = (rawS - 90) / 45;
+    const sNorm = (90 - rawS) / 45;
     const rawT = Math.max(1050, Math.min(1950, Math.round(Number(throttle) || 1500)));
     const dNorm = (rawT - 1500) / 350;
     globalThis.sendRateLimitedEsp32Udp(sNorm, dNorm, rawT, (rawT < 1490 ? 'R' : 'D'), 'UDP_CAR_CMD');
@@ -2616,12 +2616,6 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     lastLoggedSteerTime: 0
   };
 
-  // Trạng thái FSM Double-Tap để kích hoạt số Lùi cho ESC chuẩn RC
-  const escDoubleTapState = {
-    state: 'IDLE', // 'IDLE' | 'PRIME_BRAKE' | 'PRIME_NEUTRAL' | 'REVERSING'
-    stateStartTime: 0
-  };
-
   // Tính toán xung điều tốc ESC mượt mà, triệt tiêu giật bắn và tiếng kêu hú motor
   function computeAsymmetricEscPulseUs(driveNorm, explicitPulseUs, gear = 'D') {
     const rawExplicit = Number(explicitPulseUs);
@@ -2703,54 +2697,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     }
 
     // Góc lái chuẩn RC Servo: 45° (phải) .. 90° (thẳng) .. 135° (trái)
-    let steerDeg = Math.max(45, Math.min(135, Math.round(90 + sNorm * 45)));
-    let targetEscUs = 1500;
-
-    // FSM KÍCH HOẠT SỐ LÙI CHUẨN RC ESC (DOUBLE-TAP REVERSE PROTOCOL):
-    // Đa số ESC xe RC (Hobbywing, WP-1060, ESC chổi than) mặc định ở chế độ Tiến/Phanh/Lùi (F/B/R).
-    // Khi đang ở Neutral mà đạp lùi lần đầu, ESC coi đó là PHANH (Brake).
-    // Để vào số LÙI (Reverse), tín hiệu bắt buộc phải qua chu trình: Phanh (~70ms) -> Trả Neutral (~80ms) -> Vào Ga Lùi!
-    if (dNorm < -0.045 || effectiveGear === 'R') {
-      if (rcArbitration.currentSlewEscUs > 1520) {
-        // Đang chạy tiến mà đạp phanh -> Kích hoạt phanh hãm tốc độ
-        targetEscUs = 1400;
-        escDoubleTapState.state = 'IDLE';
-      } else {
-        // Xe đã dừng hoặc đang ở dải Neutral -> Chạy FSM nhấp lùi double-tap
-        if (escDoubleTapState.state === 'IDLE') {
-          escDoubleTapState.state = 'PRIME_BRAKE';
-          escDoubleTapState.stateStartTime = now;
-          targetEscUs = 1400;
-          rcArbitration.currentSlewEscUs = 1400;
-        } else if (escDoubleTapState.state === 'PRIME_BRAKE') {
-          if (now - escDoubleTapState.stateStartTime < 70) {
-            targetEscUs = 1400;
-            rcArbitration.currentSlewEscUs = 1400;
-          } else {
-            escDoubleTapState.state = 'PRIME_NEUTRAL';
-            targetEscUs = 1500;
-            rcArbitration.currentSlewEscUs = 1500;
-          }
-        } else if (escDoubleTapState.state === 'PRIME_NEUTRAL') {
-          if (now - escDoubleTapState.stateStartTime < 150) {
-            targetEscUs = 1500;
-            rcArbitration.currentSlewEscUs = 1500;
-          } else {
-            escDoubleTapState.state = 'REVERSING';
-            targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, 'R');
-            rcArbitration.currentSlewEscUs = targetEscUs;
-          }
-        } else {
-          // 'REVERSING': Đã kích hoạt số lùi thành công, điều khiển ga lùi mượt mà tỉ lệ thuận
-          targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, 'R');
-        }
-      }
-    } else {
-      // Khi ở Neutral hoặc Tiến: Reset FSM về IDLE
-      escDoubleTapState.state = 'IDLE';
-      escDoubleTapState.stateStartTime = 0;
-      targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
-    }
+    let steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
+    let targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
 
     // KHÓA AN TOÀN KHỞI ĐỘNG (Startup Safety Gate 3.0s):
     // Trong 3 giây đầu khi server mới bật, KHÓA CỨNG xung ga ở 1500µs (Neutral) và lái ở 90°,
@@ -2759,7 +2707,6 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       steerDeg = 90;
       targetEscUs = 1500;
       rcArbitration.currentSlewEscUs = 1500;
-      escDoubleTapState.state = 'IDLE';
     }
 
     // Bộ lọc Slew Rate Limiter chống giật xung đột ngột
@@ -2961,17 +2908,19 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         // 1. Nhận tín hiệu GOG R808 đã chuẩn hóa từ Laptop (Admin) và đồng bộ sang Kính VR
         if (data.type === 'WHEEL_BRIDGE_INPUT') {
           const src = data.payload || data;
-          const steerNorm = Number(Math.max(-1, Math.min(1, Number(src.steerNorm) || 0)).toFixed(4));
-          const gasNorm = Number(Math.max(0, Math.min(1, Number(src.gasNorm) || 0)).toFixed(4));
-          const brakeNorm = Number(Math.max(0, Math.min(1, Number(src.brakeNorm) || 0)).toFixed(4));
-          const driveNorm = Number(Math.max(-1, Math.min(1, Number(src.driveNorm ?? (gasNorm - brakeNorm)) || 0)).toFixed(4));
-          const gear = src.gear || (brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : 'D');
+          const steerNorm = Number(Math.max(-1, Math.min(1, Number(src.steerNorm ?? src.steeringNorm ?? 0))).toFixed(4));
+          const gasNorm = Number(Math.max(0, Math.min(1, Number(src.gasNorm ?? (typeof src.gasPercent === 'number' ? src.gasPercent / 100 : 0))).toFixed(4)));
+          const brakeNorm = Number(Math.max(0, Math.min(1, Number(src.brakeNorm ?? (typeof src.brakePercent === 'number' ? src.brakePercent / 100 : 0))).toFixed(4)));
+          const reverseNorm = Number(Math.max(0, Math.min(1, Number(src.reverseNorm ?? (typeof src.reversePercent === 'number' ? src.reversePercent / 100 : 0))).toFixed(4)));
+          const driveNorm = Number(Math.max(-1, Math.min(1, Number(src.driveNorm ?? (gasNorm - brakeNorm - reverseNorm)))).toFixed(4));
+          const gear = src.gear || (brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : (reverseNorm > 0.04 ? 'R' : 'D'));
           const buttonEvents = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
 
           latestBridgeState.connected = Boolean(src.connected !== false);
           latestBridgeState.steerNorm = steerNorm;
           latestBridgeState.gasNorm = gasNorm;
           latestBridgeState.brakeNorm = brakeNorm;
+          latestBridgeState.reverseNorm = reverseNorm;
           latestBridgeState.driveNorm = driveNorm;
           latestBridgeState.gear = gear;
           latestBridgeState.seq = (latestBridgeState.seq + 1) % 1000000;
@@ -2985,14 +2934,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             steerAngleDeg: Math.max(-540, Math.min(540, Math.round(steerNorm * 540))),
             gasNorm,
             brakeNorm,
-            reverseNorm: gear === 'R' ? brakeNorm : 0,
+            reverseNorm: gear === 'R' ? brakeNorm : reverseNorm,
             driveNorm,
             throttleNorm: driveNorm,
             gasPercent: Math.round(gasNorm * 100),
             brakePercent: Math.round(brakeNorm * 100),
-            reversePercent: gear === 'R' ? Math.round(brakeNorm * 100) : 0,
+            reversePercent: gear === 'R' ? Math.round(brakeNorm * 100) : Math.round(reverseNorm * 100),
             gear,
-            steer: Math.max(45, Math.min(135, Math.round(90 + steerNorm * 45))),
+            steer: Math.max(45, Math.min(135, Math.round(90 - steerNorm * 45))),
             throttle: Math.max(1000, Math.min(2000, Math.round(1500 + driveNorm * 260))),
             buttonEvents,
             seq: latestBridgeState.seq,
@@ -3019,7 +2968,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             sNorm = Number(data.steeringNorm ?? data.steerNorm ?? 0);
           } else if (data.steer !== undefined || data.steeringDeg !== undefined) {
             const rawS = Math.max(45, Math.min(135, Math.round(Number(data.steer ?? data.steeringDeg) || 90)));
-            sNorm = (rawS - 90) / 45;
+            sNorm = (90 - rawS) / 45;
           }
           let dNorm = 0;
           let explicitPulse = null;
@@ -3138,7 +3087,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               brakePercent: Math.round(data.brakeNorm * 100),
               reversePercent: Math.round(data.reverseNorm * 100),
               gear: data.gear,
-              steer: Math.max(45, Math.min(135, Math.round(90 + data.steerNorm * 45))),
+              steer: Math.max(45, Math.min(135, Math.round(90 - data.steerNorm * 45))),
               throttle: Math.max(1000, Math.min(2000, Math.round(1500 + data.driveNorm * 260))),
               buttonEvents: [],
               seq: data.seq,
