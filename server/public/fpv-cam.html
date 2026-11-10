@@ -246,9 +246,12 @@
         try {
           const msg = JSON.parse(evt.data);
           // Chỉ tự động đổi cam khi người dùng chọn chế độ 1 MÁY TỰ ĐỔI D/R
-          if (phoneRole === 'auto' && msg.type === 'SWITCH_FPV_SURFACE' && (msg.surface === 'front' || msg.surface === 'rear')) {
-            if (msg.surface !== targetSurface) {
-              activateCamera(msg.surface, lensSelect.value);
+          if (phoneRole === 'auto' && (msg.type === 'SWITCH_FPV_SURFACE' || msg.type === 'FPV_SWITCH_CAMERA')) {
+            const nextSurface = msg.surface || (msg.gear === 'R' ? 'rear' : 'front');
+            if (nextSurface === 'front' || nextSurface === 'rear') {
+              if (nextSurface !== targetSurface) {
+                activateCamera(nextSurface, '');
+              }
             }
           }
         } catch (e) {}

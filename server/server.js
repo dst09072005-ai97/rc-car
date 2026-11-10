@@ -2607,14 +2607,23 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     }
 
     // Tự động báo Điện Thoại FPV đổi mặt camera khi vào số lùi (R) hoặc tiến (D)
-    const currentGearStr = String(gear || 'D').toUpperCase();
-    const desiredSurface = currentGearStr === 'R' ? 'rear' : 'front';
+    let effectiveGear = String(gear || 'D').toUpperCase();
+    if (dNorm < -0.04) {
+      effectiveGear = 'R';
+    } else if (dNorm > 0.04) {
+      effectiveGear = 'D';
+    }
+    const desiredSurface = effectiveGear === 'R' ? 'rear' : 'front';
     if (globalThis.__lastFpvSurface !== desiredSurface) {
       globalThis.__lastFpvSurface = desiredSurface;
-      const switchPkt = JSON.stringify({ type: 'FPV_SWITCH_CAMERA', surface: desiredSurface });
+      const switchPkt1 = JSON.stringify({ type: 'SWITCH_FPV_SURFACE', surface: desiredSurface, gear: effectiveGear });
+      const switchPkt2 = JSON.stringify({ type: 'FPV_SWITCH_CAMERA', surface: desiredSurface, gear: effectiveGear });
       for (const client of activeMultiplayerSockets) {
         if (client.readyState === 1) {
-          try { client.send(switchPkt); } catch (e) {}
+          try {
+            client.send(switchPkt1);
+            client.send(switchPkt2);
+          } catch (e) {}
         }
       }
     }

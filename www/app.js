@@ -1146,6 +1146,7 @@ const wsTex = new THREE.CanvasTexture(windshieldCanvas);
 wsTex.generateMipmaps = false;
 wsTex.minFilter = THREE.LinearFilter;
 wsTex.magFilter = THREE.LinearFilter;
+if (THREE.SRGBColorSpace) wsTex.colorSpace = THREE.SRGBColorSpace;
 
 const ytCanvas = document.createElement('canvas');
 ytCanvas.width = 640;
@@ -1155,6 +1156,7 @@ const ytTex = new THREE.CanvasTexture(ytCanvas);
 ytTex.generateMipmaps = false;
 ytTex.minFilter = THREE.LinearFilter;
 ytTex.magFilter = THREE.LinearFilter;
+if (THREE.SRGBColorSpace) ytTex.colorSpace = THREE.SRGBColorSpace;
 
 const rearCamCanvas = document.createElement('canvas');
 rearCamCanvas.width = 512;
@@ -1164,6 +1166,7 @@ const rearCamTex = new THREE.CanvasTexture(rearCamCanvas);
 rearCamTex.generateMipmaps = false;
 rearCamTex.minFilter = THREE.LinearFilter;
 rearCamTex.magFilter = THREE.LinearFilter;
+if (THREE.SRGBColorSpace) rearCamTex.colorSpace = THREE.SRGBColorSpace;
 
 function buildMasterRollsRoyceVehicle() {
   const underbody = new THREE.Mesh(new THREE.BoxGeometry(1.94, 0.16, 4.85), matPiano);
@@ -1230,7 +1233,7 @@ function buildMasterRollsRoyceVehicle() {
     if (isFront) {
       const mirrorGlass = new THREE.Mesh(
         new THREE.PlaneGeometry(0.15, 0.09),
-        new THREE.MeshBasicMaterial({ map: rearCamTex })
+        new THREE.MeshBasicMaterial({ map: rearCamTex, toneMapped: false })
       );
       mirrorGlass.position.set(sideSign * 0.14, 0.66, 0.15);
       mirrorGlass.rotation.y = sideSign < 0 ? THREE.MathUtils.degToRad(18) : THREE.MathUtils.degToRad(-18);
@@ -1250,7 +1253,12 @@ function buildMasterRollsRoyceVehicle() {
 
   const windshieldScreenMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(1.68, 0.66),
-    new THREE.MeshBasicMaterial({ map: wsTex, transparent: true, side: THREE.DoubleSide })
+    new THREE.MeshBasicMaterial({
+      map: wsTex,
+      transparent: true,
+      side: THREE.DoubleSide,
+      toneMapped: false // Chống chói sáng, giữ nguyên màu sắc độ nét từ camera điện thoại
+    })
   );
   windshieldScreenMesh.position.set(0, 1.10, -0.66);
   windshieldScreenMesh.rotation.x = THREE.MathUtils.degToRad(-18);
@@ -3294,6 +3302,11 @@ function decodePendingRearFrame() {
     state.esp32RearConnected = true;
     if (typeof renderRearMirrorAndCameraDisplay === 'function') {
       renderRearMirrorAndCameraDisplay(state.gears[state.gearIndex]);
+    }
+    // Khi đang cài số lùi (R) hoặc ở chế độ xem cam sau: Vẽ trực tiếp lên kính lái
+    if (state.gear === 'R' || state.windshieldMode === 'ESP32_REAR_LIVE') {
+      wsCtx.drawImage(rearCamCanvas, 0, 0, 1024, 512);
+      wsTex.needsUpdate = true;
     }
   }).catch((e) => {}).finally(() => {
     isRearDecoding = false;
@@ -7804,6 +7817,7 @@ let windshieldDisplayMeshRef = null;
   chassisGroup.children.forEach((c) => {
     if (c.isMesh && c.material && c.material.map === wsTex) {
       windshieldDisplayMeshRef = c;
+      if (c.material) c.material.toneMapped = false;
       c.position.set(0.08, 1.12, -0.64);
       c.rotation.set(THREE.MathUtils.degToRad(-6), 0, 0); // Giảm độ nghiêng từ -18° về -6° để nhìn thẳng rõ nét không bị niểng!
       c.scale.set(0.88, 0.92, 1); // Thu gọn chiều ngang để không bao giờ chồng đè lên bảng HUD 3D bên trái
@@ -22169,9 +22183,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
       createImageBitmap(blobToDecode)
         .then((bmp) => {
-          wsCtx.drawImage(bmp, 0, 0, 1024, 512);
+          if (state.gear !== 'R' || state.windshieldMode !== 'ESP32_REAR_LIVE') {
+            wsCtx.imageSmoothingEnabled = true;
+            wsCtx.imageSmoothingQuality = 'high';
+            wsCtx.drawImage(bmp, 0, 0, 1024, 512);
+            wsTex.needsUpdate = true;
+          }
           bmp.close(); // Giải phóng ngay bộ nhớ GPU/RAM
-          wsTex.needsUpdate = true;
           state.esp32Connected = true;
           frontBusy = false;
           if (pendingFrontBlob) window.decodePendingFrontFrame();
@@ -24018,7 +24036,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         active: true,
         steerNorm: localWheel.steerNorm,
         gasNorm: localWheel.gasNorm,
-        brakeNorm: localWheel.brakeNorm
+        brakeNorm: localWheel.brakeNorm,
+        driveNorm: localWheel.driveNorm,
+        gear: localWheel.gear
       };
     }
 
@@ -24026,15 +24046,18 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const rb = runtime.remoteBridge;
     const bridgeFresh = rb.connected && (now - rb.updatedAt < CFG.bridgeTimeoutMs);
     const bridgeActive = bridgeFresh && (
-      Math.abs(rb.steerNorm) > 0.01 || rb.gasNorm > 0.01 || rb.brakeNorm > 0.01 || rb.reverseNorm > 0.01
+      Math.abs(rb.steerNorm) > 0.01 || Math.abs(rb.driveNorm) > 0.01 || rb.gasNorm > 0.01 || rb.brakeNorm > 0.01 || rb.reverseNorm > 0.01
     );
     if (bridgeActive) {
+      const effDrive = typeof rb.driveNorm === 'number' ? rb.driveNorm : (rb.gasNorm - rb.brakeNorm);
       return {
         source: 'GOG808_BRIDGE',
         active: true,
         steerNorm: rb.steerNorm,
         gasNorm: rb.gasNorm,
-        brakeNorm: Math.max(rb.brakeNorm, rb.reverseNorm)
+        brakeNorm: rb.brakeNorm,
+        driveNorm: effDrive,
+        gear: rb.gear || (effDrive < -0.03 ? 'R' : 'D')
       };
     }
 
@@ -24157,29 +24180,35 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       // 2. Quy tắc Bàn đạp Ga / Phanh / Lùi thống nhất trên cả Admin & Kính VR
       const lerpFn = (typeof THREE !== 'undefined' && THREE.MathUtils) ? THREE.MathUtils.lerp : (a, b, t) => a + (b - a) * t;
 
-      if (cmd.gasNorm > 0.04 && cmd.brakeNorm < 0.08) {
+      const effectiveDrive = (typeof cmd.driveNorm === 'number' && Math.abs(cmd.driveNorm) > 0.02)
+        ? cmd.driveNorm
+        : (cmd.gasNorm - cmd.brakeNorm);
+
+      if (effectiveDrive > 0.03 || (cmd.gasNorm > 0.04 && effectiveDrive >= 0)) {
         state.gear = 'D';
         state.gearIndex = 3;
-        state.throttlePercent = Math.round(cmd.gasNorm * 100);
+        const driveMag = Math.max(cmd.gasNorm, effectiveDrive);
+        state.throttlePercent = Math.round(driveMag * 100);
         state.brakePercent = 0;
         state.reversePercent = 0;
-        const targetVel = cmd.gasNorm * CFG.maxForwardSpeedMs;
+        const targetVel = driveMag * CFG.maxForwardSpeedMs;
         velMs = lerpFn(velMs, targetVel, Math.min(1, dt * CFG.accelRate));
-      } else if (cmd.brakeNorm > 0.04) {
+      } else if (effectiveDrive < -0.03 || (cmd.brakeNorm > 0.04 && effectiveDrive < 0)) {
+        const revMag = Math.abs(effectiveDrive);
         if (runtime.keys.brake || velMs > 0.4) {
           // Đang chạy tiến hoặc nhấn Space -> Phanh giảm tốc về 0
-          state.brakePercent = Math.round(cmd.brakeNorm * 100);
+          state.brakePercent = Math.round(revMag * 100);
           state.throttlePercent = 0;
           state.reversePercent = 0;
-          velMs = Math.max(0, velMs - cmd.brakeNorm * CFG.brakeDecelRate * dt);
+          velMs = Math.max(0, velMs - revMag * CFG.brakeDecelRate * dt);
         } else {
           // Đã dừng -> Chuyển sang số Lùi (R) và lùi mượt
           state.gear = 'R';
           state.gearIndex = 1;
-          state.reversePercent = Math.round(cmd.brakeNorm * 100);
+          state.reversePercent = Math.round(revMag * 100);
           state.throttlePercent = 0;
           state.brakePercent = 0;
-          const targetRevVel = -cmd.brakeNorm * CFG.maxReverseSpeedMs;
+          const targetRevVel = -revMag * CFG.maxReverseSpeedMs;
           velMs = lerpFn(velMs, targetRevVel, Math.min(1, dt * CFG.accelRate));
         }
       } else {
@@ -24224,7 +24253,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           runtime.wasDrivingInputActive = cmd.active;
           const sock = getActiveSocket();
           if (sock && sock.readyState === 1 && sock.bufferedAmount < 65536) {
-            const driveNorm = cmd.active ? clamp(cmd.gasNorm - cmd.brakeNorm, -1, 1) : 0;
+            const driveNorm = cmd.active ? (typeof cmd.driveNorm === 'number' ? cmd.driveNorm : clamp(cmd.gasNorm - cmd.brakeNorm, -1, 1)) : 0;
             sock.send(JSON.stringify({
               type: 'RC_CONTROL_CMD',
               source: cmd.source,
@@ -24879,7 +24908,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     let brake = 0;
     let hasControlSignal = false;
 
-    const wheelMoved = wheelFresh && (Math.abs(liveWheel.steerNorm) > 0.02 || liveWheel.gasNorm > 0.02 || liveWheel.brakeNorm > 0.02);
+    const effWheelDrive = (typeof liveWheel.driveNorm === 'number' && Math.abs(liveWheel.driveNorm) > 0.02)
+      ? liveWheel.driveNorm
+      : (liveWheel.gasNorm - liveWheel.brakeNorm);
+
+    const wheelMoved = wheelFresh && (
+      Math.abs(liveWheel.steerNorm) > 0.02 ||
+      Math.abs(effWheelDrive) > 0.02 ||
+      liveWheel.gasNorm > 0.02 ||
+      liveWheel.brakeNorm > 0.02
+    );
 
     if (wheelMoved) {
       steer = liveWheel.steerNorm;
@@ -24933,25 +24971,27 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         }
       }
 
-      if (gas > 0.025) {
+      if (effWheelDrive > 0.025 || (gas > 0.025 && effWheelDrive >= 0)) {
         state.gearIndex = 3;
         state.gear = 'D';
-        state.throttlePercent = Math.round(gas * 100);
+        const driveMag = Math.max(gas, effWheelDrive);
+        state.throttlePercent = Math.round(driveMag * 100);
         state.brakePercent = 0;
         state.reversePercent = 0;
-        carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, gas * 24.0, dt * 4.5);
-      } else if (brake > 0.025) {
+        carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, driveMag * 24.0, dt * 4.5);
+      } else if (effWheelDrive < -0.025) {
+        const revMag = Math.abs(effWheelDrive);
         if (carStateV504.velMs > 1.0) {
-          state.brakePercent = Math.round(brake * 100);
+          state.brakePercent = Math.round(revMag * 100);
           state.throttlePercent = 0;
-          carStateV504.velMs = Math.max(0, carStateV504.velMs - 26.0 * brake * dt);
+          carStateV504.velMs = Math.max(0, carStateV504.velMs - 26.0 * revMag * dt);
         } else {
           state.gearIndex = 1;
           state.gear = 'R';
-          state.reversePercent = Math.round(brake * 100);
-          state.throttlePercent = Math.round(brake * 100);
+          state.reversePercent = Math.round(revMag * 100);
+          state.throttlePercent = Math.round(revMag * 100);
           state.brakePercent = 0;
-          carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, -brake * 14.0, dt * 6.0);
+          carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, -revMag * 14.0, dt * 6.0);
         }
       } else if (Math.abs(steer) > 0.04 && Math.abs(carStateV504.velMs) < 1.2) {
         state.gearIndex = 3;
