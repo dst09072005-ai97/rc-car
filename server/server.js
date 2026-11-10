@@ -1782,13 +1782,18 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
   attachMultiplayerServer(httpsServer);
   httpsServer.listen(8443, '0.0.0.0', () => {
     const lan = getLocalLanIp();
+    const hasDuckToken = Boolean(process.env.DUCKDNS_TOKEN);
     const { fullDomain } = (typeof setupFpvPhoneAndDuckDnsManager === 'function')
       ? setupFpvPhoneAndDuckDnsManager()
       : { fullDomain: 'vr-cam-fpv.duckdns.org' };
 
     console.log(`[HTTPS WebXR 360] Mở trên Meta Quest Browser (như dmnshd.gg) tại: https://localhost:8443`);
     console.log(`[HTTPS LAN] https://${lan}:8443`);
-    console.log(`[HTTPS DuckDNS] https://${fullDomain}:8443`);
+    if (hasDuckToken) {
+      console.log(`[HTTPS DuckDNS] https://${fullDomain}:8443`);
+    } else {
+      console.log(`[HTTPS DuckDNS] ⚠️ Chưa cấu hình DUCKDNS_TOKEN trong config/.env -> Tự động dùng LAN IP của máy bạn: https://${lan}:8443`);
+    }
 
     try {
       const qrcode = require('qrcode-terminal');
@@ -1797,20 +1802,36 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       const passengerDuckUrl = `https://${fullDomain}:8443/?mode=passenger_mobile`;
       const passengerLanUrl = `http://${lan}:8080/?mode=passenger_mobile`;
 
-      console.log('\n======================================================================');
-      console.log('🏠 [MÃ QR 1A - NỘI BỘ WI-FI / HOTSPOT] CAMERA FPV (LET\'S ENCRYPT SSL XANH):');
-      console.log('👉 Quét bằng iPhone/Android kẹp trên xe khi dùng Wi-Fi cá nhân hoặc Hotspot');
-      console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${fpvDuckUrl}`);
-      console.log('======================================================================');
-      qrcode.generate(fpvDuckUrl, { small: true });
+      const activeFpvQrUrl = hasDuckToken ? fpvDuckUrl : fpvLanUrl;
+      const activePassengerQrUrl = hasDuckToken ? passengerDuckUrl : passengerLanUrl;
 
       console.log('\n======================================================================');
-      console.log('📱 [MÃ QR 2] ĐIỆN THOẠI HÀNH KHÁCH / GHẾ PHỤ (XEM 3D & ĐIỀU KHIỂN YOUTUBE):');
-      console.log('👉 Quét bằng điện thoại để ngồi ghế sau xe Rolls-Royce nghe nhạc & xem phim');
-      console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${passengerDuckUrl}`);
+      if (hasDuckToken) {
+        console.log('🏠 [MÃ QR 1A - NỘI BỘ WI-FI / HOTSPOT] CAMERA FPV (DUCKDNS SSL XANH):');
+        console.log('👉 Quét bằng iPhone/Android kẹp trên xe để phát Camera Kính Lái & Kính Hậu');
+        console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${fpvDuckUrl}`);
+      } else {
+        console.log('🏠 [MÃ QR 1A - NỘI BỘ WI-FI / HOTSPOT] CAMERA FPV (LAN IP TRỰC TIẾP):');
+        console.log('👉 Quét bằng iPhone/Android kẹp trên xe để phát Camera Kính Lái & Kính Hậu');
+        console.log(`🔗 URL LAN Trực Tiếp (Máy của bạn): ${fpvLanUrl}`);
+        console.log(`ℹ️ Mẹo: Nếu muốn dùng tên miền SSL DuckDNS, xin token từ bạn và điền vào config/.env`);
+      }
       console.log('======================================================================');
-      qrcode.generate(passengerDuckUrl, { small: true });
-      console.log(`ℹ️ Link Ghế Phụ dự phòng Wi-Fi LAN (HTTP 0 Cảnh Báo): ${passengerLanUrl}\n`);
+      qrcode.generate(activeFpvQrUrl, { small: true });
+
+      console.log('\n======================================================================');
+      if (hasDuckToken) {
+        console.log('📱 [MÃ QR 2] ĐIỆN THOẠI HÀNH KHÁCH / GHẾ PHỤ (XEM 3D & ĐIỀU KHIỂN YOUTUBE):');
+        console.log('👉 Quét bằng điện thoại để ngồi ghế sau xe Rolls-Royce nghe nhạc & xem phim');
+        console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${passengerDuckUrl}`);
+      } else {
+        console.log('📱 [MÃ QR 2] ĐIỆN THOẠI HÀNH KHÁCH / GHẾ PHỤ (LAN IP TRỰC TIẾP):');
+        console.log('👉 Quét bằng điện thoại để ngồi ghế sau xe Rolls-Royce nghe nhạc & xem phim');
+        console.log(`🔗 URL LAN Trực Tiếp (Máy của bạn): ${passengerLanUrl}`);
+      }
+      console.log('======================================================================');
+      qrcode.generate(activePassengerQrUrl, { small: true });
+      console.log(`ℹ️ Link Ghế Phụ dự phòng Wi-Fi LAN: ${passengerLanUrl}\n`);
 
       // Tự động khởi động Cloudflare Quick Tunnel cho Wi-Fi công cộng (AP Isolation Bypass)
       if (typeof startCloudflareTunnelManager === 'function') {
@@ -2873,9 +2894,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
   function startNativeWheelBridge() {
     if (process.platform !== 'win32') return;
-    const exePath = pathModule.join(__dirname, 'tools', 'gog808_native_bridge.exe');
-    if (!fsModule.existsSync(exePath)) {
-      console.warn('⚠️ [GOG808 NATIVE] Không tìm thấy file:', exePath);
+    const exeCandidates = [
+      pathModule.join(__dirname, 'tools', 'gog808_native_bridge.exe'),
+      pathModule.join(__dirname, '..', 'tools', 'gog808_native_bridge.exe'),
+      pathModule.resolve('tools/gog808_native_bridge.exe')
+    ];
+    const exePath = exeCandidates.find(p => fsModule.existsSync(p));
+    if (!exePath) {
+      console.warn('⚠️ [GOG808 NATIVE] Không tìm thấy file gog808_native_bridge.exe');
       return;
     }
 
