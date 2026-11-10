@@ -38,7 +38,7 @@
 - **Unified UDP Arbitration**: Duy nhất qua `sendRateLimitedEsp32Udp` & `udpOutSocket`. Khi vô lăng host hoạt động (`lastPhysicalWheelActiveAt < 350ms`), khóa lệnh web/quest. ESP32 nhận 1 gói 4-byte `[steerDeg (45..135°), escPulseUs (1100..1850µs)]`.
 - **Dual-Mode Arbitration**: Cắm USB GOG808 -> host lái (`WINMM_USB`). Rút USB -> server phát `connected: false`, Quest 3 (`META_QUEST`/`VR_CONTROLLER`) lái xe thật qua `sendRateLimitedEsp32Udp`. Cắm/rút không làm mất IP xe/cam.
 - **Anti-Thrash Camera Lock**: `connectEsp32Windshield` & `connectRearEsp32Camera` kiểm tra `CONNECTING`/`OPEN` giữ nguyên kết nối; polling giãn cách >=1500ms khi mất kết nối, tự ngắt khi WS chính mở.
-- **Wi-Fi Hotspot**: Phương án 1 (Hotspot điện thoại): SSID `BETEA` / pass `daihongbao`. Phương án 2 (Dự phòng): `Maximus` / `12345678`.
+- **Wi-Fi Hotspot**: Cấu hình SSID/Password độc lập qua `config/wifi_credentials.h` (sao chép từ `wifi_credentials.h.example`). Hỗ trợ tự động chuyển đổi giữa mạng chính và Hotspot 4G phát từ điện thoại. TUYỆT ĐỐI không commit thông tin mạng và mật khẩu thật lên Git.
 
 ## 6. Quy Tắc Quản Trị Từng Node & Kỷ Luật Token (Node Governance & Token Discipline)
 - **Node Chuyên Biệt**: Mọi tập tin phải nằm đúng node được chỉ định:

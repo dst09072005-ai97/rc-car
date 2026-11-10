@@ -11,8 +11,8 @@
 #if __has_include("wifi_credentials.h")
 #include "wifi_credentials.h"
 #else
-const char* WIFI_SSID = "BETEA";
-const char* WIFI_PASS = "daihongbao"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc tạo file wifi_credentials.h)
+const char* WIFI_SSID = "YOUR_WIFI_SSID";
+const char* WIFI_PASS = "YOUR_WIFI_PASSWORD"; // <-- Điền thông tin Wi-Fi của bạn vào đây (hoặc sao chép config/wifi_credentials.h.example thành wifi_credentials.h)
 #endif
 
 // Cổng UDP nhận lệnh điều khiển lái & ga từ Web Simulator (Mặc định 4210)
@@ -118,7 +118,7 @@ void setup() {
   Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 12) + L298N (IN1=14, IN2=27, PWM=13)");
 #endif
 
-  // Kết nối Wi-Fi (Tự động hỗ trợ cả mạng BETEA và Hotspot Maximus)
+  // Kết nối Wi-Fi (Tự động hỗ trợ mạng chính và Hotspot dự phòng)
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);

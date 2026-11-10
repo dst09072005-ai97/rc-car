@@ -106,7 +106,7 @@ void setup() {
     Serial.println("[OK] Cảm biến camera QVGA JPEG sẵn sàng (10MHz ổn định)!");
   }
 
-  // Kết nối Wi-Fi với công suất cực đại 19.5dBm (Hỗ trợ cả BETEA và Hotspot Maximus)
+  // Kết nối Wi-Fi với công suất cực đại 19.5dBm (Hỗ trợ cả mạng chính và Hotspot dự phòng)
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
