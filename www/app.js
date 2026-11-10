@@ -22029,7 +22029,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           steerNorm = -steerNorm;
         }
 
-        targetSteer = Math.round(90 - steerNorm * 45);
+        targetSteer = Math.round(90 + steerNorm * 45);
         targetSteer = THREE.MathUtils.clamp(targetSteer, 45, 135);
 
         // B. TÍNH TOÁN XUNG GA ĐIỀU TỐC ESC CHO XE RC (1300..1700µs - SIÊU MƯỢT EXPO + DAMPED)
@@ -22125,7 +22125,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           carControlPacket.escPulseUs = throttle;
         }
         carControlPacket.gear = state.gearIndex === 1 ? 'R' : 'D';
-        carControlPacket.steeringNorm = Number(((90 - steer) / 45.0).toFixed(4));
+        carControlPacket.steeringNorm = Number(((steer - 90) / 45.0).toFixed(4));
         carControlPacket.throttleNorm = Number(((throttle - 1500) / 350.0).toFixed(4));
         mpSocket.send(JSON.stringify(carControlPacket));
 

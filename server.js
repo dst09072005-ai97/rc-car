@@ -577,7 +577,7 @@ function sendUdpCarCommand(steer, throttle) {
   // Ưu tiên ủy thác toàn bộ qua sendRateLimitedEsp32Udp duy nhất có bộ trọng tài phần cứng và slew rate chống giật
   if (typeof globalThis.sendRateLimitedEsp32Udp === 'function') {
     const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-    const sNorm = (90 - rawS) / 45;
+    const sNorm = (rawS - 90) / 45;
     const rawT = Math.max(1050, Math.min(1950, Math.round(Number(throttle) || 1500)));
     const dNorm = (rawT - 1500) / 350;
     globalThis.sendRateLimitedEsp32Udp(sNorm, dNorm, rawT, (rawT < 1490 ? 'R' : 'D'), 'UDP_CAR_CMD');
@@ -1453,7 +1453,7 @@ function computeSafeEscPulseUs(msg) {
             sNorm = Math.max(-1, Math.min(1, Number(data.steeringNorm ?? data.steerNorm) || 0));
           } else if (data.steeringDeg !== undefined || (data.steer !== undefined && Math.abs(Number(data.steer)) > 1.5)) {
             const rawS = Math.max(45, Math.min(135, Math.round(Number(data.steeringDeg ?? data.steer) || 90)));
-            sNorm = (90 - rawS) / 45;
+            sNorm = (rawS - 90) / 45;
           }
 
           let dNorm = 0;
@@ -2657,7 +2657,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     if (isInputActive) {
       rcArbitration.idleNeutralCount = 0;
-      if (source === 'WHEEL_BRIDGE' || source === 'WINMM_USB') {
+      if (source === 'WINMM_USB') {
         rcArbitration.lastPhysicalWheelActiveAt = now;
       }
     } else {
@@ -2668,8 +2668,9 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       }
     }
 
-    // Khóa trọng tài: Nếu vô lăng USB trên host đang hoạt động, bỏ qua mọi nguồn khác
-    if ((source === 'QUEST_CAR_CONTROL' || source === 'UDP_CAR_CMD') &&
+    // Khóa trọng tài: Nếu vô lăng USB vật lý trên host (WINMM_USB) đang hoạt động,
+    // TUYỆT ĐỐI BỎ QUA mọi nguồn điều khiển khác (WHEEL_BRIDGE, QUEST_CAR_CONTROL, UDP_CAR_CMD, v.v.)
+    if (source !== 'WINMM_USB' &&
         (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS)) {
       return;
     }
@@ -2696,8 +2697,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       }
     }
 
-    // Góc lái chuẩn RC Servo: 45° (phải) .. 90° (thẳng) .. 135° (trái)
-    let steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
+    // Góc lái chuẩn RC Servo: 45° (trái) .. 90° (thẳng) .. 135° (phải)
+    let steerDeg = Math.max(45, Math.min(135, Math.round(90 + sNorm * 45)));
     let targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
 
     // KHÓA AN TOÀN KHỞI ĐỘNG (Startup Safety Gate 3.0s):
@@ -2730,10 +2731,12 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     const escPulseUs = rcArbitration.currentSlewEscUs;
 
     // Giới hạn tần số gửi gói tin UDP:
-    // - Khi đang thay đổi: tối đa 40Hz (25ms)
-    // - Khi giữ nguyên: chỉ gửi heartbeat 250ms để duy trì failsafe ESP32
+    // - Khi xe đang có thao tác lái/ga: duy trì dòng xung liên tục ~22Hz (45ms) để servo giữ góc vững, tuyệt đối không bị dính failsafe ESP32 500ms
+    // - Khi xe đứng yên ở neutral: giãn cách heartbeat 250ms để tiết kiệm băng thông và chống tràn log
+    const isActivelyControlling = (sNorm !== 0 || dNorm !== 0 || targetEscUs !== 1500 || steerDeg !== 90);
+    const keepaliveIntervalMs = isActivelyControlling ? 45 : 250;
     const changed = (steerDeg !== rcArbitration.lastSentSteerDeg) || (escPulseUs !== rcArbitration.lastSentEscUs);
-    if (!changed && (now - rcArbitration.lastUdpSendMs < 250)) return;
+    if (!changed && (now - rcArbitration.lastUdpSendMs < keepaliveIntervalMs)) return;
     if (now - rcArbitration.lastUdpSendMs < 25) return;
 
     rcArbitration.lastUdpSendMs = now;
@@ -2742,7 +2745,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     // --- CƠ CHẾ LOG SỰ KIỆN DUY NHẤT (STRICT EVENT-DRIVEN: CHỈ IN 1 LẦN KHI SỰ KIỆN THAY ĐỔI) ---
     const action = escPulseUs > 1520 ? 'TIẾN' : (escPulseUs < 1480 ? 'LÙI' : 'DỪNG');
-    const steerSector = steerDeg < 85 ? 'PHẢI' : (steerDeg > 95 ? 'TRÁI' : 'THẲNG');
+    const steerSector = steerDeg > 95 ? 'PHẢI' : (steerDeg < 85 ? 'TRÁI' : 'THẲNG');
     const actionChanged = action !== rcEventState.action;
     const steerSectorChanged = steerSector !== rcEventState.steerSector && (now - (rcEventState.lastLoggedSteerTime || 0) > 600);
 
@@ -2941,7 +2944,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             brakePercent: Math.round(brakeNorm * 100),
             reversePercent: gear === 'R' ? Math.round(brakeNorm * 100) : Math.round(reverseNorm * 100),
             gear,
-            steer: Math.max(45, Math.min(135, Math.round(90 - steerNorm * 45))),
+            steer: Math.max(45, Math.min(135, Math.round(90 + steerNorm * 45))),
             throttle: Math.max(1000, Math.min(2000, Math.round(1500 + driveNorm * 260))),
             buttonEvents,
             seq: latestBridgeState.seq,
@@ -2968,7 +2971,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             sNorm = Number(data.steeringNorm ?? data.steerNorm ?? 0);
           } else if (data.steer !== undefined || data.steeringDeg !== undefined) {
             const rawS = Math.max(45, Math.min(135, Math.round(Number(data.steer ?? data.steeringDeg) || 90)));
-            sNorm = (90 - rawS) / 45;
+            sNorm = (rawS - 90) / 45;
           }
           let dNorm = 0;
           let explicitPulse = null;
@@ -3087,7 +3090,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               brakePercent: Math.round(data.brakeNorm * 100),
               reversePercent: Math.round(data.reverseNorm * 100),
               gear: data.gear,
-              steer: Math.max(45, Math.min(135, Math.round(90 - data.steerNorm * 45))),
+              steer: Math.max(45, Math.min(135, Math.round(90 + data.steerNorm * 45))),
               throttle: Math.max(1000, Math.min(2000, Math.round(1500 + data.driveNorm * 260))),
               buttonEvents: [],
               seq: data.seq,
