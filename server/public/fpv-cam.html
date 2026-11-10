@@ -11,7 +11,8 @@
     .viewport-box { position: relative; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; margin: 0 auto 10px; border: 2px solid #00e5ff; border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.2); }
     .viewport-box.rear-box { border-color: #ffd60a; box-shadow: 0 4px 16px rgba(255, 214, 10, 0.2); }
     canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
-    video { display: none; }
+    /* QUAN TRỌNG: KHÔNG dùng display:none vì iOS WebKit sẽ dừng giải mã video! Dùng offscreen ẩn */
+    video { position: fixed; top: -9999px; left: -9999px; width: 320px; height: 240px; opacity: 0.01; pointer-events: none; z-index: -100; }
     .badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.85); color: #ffd60a; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-family: monospace; backdrop-filter: blur(4px); text-align: left; }
     .gear-badge { position: absolute; top: 6px; right: 6px; background: #00e5ff; color: #000; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 900; transition: background 0.2s ease; }
     .gear-badge.reverse { background: #ff3b30; color: #fff; }
@@ -32,26 +33,26 @@
 <body>
   <div class="title">📡 CAMERA FPV THAY NÓNG (SONG CAM ĐỒNG THỜI &amp; TỰ ĐỔI SỐ)</div>
 
-  <!-- KHUNG 1: KÍNH CHẮN GIÓ (CAM MŨI XE) -->
+  <!-- KHUNG 1: KÍNH CHẮN GIÓ (CAM SAU - MŨI XE) -->
   <div class="viewport-box" id="box-front">
     <video id="raw-video-front" autoplay playsinline muted></video>
     <canvas id="crop-preview-front" width="854" height="480"></canvas>
-    <div class="badge" id="hud-info-front">🚘 Kính Chắn Gió: Chờ...</div>
+    <div class="badge" id="hud-info-front">🚘 Kính Chắn Gió: Chờ kích hoạt...</div>
     <div class="gear-badge" id="gear-indicator">SỐ TIẾN (D)</div>
-    <div class="cam-label">🚘 KÍNH CHẮN GIÓ (MŨI XE)</div>
+    <div class="cam-label">🚘 KÍNH CHẮN GIÓ (CAM SAU - MŨI XE)</div>
   </div>
 
-  <!-- KHUNG 2: GƯƠNG CHIẾU HẬU (CAM LÙI XE) - KHÔNG GIAN RIÊNG BIỆT KHÔNG CHE KHUẤT KHUNG CHÍNH -->
+  <!-- KHUNG 2: GƯƠNG CHIẾU HẬU (CAM TRƯỚC - LÙI XE) - KHÔNG GIAN RIÊNG BIỆT KHÔNG CHE KHUẤT KHUNG CHÍNH -->
   <div class="viewport-box rear-box" id="box-rear" style="display: none;">
     <video id="raw-video-rear" autoplay playsinline muted></video>
     <canvas id="crop-preview-rear" width="640" height="360"></canvas>
-    <div class="badge" id="hud-info-rear" style="color: #ffd60a;">🔙 Gương Hậu: Sẵn sàng...</div>
+    <div class="badge" id="hud-info-rear" style="color: #ffd60a;">🔙 Gương Hậu: Chờ...</div>
     <div class="gear-badge reverse">SỐ LÙI (R)</div>
-    <div class="cam-label rear">🔙 GƯƠNG HẬU (CAM LÙI)</div>
+    <div class="cam-label rear">🔙 GƯƠNG HẬU (CAM TRƯỚC - LÙI XE)</div>
   </div>
 
-  <div class="tip-box">
-    💡 <b>Gợi ý khung hình:</b> Khi dựng đứng điện thoại, hãy bấm <b>📐 Khung: FULL 16:9</b> để lấp đầy tràn viền khung chữ nhật, hoặc <b>🔄 XOAY 90°</b> khi kẹp điện thoại đứng trên xe RC!
+  <div class="tip-box" id="tip-info">
+    💡 <b>Gợi ý khung hình:</b> Chế độ mặc định <b>📐 Khung: FULL 16:9</b> lấp kín 100% khung chữ nhật. Nếu iPhone bị giới hạn phần cứng khi chạy 2 cam, hãy chọn <b>🚘 Tự Đổi Số D/R</b> để có tốc độ 60 FPS mượt nhất!
   </div>
 
   <!-- Chọn chế độ độ nét & tốc độ khung hình -->
@@ -65,9 +66,10 @@
   <div class="grid">
     <button id="btn-toggle-fov" style="background:#2a9d8f; color:#fff; border-color:#2a9d8f;">📐 Khung: FULL 16:9 (TRÀN KHUNG)</button>
     <button id="btn-toggle-ultra" style="background:#4a154b; color:#ffd60a; border-color:#e01e5a;">📸 Chọn Ống Kính 0.5x Siêu Rộng</button>
-    <button id="btn-start" class="primary">🚀 KÍCH HOẠT CẢ 2 CAM TRƯỚC &amp; SAU (SONG CAM)</button>
+    <button id="btn-toggle-mode" style="grid-column: span 2; background:#1d3557; color:#00ff88; border-color:#00e5ff;">🔀 Chế Độ: SONG CAM ĐỒNG THỜI (BẬT/TẮT)</button>
+    <button id="btn-start" class="primary">🚀 BẬT CAMERA FPV NGAY BÂY GIỜ</button>
     <button id="btn-front" class="active">🚘 Kính Chắn Gió (Cam Sau)</button>
-    <button id="btn-rear">🔙 Kính Hậu (Cam Trước)</button>
+    <button id="btn-rear">🔙 Gương Hậu (Cam Trước)</button>
     <select id="lens-select" style="grid-column: span 2;">
       <option value="">🔍 Ống kính mặc định theo hướng (Trước/Sau)</option>
     </select>
@@ -91,9 +93,11 @@
     const hudRear = document.getElementById('hud-info-rear');
     const gearEl = document.getElementById('gear-indicator');
     const logEl = document.getElementById('log');
+    const tipEl = document.getElementById('tip-info');
     const lensSelect = document.getElementById('lens-select');
     const btnToggleFov = document.getElementById('btn-toggle-fov');
     const btnToggleUltra = document.getElementById('btn-toggle-ultra');
+    const btnToggleMode = document.getElementById('btn-toggle-mode');
 
     // Preset cấu hình chất lượng & tốc độ truyền hình ảnh
     const PRESETS = {
@@ -128,7 +132,7 @@
 
     let ws = null;
     let targetSurface = 'front'; // 'front' | 'rear'
-    let isDualCameraMode = false;
+    let isDualCameraMode = true; // Mặc định thử chế độ Song Cam đồng thời
 
     let streamFront = null;
     let streamRear = null;
@@ -140,10 +144,14 @@
     let fpsRear = 0;
     let lastFpsTime = performance.now();
     let lastCaptureTs = 0;
+    let frameTick = 0;
 
     let cachedFrontCameraId = '';
     let cachedRearCameraId = '';
     let cachedUltraWideCameraId = '';
+
+    let lastFrontFrameTime = 0;
+    let frontFreezeCheckTimer = null;
 
     // 1. Giữ màn hình điện thoại luôn sáng
     async function keepScreenAwake() {
@@ -181,7 +189,7 @@
       } catch (e) {}
     }
 
-    // 3. Khởi tạo Camera Sau (Mũi Xe / Kính Chắn Gió)
+    // 3. Khởi tạo Camera Sau (Mũi Xe / Kính Chắn Gió) - Cân bằng độ phân giải để tránh bão hòa ISP
     async function startFrontCamera(specificDeviceId = '') {
       try {
         if (streamFront) {
@@ -189,19 +197,22 @@
           streamFront = null;
         }
         const knownId = specificDeviceId || cachedUltraWideCameraId || cachedRearCameraId;
+        const targetW = isDualCameraMode ? Math.min(854, currentPreset.frontW) : currentPreset.frontW;
+        const targetH = isDualCameraMode ? Math.min(480, currentPreset.frontH) : currentPreset.frontH;
+        
         const constraints = knownId
-          ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.frontW }, height: { ideal: currentPreset.frontH } } }
-          : { audio: false, video: { facingMode: 'environment', width: { ideal: currentPreset.frontW }, height: { ideal: currentPreset.frontH } } };
+          ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: targetW }, height: { ideal: targetH }, frameRate: { ideal: 30, max: 30 } } }
+          : { audio: false, video: { facingMode: 'environment', width: { ideal: targetW }, height: { ideal: targetH }, frameRate: { ideal: 30, max: 30 } } };
 
         streamFront = await navigator.mediaDevices.getUserMedia(constraints);
         videoFront.srcObject = streamFront;
-        await videoFront.play();
+        await videoFront.play().catch(() => {});
         return true;
       } catch (e) {
         try {
           streamFront = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'environment' } });
           videoFront.srcObject = streamFront;
-          await videoFront.play();
+          await videoFront.play().catch(() => {});
           return true;
         } catch (err) {
           logEl.textContent = '❌ Không thể mở Cam Mũi Xe: ' + err.message;
@@ -218,22 +229,24 @@
           streamRear = null;
         }
         const knownId = specificDeviceId || cachedFrontCameraId;
+        const targetW = Math.min(640, currentPreset.rearW);
+        const targetH = Math.min(360, currentPreset.rearH);
+
         const constraints = knownId
-          ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.rearW }, height: { ideal: currentPreset.rearH } } }
-          : { audio: false, video: { facingMode: 'user', width: { ideal: currentPreset.rearW }, height: { ideal: currentPreset.rearH } } };
+          ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: targetW }, height: { ideal: targetH }, frameRate: { ideal: 24, max: 24 } } }
+          : { audio: false, video: { facingMode: 'user', width: { ideal: targetW }, height: { ideal: targetH }, frameRate: { ideal: 24, max: 24 } } };
 
         streamRear = await navigator.mediaDevices.getUserMedia(constraints);
         videoRear.srcObject = streamRear;
-        await videoRear.play();
+        await videoRear.play().catch(() => {});
         return true;
       } catch (e) {
         try {
           streamRear = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: 'user' } });
           videoRear.srcObject = streamRear;
-          await videoRear.play();
+          await videoRear.play().catch(() => {});
           return true;
         } catch (err) {
-          // Trình duyệt không hỗ trợ mở 2 camera phần cứng cùng lúc
           return false;
         }
       }
@@ -266,6 +279,12 @@
             gearEl.classList.toggle('reverse', isReverse);
             document.getElementById('btn-front').classList.toggle('active', !isReverse);
             document.getElementById('btn-rear').classList.toggle('active', isReverse);
+
+            // Nếu đang ở chế độ Tự Đổi D/R (1 Cam tại 1 thời điểm) thì tự động kích hoạt cam tương ứng
+            if (!isDualCameraMode) {
+              if (isReverse) startRearCamera();
+              else startFrontCamera(lensSelect.value);
+            }
           }
         } catch (e) {}
       };
@@ -329,15 +348,16 @@
       ctxEl.restore();
     }
 
-    // 7. Vòng lặp truyền khung hình siêu mượt Zero-Lag (Loại bỏ 100% Microtask lag của ArrayBuffer)
-    const headerFront = new Uint8Array([0x52, 0x43, 0x46, 0x01]); // 'RCF' + 0x01 (Front)
-    const headerRear = new Uint8Array([0x52, 0x43, 0x46, 0x02]);  // 'RCF' + 0x02 (Rear)
+    // 7. Vòng lặp truyền khung hình siêu mượt: XEN KẼ KHUNG HÌNH (INTERLEAVED 2:1) ĐỂ BẢO VỆ CAM SAU
+    const headerFront = new Uint8Array([0x52, 0x43, 0x46, 0x01]); // 'RCF' + 0x01 (Front - Kính Chắn Gió)
+    const headerRear = new Uint8Array([0x52, 0x43, 0x46, 0x02]);  // 'RCF' + 0x02 (Rear - Gương Hậu)
 
     function processLoop(now) {
       requestAnimationFrame(processLoop);
 
       if (now - lastCaptureTs < currentPreset.intervalMs) return;
       lastCaptureTs = now;
+      frameTick++;
 
       // Cập nhật thống kê FPS mỗi giây
       if (now - lastFpsTime >= 1000) {
@@ -350,31 +370,37 @@
 
       if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 98304) return;
 
-      // A. Truyền Cam Mũi Xe (Kính Chắn Gió)
-      if (!isBusyEncodingFront && videoFront && videoFront.readyState >= 2) {
-        renderVideoToCanvas(videoFront, canvasFront, ctxFront, false);
-        isBusyEncodingFront = true;
-        canvasFront.toBlob((blob) => {
-          isBusyEncodingFront = false;
-          if (blob && ws && ws.readyState === WebSocket.OPEN) {
-            // [ZERO-COPY BLOB PACKET] Gửi trực tiếp Blob qua WebSocket, không tốn thời gian await arrayBuffer()
-            ws.send(new Blob([headerFront, blob], { type: 'image/jpeg' }));
-            fpsFront++;
-          }
-        }, 'image/jpeg', currentPreset.quality);
-      }
+      // Xếp lịch mã hóa xen kẽ: Ưu tiên Cam Sau (Mũi Xe) chiếm 2/3 khung hình, Cam Trước (Gương Hậu) chiếm 1/3
+      // Tránh nghẽn hàng đợi JPEG Hardware Encoder trên iPhone
+      const isRearTurn = isDualCameraMode && (frameTick % 3 === 0);
 
-      // B. Truyền Cam Lùi Xe (Gương Chiếu Hậu) - Chạy đồng thời khi Song Cam kích hoạt
-      if (isDualCameraMode && !isBusyEncodingRear && videoRear && videoRear.readyState >= 2) {
-        renderVideoToCanvas(videoRear, canvasRear, ctxRear, true);
-        isBusyEncodingRear = true;
-        canvasRear.toBlob((blob) => {
-          isBusyEncodingRear = false;
-          if (blob && ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(new Blob([headerRear, blob], { type: 'image/jpeg' }));
-            fpsRear++;
-          }
-        }, 'image/jpeg', Math.max(0.55, currentPreset.quality - 0.08));
+      if (isRearTurn) {
+        // Lượt của Cam Trước (Gương Chiếu Hậu)
+        if (!isBusyEncodingRear && videoRear && videoRear.readyState >= 2 && videoRear.videoWidth > 0) {
+          renderVideoToCanvas(videoRear, canvasRear, ctxRear, true);
+          isBusyEncodingRear = true;
+          canvasRear.toBlob((blob) => {
+            isBusyEncodingRear = false;
+            if (blob && ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(new Blob([headerRear, blob], { type: 'image/jpeg' }));
+              fpsRear++;
+            }
+          }, 'image/jpeg', 0.60);
+        }
+      } else {
+        // Lượt của Cam Sau (Kính Chắn Gió Mũi Xe - Luôn được ưu tiên mượt mà!)
+        if (!isBusyEncodingFront && videoFront && videoFront.readyState >= 2 && videoFront.videoWidth > 0) {
+          renderVideoToCanvas(videoFront, canvasFront, ctxFront, false);
+          lastFrontFrameTime = now;
+          isBusyEncodingFront = true;
+          canvasFront.toBlob((blob) => {
+            isBusyEncodingFront = false;
+            if (blob && ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(new Blob([headerFront, blob], { type: 'image/jpeg' }));
+              fpsFront++;
+            }
+          }, 'image/jpeg', currentPreset.quality);
+        }
       }
     }
 
@@ -395,7 +421,30 @@
       }
     };
 
-    // 9. Chuyển đổi Preset chất lượng
+    // 9. Chuyển đổi giữa [Song Cam 2 Mặt] và [Tự Đổi Thông Minh D/R]
+    btnToggleMode.onclick = () => {
+      isDualCameraMode = !isDualCameraMode;
+      if (isDualCameraMode) {
+        btnToggleMode.textContent = '🔀 Chế Độ: SONG CAM ĐỒNG THỜI (ĐANG BẬT)';
+        btnToggleMode.style.background = '#005f73';
+        btnToggleMode.style.color = '#00ff88';
+        boxRear.style.display = 'block';
+        logEl.textContent = '⚡ Đã bật Song Cam (Truyền Kính Lái + Gương Hậu cùng lúc)';
+        startRearCamera();
+      } else {
+        btnToggleMode.textContent = '🔀 Chế Độ: TỰ ĐỔI SỐ D/R (SIÊU MƯỢT 60 FPS)';
+        btnToggleMode.style.background = '#6b705c';
+        btnToggleMode.style.color = '#fff';
+        boxRear.style.display = 'none';
+        logEl.textContent = '🚘 Đã bật chế độ Tự Đổi Số D/R (Cam Sau chạy 100% tài nguyên, cực mượt)';
+        if (streamRear) {
+          streamRear.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+          streamRear = null;
+        }
+      }
+    };
+
+    // 10. Chuyển đổi Preset chất lượng
     function setQualityPreset(key) {
       if (!PRESETS[key]) return;
       currentPresetKey = key;
@@ -415,7 +464,7 @@
     document.getElementById('mode-hd').onclick = () => setQualityPreset('hd');
     document.getElementById('mode-zerolag').onclick = () => setQualityPreset('zerolag');
 
-    // 10. Chọn Ống Kính 0.5x Siêu Rộng
+    // 11. Chọn Ống Kính 0.5x Siêu Rộng
     btnToggleUltra.onclick = async () => {
       if (cachedUltraWideCameraId) {
         lensSelect.value = cachedUltraWideCameraId;
@@ -432,33 +481,61 @@
       }
     };
 
-    // 11. KÍCH HOẠT CẢ 2 CAM TRƯỚC & SAU (DUAL CAM PIPELINE)
+    // 12. KÍCH HOẠT CAMERA FPV
     document.getElementById('btn-start').onclick = async () => {
       await keepScreenAwake();
       await loadCameraLenses();
       connectToServer();
 
-      logEl.textContent = '🔄 Đang khởi tạo luồng Song Cam Trước & Sau...';
+      logEl.textContent = '🔄 Đang khởi tạo luồng Camera Mũi Xe (Cam Sau)...';
 
-      // Mở Cam Sau (Kính Chắn Gió)
+      // 1. Mở Cam Sau (Kính Chắn Gió) trước tiên và đảm bảo nhận hình ảnh ổn định
       const frontOk = await startFrontCamera();
-      // Mở Cam Trước (Gương Hậu)
-      const rearOk = await startRearCamera();
+      if (!frontOk) {
+        logEl.textContent = '❌ Không thể kích hoạt Cam Sau. Hãy kiểm tra quyền truy cập Camera!';
+        return;
+      }
 
-      if (frontOk && rearOk) {
-        isDualCameraMode = true;
-        boxRear.style.display = 'block';
-        logEl.textContent = '🔥 [SONG CAM HOÀN TẤT] Cả 2 Cam đang truyền trực tiếp đồng thời lên Kính Quest 3!';
-        document.getElementById('btn-start').textContent = '✅ ĐANG CHẠY SONG CAM ĐỒNG THỜI (2 MẶT)';
-        document.getElementById('btn-start').style.background = '#00e5ff';
-      } else if (frontOk) {
-        isDualCameraMode = false;
+      // Đợi 200ms để phần cứng ISP ổn định luồng Cam Sau
+      await new Promise(r => setTimeout(r, 200));
+
+      if (isDualCameraMode) {
+        logEl.textContent = '🔄 Đang khởi tạo thêm Cam Lùi (Cam Trước)...';
+        const rearOk = await startRearCamera();
+
+        if (rearOk) {
+          boxRear.style.display = 'block';
+          logEl.textContent = '🔥 [SONG CAM HOÀN TẤT] Cả 2 Cam đang truyền trực tiếp đồng thời lên Kính Quest 3!';
+          document.getElementById('btn-start').textContent = '✅ ĐANG PHÁT SONG CAM (KÍNH LÁI & GƯƠNG HẬU)';
+          document.getElementById('btn-start').style.background = '#00e5ff';
+        } else {
+          // Fallback mượt mà nếu phần cứng iPhone không cho phép mở 2 cam đồng thời
+          isDualCameraMode = false;
+          boxRear.style.display = 'none';
+          btnToggleMode.textContent = '🔀 Chế Độ: TỰ ĐỔI SỐ D/R (SIÊU MƯỢT)';
+          logEl.textContent = '🚘 [TỰ ĐỔI SỐ D/R] Đã dồn 100% tài nguyên cho Cam Sau (Tự đổi Cam Lùi khi lùi R)';
+          document.getElementById('btn-start').textContent = '🚘 ĐANG PHÁT CAM SAU (TỰ ĐỔI SỐ D/R)';
+        }
+      } else {
         boxRear.style.display = 'none';
-        logEl.textContent = '🚘 [CHẾ ĐỘ TỰ ĐỔI D/R] Đang phát Cam Mũi Xe (Tự đổi sang Cam Lùi khi vào số R)';
-        document.getElementById('btn-start').textContent = '🚘 ĐANG CHẠY CAM MŨI XE (TỰ ĐỔI D/R)';
+        logEl.textContent = '🚘 [CHẾ ĐỘ TỰ ĐỔI D/R] Đang phát Cam Sau (Mũi Xe)';
+        document.getElementById('btn-start').textContent = '🚘 ĐANG PHÁT CAM SAU (TỰ ĐỔI SỐ D/R)';
       }
 
       requestAnimationFrame(processLoop);
+
+      // Giám sát sức khỏe luồng Cam Sau: Nếu bị đứng hình do xung đột phần cứng, tự động phục hồi ngay
+      if (!frontFreezeCheckTimer) {
+        frontFreezeCheckTimer = setInterval(() => {
+          if (videoFront && streamFront && streamFront.active) {
+            const track = streamFront.getVideoTracks()[0];
+            if (track && (track.muted || track.readyState === 'ended')) {
+              console.warn('[WATCHDOG] Cam Sau bị muted do xung đột phần cứng! Đang tự phục hồi...');
+              startFrontCamera(lensSelect.value);
+            }
+          }
+        }, 2000);
+      }
     };
 
     // Chuyển nhanh giữa Cam Mũi và Cam Lùi thủ công
@@ -468,9 +545,7 @@
       document.getElementById('btn-rear').classList.remove('active');
       gearEl.textContent = 'SỐ TIẾN (D) - CAM MŨI';
       gearEl.classList.remove('reverse');
-      if (!isDualCameraMode) {
-        await startFrontCamera(lensSelect.value);
-      }
+      await startFrontCamera(lensSelect.value);
     };
 
     document.getElementById('btn-rear').onclick = async () => {
@@ -479,9 +554,7 @@
       document.getElementById('btn-front').classList.remove('active');
       gearEl.textContent = 'SỐ LÙI (R) - CAM SAU';
       gearEl.classList.add('reverse');
-      if (!isDualCameraMode) {
-        await startRearCamera();
-      }
+      await startRearCamera();
     };
 
     lensSelect.onchange = () => {

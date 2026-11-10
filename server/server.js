@@ -1679,15 +1679,28 @@ function startCloudflareTunnelManager(httpPort = 8080) {
       }
     });
 
-    const cleanup = () => {
+    const shutdownServer = (code = 0) => {
+      console.log('\n🛑 [SHUTDOWN] Đang đóng Server và giải phóng đường hầm Cloudflare...');
       if (cloudflareTunnelProcess) {
-        try { cloudflareTunnelProcess.kill(); } catch (e) {}
+        try {
+          const pid = cloudflareTunnelProcess.pid;
+          if (process.platform === 'win32') {
+            require('child_process').execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
+          } else {
+            cloudflareTunnelProcess.kill('SIGKILL');
+          }
+        } catch (e) {}
         cloudflareTunnelProcess = null;
       }
+      process.exit(code);
     };
-    process.on('exit', cleanup);
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+    process.on('SIGINT', () => shutdownServer(0));
+    process.on('SIGTERM', () => shutdownServer(0));
+    process.on('exit', () => {
+      if (cloudflareTunnelProcess) {
+        try { cloudflareTunnelProcess.kill(); } catch (e) {}
+      }
+    });
   } catch (err) {
     console.warn(`[Cloudflare Tunnel] Không thể khởi động đường hầm: ${err.message}`);
   }
