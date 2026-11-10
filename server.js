@@ -1700,7 +1700,7 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     try {
       const qrcode = require('qrcode-terminal');
       const fpvDuckUrl = `https://${fullDomain}:8443/fpv-cam.html`;
-      const fpvLanUrl = `http://${lan}:8080/fpv-cam.html`;
+      const fpvLanUrl = `https://${lan}:8443/fpv-cam.html`;
       const passengerDuckUrl = `https://${fullDomain}:8443/?mode=passenger_mobile`;
       const passengerLanUrl = `http://${lan}:8080/?mode=passenger_mobile`;
 
@@ -1710,7 +1710,10 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
       console.log(`🔗 URL SSL Xanh (DuckDNS 0 Cảnh Báo): ${fpvDuckUrl}`);
       console.log('======================================================================');
       qrcode.generate(fpvDuckUrl, { small: true });
-      console.log(`ℹ️ Link Camera FPV dự phòng Wi-Fi LAN: ${fpvLanUrl}`);
+      console.log(`ℹ️ Link Camera FPV dự phòng LAN HTTPS: ${fpvLanUrl}`);
+      console.log(`💡 MẸO FIX TIMEOUT CHO MÁY KHÁC (do Apple iCloud Private Relay / DoH chặn tên miền nội bộ):`);
+      console.log(`   1. Trên iPhone máy kia: Vào Cài đặt -> Wi-Fi -> Bấm chữ (i) -> TẮT "Giới hạn theo dõi địa chỉ IP"`);
+      console.log(`   2. Hoặc mở trực tiếp link LAN: ${fpvLanUrl} (Bấm "Xem chứng nhận" -> "Tiếp tục truy cập")`);
 
       console.log('\n======================================================================');
       console.log('📱 [MÃ QR 2] ĐIỆN THOẠI HÀNH KHÁCH / GHẾ PHỤ (XEM 3D & ĐIỀU KHIỂN YOUTUBE):');
