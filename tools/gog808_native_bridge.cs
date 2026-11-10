@@ -97,7 +97,7 @@ public class Gog808Bridge {
 
         Console.Error.WriteLine(string.Format("CALIBRATED_REST: JoyId={0} X={1} Y={2} Z={3} R={4} Btns=0x{5:X}", joyId, restX, restY, restZ, restR, restBtns));
 
-        float lastSteer = 999f, lastGas = 999f, lastBrake = 999f;
+        float lastSteer = 999f, lastGas = 999f, lastBrake = 999f, lastRev = 999f;
         int lastSendTime = 0;
         int seq = 0;
         int startTick = Environment.TickCount;
@@ -129,14 +129,15 @@ public class Gog808Bridge {
             if (rawBrake < 0.04f) rawBrake = 0f;
             if (rawRev < 0.04f) rawRev = 0f;
 
-            // Brake overrides gas
-            if (rawBrake > 0.05f && rawGas > 0.05f) rawGas = 0f;
+            // Brake & Reverse pedals (hỗ trợ cả bộ 2 bàn đạp và 3 bàn đạp GOG R808)
+            float pedalRev = Math.Max(rawBrake, rawRev);
+            if (pedalRev > 0.05f && rawGas > 0.05f) rawGas = 0f;
 
             string gear = "D";
             float driveNorm = 0f;
-            if (rawBrake > 0.04f) {
-                gear = (rawGas < 0.03f) ? "R" : "D";
-                driveNorm = -rawBrake;
+            if (pedalRev > 0.04f) {
+                gear = "R";
+                driveNorm = -pedalRev;
             } else if (rawGas > 0.04f) {
                 gear = "D";
                 driveNorm = rawGas;
@@ -152,13 +153,14 @@ public class Gog808Bridge {
             }
 
             int now = Environment.TickCount;
-            bool changed = Math.Abs(steerNorm - lastSteer) > 0.005f || Math.Abs(rawGas - lastGas) > 0.005f || Math.Abs(rawBrake - lastBrake) > 0.005f;
+            bool changed = Math.Abs(steerNorm - lastSteer) > 0.005f || Math.Abs(rawGas - lastGas) > 0.005f || Math.Abs(rawBrake - lastBrake) > 0.005f || Math.Abs(rawRev - lastRev) > 0.005f;
             bool heartbeat = (now - lastSendTime) > 80;
 
             if (changed || heartbeat) {
                 lastSteer = steerNorm;
                 lastGas = rawGas;
                 lastBrake = rawBrake;
+                lastRev = rawRev;
                 lastSendTime = now;
                 seq = (seq + 1) % 1000000;
 

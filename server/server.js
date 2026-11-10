@@ -577,7 +577,7 @@ function sendUdpCarCommand(steer, throttle) {
   // Ưu tiên ủy thác toàn bộ qua sendRateLimitedEsp32Udp duy nhất có bộ trọng tài phần cứng và slew rate chống giật
   if (typeof globalThis.sendRateLimitedEsp32Udp === 'function') {
     const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-    const sNorm = (90 - rawS) / 45;
+    const sNorm = (rawS - 90) / 45;
     const rawT = Math.max(1050, Math.min(1950, Math.round(Number(throttle) || 1500)));
     const dNorm = (rawT - 1500) / 350;
     globalThis.sendRateLimitedEsp32Udp(sNorm, dNorm, rawT, (rawT < 1490 ? 'R' : 'D'), 'UDP_CAR_CMD');
@@ -632,7 +632,7 @@ udpServer.on('message', (msg, rinfo) => {
         lastLoggedTime: prevCam ? prevCam.lastLoggedTime : 0
       };
 
-      if (isNewCam || (now - (discoveredEsp32Cams[role].lastLoggedTime || 0) > 30000)) {
+      if (isNewCam) {
         discoveredEsp32Cams[role].lastLoggedTime = now;
         console.log(`📡 [AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${newCamIp}:${newCamPort}`);
         if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
@@ -651,8 +651,8 @@ udpServer.on('message', (msg, rinfo) => {
       esp32CarConfig.port = newPort;
       esp32CarConfig.lastSeen = now;
 
-      // Chống flood log Terminal: Chỉ in log 1 lần khi IP/Port thay đổi hoặc tối đa 1 lần mỗi 30 giây
-      if (isNewCar || (now - (esp32CarConfig.lastLoggedTime || 0) > 30000)) {
+      // Chống flood log Terminal: Chỉ in log khi IP/Port của mạch xe mới xuất hiện
+      if (isNewCar) {
         esp32CarConfig.lastLoggedTime = now;
         console.log(`📡 [AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${newIp}:${newPort}`);
         if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
@@ -2612,7 +2612,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     action: 'DỪNG',
     steerSector: 'THẲNG',
     lastLoggedSteerDeg: 90,
-    lastLoggedEscUs: 1500
+    lastLoggedEscUs: 1500,
+    lastLoggedSteerTime: 0
+  };
+
+  // Trạng thái FSM Double-Tap để kích hoạt số Lùi cho ESC chuẩn RC
+  const escDoubleTapState = {
+    state: 'IDLE', // 'IDLE' | 'PRIME_BRAKE' | 'PRIME_NEUTRAL' | 'REVERSING'
+    stateStartTime: 0
   };
 
   // Tính toán xung điều tốc ESC mượt mà, triệt tiêu giật bắn và tiếng kêu hú motor
@@ -2695,9 +2702,55 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       }
     }
 
-    // Góc lái chuẩn: 45° (phải) .. 90° (thẳng) .. 135° (trái)
-    let steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
-    let targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
+    // Góc lái chuẩn RC Servo: 45° (phải) .. 90° (thẳng) .. 135° (trái)
+    let steerDeg = Math.max(45, Math.min(135, Math.round(90 + sNorm * 45)));
+    let targetEscUs = 1500;
+
+    // FSM KÍCH HOẠT SỐ LÙI CHUẨN RC ESC (DOUBLE-TAP REVERSE PROTOCOL):
+    // Đa số ESC xe RC (Hobbywing, WP-1060, ESC chổi than) mặc định ở chế độ Tiến/Phanh/Lùi (F/B/R).
+    // Khi đang ở Neutral mà đạp lùi lần đầu, ESC coi đó là PHANH (Brake).
+    // Để vào số LÙI (Reverse), tín hiệu bắt buộc phải qua chu trình: Phanh (~70ms) -> Trả Neutral (~80ms) -> Vào Ga Lùi!
+    if (dNorm < -0.045 || effectiveGear === 'R') {
+      if (rcArbitration.currentSlewEscUs > 1520) {
+        // Đang chạy tiến mà đạp phanh -> Kích hoạt phanh hãm tốc độ
+        targetEscUs = 1400;
+        escDoubleTapState.state = 'IDLE';
+      } else {
+        // Xe đã dừng hoặc đang ở dải Neutral -> Chạy FSM nhấp lùi double-tap
+        if (escDoubleTapState.state === 'IDLE') {
+          escDoubleTapState.state = 'PRIME_BRAKE';
+          escDoubleTapState.stateStartTime = now;
+          targetEscUs = 1400;
+          rcArbitration.currentSlewEscUs = 1400;
+        } else if (escDoubleTapState.state === 'PRIME_BRAKE') {
+          if (now - escDoubleTapState.stateStartTime < 70) {
+            targetEscUs = 1400;
+            rcArbitration.currentSlewEscUs = 1400;
+          } else {
+            escDoubleTapState.state = 'PRIME_NEUTRAL';
+            targetEscUs = 1500;
+            rcArbitration.currentSlewEscUs = 1500;
+          }
+        } else if (escDoubleTapState.state === 'PRIME_NEUTRAL') {
+          if (now - escDoubleTapState.stateStartTime < 150) {
+            targetEscUs = 1500;
+            rcArbitration.currentSlewEscUs = 1500;
+          } else {
+            escDoubleTapState.state = 'REVERSING';
+            targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, 'R');
+            rcArbitration.currentSlewEscUs = targetEscUs;
+          }
+        } else {
+          // 'REVERSING': Đã kích hoạt số lùi thành công, điều khiển ga lùi mượt mà tỉ lệ thuận
+          targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, 'R');
+        }
+      }
+    } else {
+      // Khi ở Neutral hoặc Tiến: Reset FSM về IDLE
+      escDoubleTapState.state = 'IDLE';
+      escDoubleTapState.stateStartTime = 0;
+      targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
+    }
 
     // KHÓA AN TOÀN KHỞI ĐỘNG (Startup Safety Gate 3.0s):
     // Trong 3 giây đầu khi server mới bật, KHÓA CỨNG xung ga ở 1500µs (Neutral) và lái ở 90°,
@@ -2706,6 +2759,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       steerDeg = 90;
       targetEscUs = 1500;
       rcArbitration.currentSlewEscUs = 1500;
+      escDoubleTapState.state = 'IDLE';
     }
 
     // Bộ lọc Slew Rate Limiter chống giật xung đột ngột
@@ -2739,29 +2793,30 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     rcArbitration.lastSentSteerDeg = steerDeg;
     rcArbitration.lastSentEscUs = escPulseUs;
 
-    // --- CƠ CHẾ LOG SỰ KIỆN DUY NHẤT (EVENT-DRIVEN: CHỈ IN 1 LẦN KHI SỰ KIỆN THAY ĐỔI) ---
+    // --- CƠ CHẾ LOG SỰ KIỆN DUY NHẤT (STRICT EVENT-DRIVEN: CHỈ IN 1 LẦN KHI SỰ KIỆN THAY ĐỔI) ---
     const action = escPulseUs > 1520 ? 'TIẾN' : (escPulseUs < 1480 ? 'LÙI' : 'DỪNG');
-    const steerSector = steerDeg < 80 ? 'TRÁI' : (steerDeg > 100 ? 'PHẢI' : 'THẲNG');
+    const steerSector = steerDeg < 85 ? 'PHẢI' : (steerDeg > 95 ? 'TRÁI' : 'THẲNG');
     const actionChanged = action !== rcEventState.action;
-    const steerSectorChanged = steerSector !== rcEventState.steerSector;
-    const steerAngleJumped = Math.abs(steerDeg - rcEventState.lastLoggedSteerDeg) >= 20;
-    const pulseJumped = action !== 'DỪNG' && Math.abs(escPulseUs - rcEventState.lastLoggedEscUs) >= 80;
+    const steerSectorChanged = steerSector !== rcEventState.steerSector && (now - (rcEventState.lastLoggedSteerTime || 0) > 600);
 
-    if (actionChanged || steerSectorChanged || steerAngleJumped || pulseJumped) {
+    if (actionChanged || steerSectorChanged) {
       rcEventState.action = action;
       rcEventState.steerSector = steerSector;
       rcEventState.lastLoggedSteerDeg = steerDeg;
       rcEventState.lastLoggedEscUs = escPulseUs;
 
-      if (action === 'TIẾN') {
-        const gasPct = Math.round(((escPulseUs - 1520) / 330) * 100);
-        console.log(`🏎️ [RC EVENT] TIẾN | Ga: ${escPulseUs}µs (~${Math.max(1, gasPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
-      } else if (action === 'LÙI') {
-        const revPct = Math.round(((1480 - escPulseUs) / 380) * 100);
-        console.log(`🔙 [RC EVENT] LÙI | Ga: ${escPulseUs}µs (~${Math.max(1, revPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
-      } else if (actionChanged && action === 'DỪNG') {
-        console.log(`🛑 [RC EVENT] DỪNG XE (Neutral 1500µs) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
-      } else if (steerSectorChanged || steerAngleJumped) {
+      if (actionChanged) {
+        if (action === 'TIẾN') {
+          const gasPct = Math.round(((escPulseUs - 1520) / 330) * 100);
+          console.log(`🏎️ [RC EVENT] TIẾN | Ga: ${escPulseUs}µs (~${Math.max(1, gasPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
+        } else if (action === 'LÙI') {
+          const revPct = Math.round(((1480 - escPulseUs) / 380) * 100);
+          console.log(`🔙 [RC EVENT] LÙI | Ga: ${escPulseUs}µs (~${Math.max(1, revPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
+        } else if (action === 'DỪNG') {
+          console.log(`🛑 [RC EVENT] DỪNG XE (Neutral 1500µs) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
+        }
+      } else if (steerSectorChanged) {
+        rcEventState.lastLoggedSteerTime = now;
         console.log(`🛞 [RC EVENT] ĐÁNH LÁI: ${steerDeg}° [${steerSector}] (${source})`);
       }
     }
@@ -2964,7 +3019,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             sNorm = Number(data.steeringNorm ?? data.steerNorm ?? 0);
           } else if (data.steer !== undefined || data.steeringDeg !== undefined) {
             const rawS = Math.max(45, Math.min(135, Math.round(Number(data.steer ?? data.steeringDeg) || 90)));
-            sNorm = (90 - rawS) / 45;
+            sNorm = (rawS - 90) / 45;
           }
           let dNorm = 0;
           let explicitPulse = null;
