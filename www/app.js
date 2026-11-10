@@ -22039,7 +22039,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           steerNorm = -steerNorm;
         }
 
-        targetSteer = Math.round(90 + steerNorm * 45);
+        targetSteer = Math.round(90 - steerNorm * 45);
         targetSteer = THREE.MathUtils.clamp(targetSteer, 45, 135);
 
         // B. TÍNH TOÁN XUNG GA ĐIỀU TỐC ESC CHO XE RC (1300..1700µs - SIÊU MƯỢT EXPO + DAMPED)

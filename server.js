@@ -2697,8 +2697,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       }
     }
 
-    // Góc lái chuẩn RC Servo: 45° (trái) .. 90° (thẳng) .. 135° (phải)
-    let steerDeg = Math.max(45, Math.min(135, Math.round(90 + sNorm * 45)));
+    // Góc lái chuẩn RC Servo (V504): 45° (phải) .. 90° (thẳng) .. 135° (trái)
+    let steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
     let targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
 
     // KHÓA AN TOÀN KHỞI ĐỘNG (Startup Safety Gate 3.0s):
@@ -2745,7 +2745,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     // --- CƠ CHẾ LOG SỰ KIỆN DUY NHẤT (STRICT EVENT-DRIVEN: CHỈ IN 1 LẦN KHI SỰ KIỆN THAY ĐỔI) ---
     const action = escPulseUs > 1520 ? 'TIẾN' : (escPulseUs < 1480 ? 'LÙI' : 'DỪNG');
-    const steerSector = steerDeg > 95 ? 'PHẢI' : (steerDeg < 85 ? 'TRÁI' : 'THẲNG');
+    const steerSector = steerDeg < 85 ? 'PHẢI' : (steerDeg > 95 ? 'TRÁI' : 'THẲNG');
     const actionChanged = action !== rcEventState.action;
     const steerSectorChanged = steerSector !== rcEventState.steerSector && (now - (rcEventState.lastLoggedSteerTime || 0) > 600);
 
@@ -3097,7 +3097,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
               brakePercent: Math.round(data.brakeNorm * 100),
               reversePercent: Math.round(data.reverseNorm * 100),
               gear: data.gear,
-              steer: Math.max(45, Math.min(135, Math.round(90 + data.steerNorm * 45))),
+              steer: Math.max(45, Math.min(135, Math.round(90 - data.steerNorm * 45))),
               throttle: Math.max(1000, Math.min(2000, Math.round(1500 + data.driveNorm * 260))),
               buttonEvents: [],
               seq: data.seq,
