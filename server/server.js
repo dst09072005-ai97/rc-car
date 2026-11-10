@@ -2556,48 +2556,64 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     WHEEL_PRIORITY_WINDOW_MS: 350
   };
 
-  // Tính toán xung điều tốc ESC mượt mà, triệt tiêu giật bắn khi bắt đầu đạp ga (Smooth Expo Curve)
+  // Trạng thái sự kiện gần nhất để chỉ in log 1 lần khi có thay đổi thực tế (Event-driven)
+  const rcEventState = {
+    action: 'DỪNG',
+    steerSector: 'THẲNG',
+    lastLoggedSteerDeg: 90,
+    lastLoggedEscUs: 1500
+  };
+
+  // Tính toán xung điều tốc ESC mượt mà, triệt tiêu giật bắn và tiếng kêu hú motor
   function computeAsymmetricEscPulseUs(driveNorm, explicitPulseUs, gear = 'D') {
     const rawExplicit = Number(explicitPulseUs);
-    if (Number.isFinite(rawExplicit) && rawExplicit >= 1000 && rawExplicit <= 2000 && Math.abs(rawExplicit - 1500) > 5) {
+    if (Number.isFinite(rawExplicit) && rawExplicit >= 1000 && rawExplicit <= 2000 && Math.abs(rawExplicit - 1500) > 15) {
       if (rawExplicit < 1445 && rawExplicit >= 1250 && driveNorm < -0.05) {
         const revMag = Math.min(1, Math.max(0, Math.abs(driveNorm)));
-        return Math.round(1482 - Math.pow(revMag, 1.35) * 382);
+        return Math.round(1480 - Math.pow(revMag, 1.35) * 380);
       }
       return Math.round(rawExplicit);
     }
 
     const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-    // Vùng chết an toàn 2%
-    if (Math.abs(d) <= 0.02) return 1500;
+    // Vùng chết an toàn 4.5% - Đảm bảo triệt để khi xe dừng/khởi động server ESC nhận chuẩn 1500µs, không bao giờ bị kêu hú motor
+    if (Math.abs(d) <= 0.045) return 1500;
 
-    if (d > 0.02 && gear !== 'R') {
-      // TIẾN: Ramping êm ái từ 1518µs đến 1850µs (Lũy thừa 1.6 chống giật bắn)
-      const normD = (d - 0.02) / 0.98;
-      return Math.round(1518 + Math.pow(normD, 1.6) * 332);
+    if (d > 0.045 && gear !== 'R') {
+      // TIẾN: Ramping êm ái từ 1522µs đến 1850µs (Lũy thừa 1.6 chống giật bắn)
+      const normD = (d - 0.045) / 0.955;
+      return Math.round(1522 + Math.pow(normD, 1.6) * 328);
     } else {
-      // LÙI: Ramping êm ái từ 1482µs xuống 1100µs (Lũy thừa 1.35 đạt 1100µs chuẩn v504)
-      const revMag = (Math.abs(d) - 0.02) / 0.98;
-      return Math.round(1482 - Math.pow(revMag, 1.35) * 382);
+      // LÙI: Ramping êm ái từ 1478µs xuống 1100µs (Lũy thừa 1.35 đạt 1100µs chuẩn v504)
+      const revMag = (Math.abs(d) - 0.045) / 0.955;
+      return Math.round(1478 - Math.pow(revMag, 1.35) * 378);
     }
   }
 
   // Hàm duy nhất gửi tín hiệu qua UDP tới mạch ESP32 Xe RC
   function sendRateLimitedEsp32Udp(steerNorm, driveNorm, explicitEscPulseUs, gear = 'D', source = 'UNKNOWN') {
     const now = Date.now();
-    const sNorm = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
-    const dNorm = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-    const isInputActive = Math.abs(sNorm) > 0.025 || Math.abs(dNorm) > 0.025 ||
-      (Number.isFinite(Number(explicitEscPulseUs)) && Math.abs(Number(explicitEscPulseUs) - 1500) > 15);
+    const rawS = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
+    const rawD = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
 
-    if (source === 'WHEEL_BRIDGE' || source === 'WINMM_USB') {
-      if (isInputActive) {
+    // Lọc deadzone sạch sẽ chống rung cảm biến DirectInput
+    const sNorm = Math.abs(rawS) < 0.035 ? 0 : rawS;
+    const dNorm = Math.abs(rawD) < 0.045 ? 0 : rawD;
+
+    const isInputActive = sNorm !== 0 || dNorm !== 0 ||
+      (Number.isFinite(Number(explicitEscPulseUs)) && Math.abs(Number(explicitEscPulseUs) - 1500) > 20);
+
+    if (isInputActive) {
+      rcArbitration.idleNeutralCount = 0;
+      if (source === 'WHEEL_BRIDGE' || source === 'WINMM_USB') {
         rcArbitration.lastPhysicalWheelActiveAt = now;
-        rcArbitration.idleNeutralCount = 0;
-      } else {
-        rcArbitration.idleNeutralCount++;
-        if (rcArbitration.idleNeutralCount > 2) return;
       }
+    } else {
+      // Khi xe ở trạng thái nghỉ: Chỉ gửi đúng 2 gói tin Neutral (90°, 1500µs) cho ESP32 ngắt hẳn động cơ, sau đó DỪNG GỬI để chống hú motor và chống nghẽn mạng!
+      if (rcArbitration.idleNeutralCount >= 2) {
+        return;
+      }
+      rcArbitration.idleNeutralCount++;
     }
 
     // Khóa trọng tài: Nếu vô lăng USB trên host đang hoạt động, bỏ qua mọi nguồn khác
@@ -2630,17 +2646,17 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     // Góc lái chuẩn: 45° (phải) .. 90° (thẳng) .. 135° (trái)
     const steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
-    const targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, gear);
+    const targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
 
     // Bộ lọc Slew Rate Limiter chống giật xung đột ngột
     if (targetEscUs === 1500) {
-      const maxDrop = 80;
-      if (rcArbitration.currentSlewEscUs > 1500) {
-        rcArbitration.currentSlewEscUs = Math.max(1500, rcArbitration.currentSlewEscUs - maxDrop);
-      } else if (rcArbitration.currentSlewEscUs < 1500) {
-        rcArbitration.currentSlewEscUs = Math.min(1500, rcArbitration.currentSlewEscUs + maxDrop);
-      } else {
+      // Trả về neutral dứt khoát triệt tiêu tiếng hú motor
+      if (Math.abs(rcArbitration.currentSlewEscUs - 1500) <= 80) {
         rcArbitration.currentSlewEscUs = 1500;
+      } else if (rcArbitration.currentSlewEscUs > 1500) {
+        rcArbitration.currentSlewEscUs -= 80;
+      } else {
+        rcArbitration.currentSlewEscUs += 80;
       }
     } else {
       const maxSlewPerTick = 45;
@@ -2652,13 +2668,43 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     }
     const escPulseUs = rcArbitration.currentSlewEscUs;
 
+    // Giới hạn tần số gửi gói tin UDP:
+    // - Khi đang thay đổi: tối đa 40Hz (25ms)
+    // - Khi giữ nguyên: chỉ gửi heartbeat 250ms để duy trì failsafe ESP32
     const changed = (steerDeg !== rcArbitration.lastSentSteerDeg) || (escPulseUs !== rcArbitration.lastSentEscUs);
-    if (!changed && (now - rcArbitration.lastUdpSendMs < 200)) return;
+    if (!changed && (now - rcArbitration.lastUdpSendMs < 250)) return;
     if (now - rcArbitration.lastUdpSendMs < 25) return;
 
     rcArbitration.lastUdpSendMs = now;
     rcArbitration.lastSentSteerDeg = steerDeg;
     rcArbitration.lastSentEscUs = escPulseUs;
+
+    // --- CƠ CHẾ LOG SỰ KIỆN DUY NHẤT (EVENT-DRIVEN: CHỈ IN 1 LẦN KHI SỰ KIỆN THAY ĐỔI) ---
+    const action = escPulseUs > 1520 ? 'TIẾN' : (escPulseUs < 1480 ? 'LÙI' : 'DỪNG');
+    const steerSector = steerDeg < 80 ? 'TRÁI' : (steerDeg > 100 ? 'PHẢI' : 'THẲNG');
+    const actionChanged = action !== rcEventState.action;
+    const steerSectorChanged = steerSector !== rcEventState.steerSector;
+    const steerAngleJumped = Math.abs(steerDeg - rcEventState.lastLoggedSteerDeg) >= 20;
+    const pulseJumped = action !== 'DỪNG' && Math.abs(escPulseUs - rcEventState.lastLoggedEscUs) >= 80;
+
+    if (actionChanged || steerSectorChanged || steerAngleJumped || pulseJumped) {
+      rcEventState.action = action;
+      rcEventState.steerSector = steerSector;
+      rcEventState.lastLoggedSteerDeg = steerDeg;
+      rcEventState.lastLoggedEscUs = escPulseUs;
+
+      if (action === 'TIẾN') {
+        const gasPct = Math.round(((escPulseUs - 1520) / 330) * 100);
+        console.log(`🏎️ [RC EVENT] TIẾN | Ga: ${escPulseUs}µs (~${Math.max(1, gasPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
+      } else if (action === 'LÙI') {
+        const revPct = Math.round(((1480 - escPulseUs) / 380) * 100);
+        console.log(`🔙 [RC EVENT] LÙI | Ga: ${escPulseUs}µs (~${Math.max(1, revPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
+      } else if (actionChanged && action === 'DỪNG') {
+        console.log(`🛑 [RC EVENT] DỪNG XE (Neutral 1500µs) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
+      } else if (steerSectorChanged || steerAngleJumped) {
+        console.log(`🛞 [RC EVENT] ĐÁNH LÁI: ${steerDeg}° [${steerSector}] (${source})`);
+      }
+    }
 
     const targetHost = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.ip) ? esp32CarConfig.ip : ESP32_HOST;
     const targetPort = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.port) ? esp32CarConfig.port : ESP32_PORT;
@@ -2668,17 +2714,9 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     pkt.writeInt16LE(escPulseUs, 2);
     try {
       udpOutSocket.send(pkt, 0, 4, targetPort, targetHost, (err) => {
-        if (!err) {
-          if (typeof esp32CarConfig !== 'undefined' && esp32CarConfig) {
-            esp32CarConfig.lastSentTime = now;
-            esp32CarConfig.packetsSent++;
-          }
-          const key = `${steerDeg}_${escPulseUs}`;
-          if (key !== lastUdpCommandLog && (steerDeg !== 90 || escPulseUs !== 1500)) {
-            lastUdpCommandLog = key;
-            const dirStr = escPulseUs > 1520 ? 'TIẾN' : (escPulseUs < 1480 ? 'LÙI' : 'DỪNG');
-            console.log(`[RC CAR UDP 4210] -> ${targetHost}: Lái ${steerDeg}°, Ga ${escPulseUs}µs [${dirStr}] (${source})`);
-          }
+        if (!err && typeof esp32CarConfig !== 'undefined' && esp32CarConfig) {
+          esp32CarConfig.lastSentTime = now;
+          esp32CarConfig.packetsSent++;
         }
       });
     } catch (e) {}
@@ -2967,16 +3005,6 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             latestBridgeState.timestamp = Date.now();
 
             const clientCount = (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) ? activeMultiplayerSockets.size : 0;
-
-            // In log 50Hz MƯỢT lên Terminal đúng như cam kết khi có thao tác lái/đạp chân
-            const isActive = Math.abs(data.steerNorm) > 0.02 || data.gasNorm > 0.02 || data.brakeNorm > 0.02 || data.reverseNorm > 0.02;
-            const now = Date.now();
-            if (isActive && (now - lastTerminalLogMs > 400)) {
-              lastTerminalLogMs = now;
-              console.log(
-                `🛞 [GOG808 50Hz MƯỢT] Lái: ${data.steerNorm.toFixed(2)} | Ga: ${data.gasNorm.toFixed(2)} | Phanh: ${data.brakeNorm.toFixed(2)} | Số ${data.gear} | Kính: ${clientCount}`
-              );
-            }
 
             const outMsg = JSON.stringify({
               type: 'WHEEL_BRIDGE_STATE',
