@@ -210,8 +210,9 @@ void loop() {
         } else {
           int sVal = 90, tVal = 1500;
           if (sscanf(str, "{\"steer\":%d,\"throttle\":%d}", &sVal, &tVal) == 2) {
-            sVal = constrain(sVal, 45, 135);
-            tVal = constrain(tVal, 1100, 1850);
+            sVal = (sVal < 30 || sVal > 150) ? 90 : constrain(sVal, 45, 135);
+            // KHÓA AN TOÀN TUYỆT ĐỐI: Xung ga ngoài dải 1000..2000µs (ví dụ = 0) bắt buộc gán 1500µs (DỪNG)!
+            tVal = (tVal < 1000 || tVal > 2000) ? 1500 : constrain(tVal, 1100, 1850);
             steeringServo.write(sVal);
             applyMotorThrottle(tVal);
             currentSteer = sVal;
@@ -227,8 +228,21 @@ void loop() {
         int16_t steer = (int16_t)(buffer[0] | (buffer[1] << 8));
         int16_t throttle = (int16_t)(buffer[2] | (buffer[3] << 8));
 
-        steer = constrain(steer, 45, 135);          // 45° (trái) -> 90° (thẳng) -> 135° (phải)
-        throttle = constrain(throttle, 1100, 1850); // 1100us (lùi) -> 1500us (dừng) -> 1850us (tiến)
+        // KHÓA AN TOÀN TUYỆT ĐỐI CHO XE RC:
+        // Nếu xung ga nhận được nằm ngoài 1000..2000µs (ví dụ = 0 hoặc gói rác),
+        // BẮT BUỘC gán về mức Neutral an toàn 1500µs (DỪNG ĐỘNG CƠ)!
+        // Tuyệt đối không dùng constrain(throttle, 1100, 1850) vì throttle = 0 sẽ bị ép thành 1100µs (LÙI HẾT GA)!
+        if (throttle < 1000 || throttle > 2000) {
+          throttle = 1500;
+        } else {
+          throttle = constrain(throttle, 1100, 1850);
+        }
+
+        if (steer < 30 || steer > 150) {
+          steer = 90;
+        } else {
+          steer = constrain(steer, 45, 135);
+        }
 
         if (steer != currentSteer) {
           steeringServo.write(steer);
@@ -246,7 +260,7 @@ void loop() {
 
   // 2. TỰ ĐỘNG DỪNG AN TOÀN (FAILSAFE):
   // Nếu Web đóng, ngắt kết nối hoặc mất mạng quá 0.5s -> Xe lập tức dừng ga và trả thẳng lái!
-  if (!isFailsafeActive && (millis() - lastPacketTime > FAILSAFE_TIMEOUT_MS)) {
+  if (millis() - lastPacketTime > FAILSAFE_TIMEOUT_MS) {
     applyMotorThrottle(1500); // Tự động ngắt ga về 0 (Neutral)
     steeringServo.write(90);  // Trả thẳng góc lái
     currentSteer = 90;

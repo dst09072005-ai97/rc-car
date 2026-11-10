@@ -33,13 +33,18 @@ public class Gog808Bridge {
     static float ReadAxis(int current, int rest) {
         if (rest > 45000) {
             // Rests near 65535, pressed moves down to 0
-            return Clamp((float)(rest - current) / (float)rest, 0f, 1f);
-        } else if (rest < 5000) {
+            float diff = (float)(rest - current);
+            if (diff < 3500f) return 0f; // 5.5% deadzone an toàn
+            return Clamp(diff / (float)rest, 0f, 1f);
+        } else if (rest < 8000) {
             // Rests near 0, pressed moves up to 65535
-            return Clamp((float)(current - rest) / 65535f, 0f, 1f);
+            float diff = (float)(current - rest);
+            if (diff < 3500f) return 0f; // 5.5% deadzone an toàn
+            return Clamp(diff / 65535f, 0f, 1f);
         } else {
-            // Rests near center (e.g. 32767)
+            // Rests near center (e.g. 32767) - CHỈ nhận khi lệch lớn (>15%) để chống phantom throttle khi cắm vô lăng
             float diff = Math.Abs(current - rest);
+            if (diff < 5000f) return 0f; // 15% deadzone an toàn chống nhiễu
             return Clamp(diff / 32767f, 0f, 1f);
         }
     }
@@ -64,16 +69,16 @@ public class Gog808Bridge {
             return;
         }
 
-        // Settle driver (discard frame 0 which is 32767 dummy)
-        Thread.Sleep(300);
+        // Settle driver (discard initial dummy frames)
+        Thread.Sleep(500);
         joyGetPosEx(joyId, ref info);
-        Thread.Sleep(50);
+        Thread.Sleep(100);
         joyGetPosEx(joyId, ref info);
 
-        // Calibrate resting values over 10 samples
+        // Calibrate resting values over 15 samples
         int sumX = 0, sumY = 0, sumZ = 0, sumR = 0, restBtns = 0;
         int samples = 0;
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 15; i++) {
             if (joyGetPosEx(joyId, ref info) == 0) {
                 sumX += info.dwXpos;
                 sumY += info.dwYpos;
@@ -95,6 +100,7 @@ public class Gog808Bridge {
         float lastSteer = 999f, lastGas = 999f, lastBrake = 999f;
         int lastSendTime = 0;
         int seq = 0;
+        int startTick = Environment.TickCount;
 
         while (true) {
             int res = joyGetPosEx(joyId, ref info);
@@ -134,6 +140,15 @@ public class Gog808Bridge {
             } else if (rawGas > 0.04f) {
                 gear = "D";
                 driveNorm = rawGas;
+            }
+
+            // Khóa an toàn 2.0s đầu sau khi bật bridge: Luôn giữ Neutral dừng xe tuyệt đối
+            if (Environment.TickCount - startTick < 2000) {
+                rawGas = 0f;
+                rawBrake = 0f;
+                rawRev = 0f;
+                driveNorm = 0f;
+                steerNorm = 0f;
             }
 
             int now = Environment.TickCount;

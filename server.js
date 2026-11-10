@@ -553,8 +553,23 @@ const esp32CarConfig = {
   port: 4210,
   lastSeen: Date.now(),
   lastSentTime: 0,
+  lastLoggedTime: 0,
   packetsSent: 0
 };
+
+// Hàm gửi xung Neutral trực tiếp tới ESP32 Car để arming an toàn ngay lập tức
+function sendDirectNeutralPulseToCar(targetIp, targetPort) {
+  if (!targetIp) return;
+  const p = Buffer.alloc(4);
+  p.writeInt16LE(90, 0);   // 90° thẳng lái
+  p.writeInt16LE(1500, 2); // 1500µs Neutral dừng an toàn tuyệt đối
+  try {
+    udpServer.send(p, 0, 4, Number(targetPort || 4210), targetIp, () => {});
+    if (typeof udpOutSocket !== 'undefined' && udpOutSocket) {
+      udpOutSocket.send(p, 0, 4, Number(targetPort || 4210), targetIp, () => {});
+    }
+  } catch (e) {}
+}
 
 // Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
 function sendUdpCarCommand(steer, throttle) {
@@ -601,26 +616,53 @@ udpServer.on('message', (msg, rinfo) => {
     const str = msg.toString().trim();
     const data = str.startsWith('{') ? JSON.parse(str) : {};
 
-    // Tự động nhận diện IP của ESP32 Camera (Cam trước hoặc Cam lùi) khi đổi Wi-Fi
+    // Tự động nhận diện IP của ESP32 Camera (Cam trước hoặc Cam lùi) khi đổi Wi-Fi (có chống spam flood log)
     if (data.type === 'ESP32_CAM' || data.type === 'ESP32_ANNOUNCE' || (data.cam && !data.speedKmh)) {
       const role = (data.role === 'rear' || data.cam === 'rear') ? 'rear' : 'front';
+      const newCamIp = rinfo.address;
+      const newCamPort = Number(data.port || 4213);
+      const prevCam = discoveredEsp32Cams[role];
+      const isNewCam = !prevCam || prevCam.ip !== newCamIp || prevCam.port !== newCamPort;
+      const now = Date.now();
+
       discoveredEsp32Cams[role] = {
-        ip: rinfo.address,
-        port: Number(data.port || 4213),
-        lastSeen: Date.now()
+        ip: newCamIp,
+        port: newCamPort,
+        lastSeen: now,
+        lastLoggedTime: prevCam ? prevCam.lastLoggedTime : 0
       };
-      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${rinfo.address}:${data.port || 4213}`);
-      if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+
+      if (isNewCam || (now - (discoveredEsp32Cams[role].lastLoggedTime || 0) > 30000)) {
+        discoveredEsp32Cams[role].lastLoggedTime = now;
+        console.log(`📡 [AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${newCamIp}:${newCamPort}`);
+        if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+      }
       return; // Chỉ cập nhật IP Camera, KHÔNG ghi đè telemetry xe!
     }
 
     // Tự động nhận diện IP của Mạch Lái Xe ESP32 (Controller GPIO 12/13 qua UDP 4210)
     if (data.type === 'ESP32_CAR' || data.type === 'ESP32_CAR_ANNOUNCE' || data.role === 'car') {
-      esp32CarConfig.ip = rinfo.address;
-      esp32CarConfig.port = Number(data.port || 4210);
-      esp32CarConfig.lastSeen = Date.now();
-      console.log(`[AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${rinfo.address}:${esp32CarConfig.port}`);
-      if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+      const newIp = rinfo.address;
+      const newPort = Number(data.port || 4210);
+      const isNewCar = (esp32CarConfig.ip !== newIp) || (esp32CarConfig.port !== newPort);
+      const now = Date.now();
+
+      esp32CarConfig.ip = newIp;
+      esp32CarConfig.port = newPort;
+      esp32CarConfig.lastSeen = now;
+
+      // Chống flood log Terminal: Chỉ in log 1 lần khi IP/Port thay đổi hoặc tối đa 1 lần mỗi 30 giây
+      if (isNewCar || (now - (esp32CarConfig.lastLoggedTime || 0) > 30000)) {
+        esp32CarConfig.lastLoggedTime = now;
+        console.log(`📡 [AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${newIp}:${newPort}`);
+        if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+      }
+
+      // ARMING KHÓA AN TOÀN TUYỆT ĐỐI (SAFETY ARMING):
+      // Khi vừa nhận diện xe hoặc kết nối mới, phát ngay lệnh Neutral 1500µs cho ESC để khóa motor dừng hẳn!
+      if (isNewCar) {
+        sendDirectNeutralPulseToCar(newIp, newPort);
+      }
       return;
     }
 
@@ -2273,7 +2315,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     const targetIp = rcHardwareState.ctrlIp;
     if (!targetIp || targetIp === '0.0.0.0') return;
 
-    // 1. Gửi gói UDP tốc độ cao (Hỗ trợ cả định dạng JSON, CSV "T,S,B,L,H\n" và Binary 6-byte cho ESP32)
+    // 1. Gửi gói UDP tốc độ cao (Hỗ trợ định dạng JSON, CSV và Binary cho các mạch phụ trợ ngoài cổng 4210)
     const jsonPacket = Buffer.from(JSON.stringify({ T: t, S: s, B: b, L: l, H: h, G: g, throttle: t, steer: s }) + '\n');
     const csvPacket = Buffer.from(`T:${t},S:${s},B:${b},L:${l},H:${h}\n`);
     const binPacket = Buffer.alloc(6);
@@ -2282,13 +2324,20 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     binPacket.writeUInt8(b, 4);
     binPacket.writeUInt8((l << 1) | h, 5);
 
-    const portsToTry = [rcHardwareState.ctrlUdpPort, 4210, 8888, 3333];
+    // Cổng chuẩn 4210 của ESP32 Car tuyệt đối không nhận gói PWM 6-byte hay JSON thô, mà gửi chuẩn 4-byte qua sendRateLimitedEsp32Udp
+    const portsToTry = [rcHardwareState.ctrlUdpPort, 8888, 3333].filter(p => Number(p) !== 4210);
     const uniquePorts = [...new Set(portsToTry)];
     uniquePorts.forEach((port) => {
       udpClient.send(jsonPacket, port, targetIp);
       udpClient.send(csvPacket, port, targetIp);
       udpClient.send(binPacket, port, targetIp);
     });
+
+    if (rcHardwareState.ctrlUdpPort === 4210 || !rcHardwareState.ctrlUdpPort) {
+      const sNorm = (payload.steering !== undefined) ? Math.max(-1, Math.min(1, Number(payload.steering) / 100)) : 0;
+      const dNorm = (payload.throttle !== undefined) ? Math.max(-1, Math.min(1, Number(payload.throttle) / 255)) : 0;
+      sendRateLimitedEsp32Udp(sNorm, dNorm, null, g, 'RC_DISPATCH');
+    }
 
     // 2. Gửi HTTP GET Relay (Giới hạn 12Hz để không làm nghẽn TCP stack của ESP32 nếu dùng WebServer)
     const now = Date.now();
@@ -2546,6 +2595,8 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   // ============================================================================
   // [V504 RESTORED + 1100µs REVERSE] BỘ TRỌNG TÀI ƯU TIÊN VÔ LĂNG & UDP 4210 CHUẨN
   // ============================================================================
+  const serverStartTime = Date.now();
+
   const rcArbitration = {
     lastPhysicalWheelActiveAt: 0,
     lastSentSteerDeg: 90,
@@ -2609,11 +2660,11 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         rcArbitration.lastPhysicalWheelActiveAt = now;
       }
     } else {
-      // Khi xe ở trạng thái nghỉ: Chỉ gửi đúng 2 gói tin Neutral (90°, 1500µs) cho ESP32 ngắt hẳn động cơ, sau đó DỪNG GỬI để chống hú motor và chống nghẽn mạng!
-      if (rcArbitration.idleNeutralCount >= 2) {
+      // Khi xe ở trạng thái nghỉ: Duy trì nhịp heartbeat 350ms gửi gói Neutral [90°, 1500µs]
+      // để duy trì failsafe ESP32 luôn an toàn, không bị mất tín hiệu hoặc nhiễu
+      if (now - rcArbitration.lastUdpSendMs < 350) {
         return;
       }
-      rcArbitration.idleNeutralCount++;
     }
 
     // Khóa trọng tài: Nếu vô lăng USB trên host đang hoạt động, bỏ qua mọi nguồn khác
@@ -2645,8 +2696,17 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     }
 
     // Góc lái chuẩn: 45° (phải) .. 90° (thẳng) .. 135° (trái)
-    const steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
-    const targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
+    let steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
+    let targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
+
+    // KHÓA AN TOÀN KHỞI ĐỘNG (Startup Safety Gate 3.0s):
+    // Trong 3 giây đầu khi server mới bật, KHÓA CỨNG xung ga ở 1500µs (Neutral) và lái ở 90°,
+    // tuyệt đối không phát bất kỳ xung ga tiến/lùi nào để chờ phần cứng và driver vô lăng ổn định!
+    if (now - serverStartTime < 3000) {
+      steerDeg = 90;
+      targetEscUs = 1500;
+      rcArbitration.currentSlewEscUs = 1500;
+    }
 
     // Bộ lọc Slew Rate Limiter chống giật xung đột ngột
     if (targetEscUs === 1500) {
