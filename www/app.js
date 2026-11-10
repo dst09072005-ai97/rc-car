@@ -2883,16 +2883,26 @@ renderer.setAnimationLoop(() => {
         if (gp.buttons[0]?.pressed || (gp.buttons[0]?.value || 0) > 0.35) padBrakeTrigger = true;
       }
 
+      // Tín hiệu điều khiển Vô lăng & Bàn đạp GOG R808:
+      const wheelObj = (typeof window !== 'undefined' && window._racingWheel && window._racingWheel.connected) ? window._racingWheel : null;
+      const isWheelActive = wheelObj && (Math.abs(wheelObj.rawSteer || 0) > 0.02 || Math.abs(wheelObj.steerAngleDeg || 0) > 2);
+      const wheelSteerNorm = isWheelActive ? (wheelObj.rawSteer ?? ((wheelObj.steerAngleDeg || 0) / 540)) : 0;
+      const wheelGas = (wheelObj && (wheelObj.gasPercent > 5 || (wheelObj.driveNorm || 0) > 0.05)) ? 1 : 0;
+      const wheelRev = (wheelObj && (wheelObj.reversePercent > 5 || (wheelObj.driveNorm || 0) < -0.05 || (wheelObj.gear === 'R' && (wheelObj.brakePercent || 0) > 5))) ? 1 : 0;
+      const wheelBrk = (wheelObj && wheelObj.gear !== 'R' && (wheelObj.brakePercent || 0) > 20) ? 1 : 0;
+
       // Tín hiệu điều khiển Tiến / Lùi / Phanh:
-      const wantGas = (keys.w || keys.ArrowUp || holdState.gas || holdState.up || padFwd > 0.15 || wheelWalkOrGas > 0.15) ? 1 : 0;
-      const wantReverse = (keys.s || keys.ArrowDown || holdState.down || padFwd < -0.15 || wheelWalkOrGas < -0.15) ? 1 : 0;
-      const wantBrake = (holdState.brake || padBrakeTrigger) ? 1 : 0;
+      const wantGas = (keys.w || keys.ArrowUp || holdState.gas || holdState.up || padFwd > 0.15 || wheelWalkOrGas > 0.15 || wheelGas) ? 1 : 0;
+      const wantReverse = (keys.s || keys.ArrowDown || holdState.down || padFwd < -0.15 || wheelWalkOrGas < -0.15 || wheelRev) ? 1 : 0;
+      const wantBrake = (holdState.brake || padBrakeTrigger || wheelBrk) ? 1 : 0;
 
       // Đánh lái Trái / Phải:
       const keySteer = (keys.d || keys.ArrowRight || holdState.right ? 1 : 0) - (keys.a || keys.ArrowLeft || holdState.left ? 1 : 0);
-      const activeSteer = Math.abs(padSteer) > 0.12 ? padSteer : keySteer;
+      const activeSteer = isWheelActive ? wheelSteerNorm : (Math.abs(padSteer) > 0.12 ? padSteer : keySteer);
       const steerRate = 340 * (state.rcSteerSensitivity || 1.0);
-      if (Math.abs(activeSteer) > 0.08) {
+      if (isWheelActive) {
+        state.steeringAngleDeg = THREE.MathUtils.clamp(wheelSteerNorm * 540, -540, 540);
+      } else if (Math.abs(activeSteer) > 0.08) {
         state.steeringAngleDeg = THREE.MathUtils.clamp(state.steeringAngleDeg + activeSteer * steerRate * dt, -540, 540);
       } else {
         state.steeringAngleDeg = THREE.MathUtils.lerp(state.steeringAngleDeg, 0, dt * 7.0);

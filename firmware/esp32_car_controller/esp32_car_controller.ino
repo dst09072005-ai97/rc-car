@@ -30,7 +30,8 @@ WiFiUDP udp;
 const int PIN_STATUS_LED = 2;
 
 // Chân điều khiển Servo bẻ lái (Trái / Phải)
-const int PIN_SERVO_STEER = 14; // Chân Servo Lái (Phím A/D)
+const int PIN_SERVO_STEER = 14;     // Chân Servo Lái chính (GPIO 14)
+const int PIN_SERVO_STEER_ALT = 13; // Chân Servo Lái dự phòng song song (GPIO 13 - Chuẩn V0 Baseline)
 
 #if USE_L298N_MOTOR_DRIVER == 0
   // CẤU HÌNH A: RC ESC (Bộ điều tốc chuẩn RC 3 dây: Trắng-Đỏ-Đen)
@@ -44,6 +45,24 @@ const int PIN_SERVO_STEER = 14; // Chân Servo Lái (Phím A/D)
 #endif
 
 Servo steeringServo;
+#if USE_L298N_MOTOR_DRIVER == 0
+Servo steeringServoAlt; // Phát xung lái đồng thời ra GPIO 13 để tương thích 100% phần cứng V0
+#endif
+
+void applySteeringAngle(int16_t steer) {
+  if (steer >= 500 && steer <= 2500) {
+    steeringServo.writeMicroseconds(steer);
+#if USE_L298N_MOTOR_DRIVER == 0
+    steeringServoAlt.writeMicroseconds(steer);
+#endif
+  } else {
+    steer = (steer < 30 || steer > 150) ? 90 : constrain(steer, 45, 135);
+    steeringServo.write(steer);
+#if USE_L298N_MOTOR_DRIVER == 0
+    steeringServoAlt.write(steer);
+#endif
+  }
+}
 
 // ============================================================================
 // 3. THÔNG SỐ VẬN HÀNH & CƠ CHẾ DỪNG AN TOÀN (FAILSAFE)
@@ -101,13 +120,17 @@ void setup() {
 
   steeringServo.setPeriodHertz(50);
   steeringServo.attach(PIN_SERVO_STEER, 500, 2500);
-  steeringServo.write(90); // Trả thẳng lái (90 độ)
+#if USE_L298N_MOTOR_DRIVER == 0
+  steeringServoAlt.setPeriodHertz(50);
+  steeringServoAlt.attach(PIN_SERVO_STEER_ALT, 500, 2500);
+#endif
+  applySteeringAngle(90); // Trả thẳng lái (90 độ)
 
 #if USE_L298N_MOTOR_DRIVER == 0
   escThrottle.setPeriodHertz(50);
   escThrottle.attach(PIN_ESC_THROTTLE, 500, 2500);
   escThrottle.writeMicroseconds(1500); // Mức trung tính (dừng ga)
-  Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái (GPIO 14) + ESC Động Cơ (GPIO 12)");
+  Serial.println("[PHẦN CỨNG] Đã khởi tạo: Servo Lái kép (GPIO 14 & GPIO 13) + ESC Động Cơ (GPIO 12)");
   // Giữ xung Neutral 1500us trong 1.5s để ESC hoàn thành chu trình khởi động (Arming Beep)
   delay(1500);
 #else
@@ -213,7 +236,7 @@ void loop() {
             sVal = (sVal < 30 || sVal > 150) ? 90 : constrain(sVal, 45, 135);
             // KHÓA AN TOÀN TUYỆT ĐỐI: Xung ga ngoài dải 1000..2000µs (ví dụ = 0) bắt buộc gán 1500µs (DỪNG)!
             tVal = (tVal < 1000 || tVal > 2000) ? 1500 : constrain(tVal, 1100, 1850);
-            steeringServo.write(sVal);
+            applySteeringAngle(sVal);
             applyMotorThrottle(tVal);
             currentSteer = sVal;
             currentThrottle = tVal;
@@ -238,14 +261,16 @@ void loop() {
           throttle = constrain(throttle, 1100, 1850);
         }
 
-        if (steer < 30 || steer > 150) {
+        if (steer >= 500 && steer <= 2500) {
+          // Xung microseconds trực tiếp
+        } else if (steer < 30 || steer > 150) {
           steer = 90;
         } else {
           steer = constrain(steer, 45, 135);
         }
 
         if (steer != currentSteer) {
-          steeringServo.write(steer);
+          applySteeringAngle(steer);
           currentSteer = steer;
         }
         applyMotorThrottle(throttle);
@@ -262,7 +287,7 @@ void loop() {
   // Nếu Web đóng, ngắt kết nối hoặc mất mạng quá 0.5s -> Xe lập tức dừng ga và trả thẳng lái!
   if (millis() - lastPacketTime > FAILSAFE_TIMEOUT_MS) {
     applyMotorThrottle(1500); // Tự động ngắt ga về 0 (Neutral)
-    steeringServo.write(90);  // Trả thẳng góc lái
+    applySteeringAngle(90);   // Trả thẳng góc lái cả 2 cổng GPIO 14 & 13
     currentSteer = 90;
     currentThrottle = 1500;
     isFailsafeActive = true;

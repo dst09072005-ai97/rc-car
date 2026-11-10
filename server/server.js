@@ -2778,12 +2778,19 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     pkt.writeInt16LE(steerDeg, 0);
     pkt.writeInt16LE(escPulseUs, 2);
     try {
-      udpOutSocket.send(pkt, 0, 4, targetPort, targetHost, (err) => {
-        if (!err && typeof esp32CarConfig !== 'undefined' && esp32CarConfig) {
-          esp32CarConfig.lastSentTime = now;
-          esp32CarConfig.packetsSent++;
-        }
-      });
+      if (typeof udpServer !== 'undefined' && udpServer) {
+        udpServer.send(pkt, 0, 4, targetPort, targetHost, () => {});
+      }
+    } catch (e) {}
+    try {
+      if (typeof udpOutSocket !== 'undefined' && udpOutSocket) {
+        udpOutSocket.send(pkt, 0, 4, targetPort, targetHost, (err) => {
+          if (!err && typeof esp32CarConfig !== 'undefined' && esp32CarConfig) {
+            esp32CarConfig.lastSentTime = now;
+            esp32CarConfig.packetsSent++;
+          }
+        });
+      }
     } catch (e) {}
   }
 
