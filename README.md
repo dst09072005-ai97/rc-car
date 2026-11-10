@@ -30,42 +30,65 @@ A high-performance WebXR 6DoF simulation built for the **Meta Quest Browser** (7
 ## 🛠️ Project Structure
 
 ```text
-├── app.js                   # Primary Three.js WebXR scene, physics & VR loop
-├── index.html               # 2D/3D switcher UI, HUD controls & styling
-├── server.js                # Express HTTP/HTTPS, WebSocket & UDP telemetry relay
-├── youtube-dom-extractor.js # Multi-screen YouTube/MP4 synchronization
-├── AndroidManifest.xml      # Capacitor 2D panel packaging manifest
-├── dist/                    # Built APK packages and distributions
-├── esp32_rear_cam/          # ESP32-CAM firmware (Rear camera stream)
-├── esp32_car_controller/    # ESP32 RC vehicle motor & steering firmware
-├── esp32_raw_rgb565/        # ESP32 RAW RGB565 high-framerate stream firmware
-├── libs/                    # Local Three.js and add-on libraries
-├── models/                  # Calibration and benchmark GLB assets
-└── v2/                      # Baseline backups, blender pipelines & QA audit tools
+├── www/                     # WebXR 6DoF Client (app.js, index.html, fpv-cam.html, models, libs)
+├── server/                  # Backend Express HTTP/HTTPS, WebSocket Relay & UDP Telemetry
+├── config/                  # Configuration templates (.env.example, wifi_credentials.h.example)
+├── meta_quest_3/            # Quest 3 Android ecosystem, Capacitor wrapper & build scripts
+├── firmware/                # ESP32 firmware (esp32_car_controller, esp32_rear_cam, esp32_raw_rgb565)
+├── models/                  # Source Blender 3D models (.blend)
+├── blender_scripts/         # Automated Blender Python rendering & asset pipeline
+├── controller_godot/        # Godot Desktop FPV control station
+├── tools/                   # XR-Doctor verification gate, certificate & bridge utilities
+├── docker/                  # Docker containerization scripts (entrypoint.sh)
+└── docs/                    # Technical architecture, guides, reports & research
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Start Relay Server
+### Option A: Run via Docker (Recommended for Colleagues & Production)
 ```bash
-# Start the HTTP server on port 8080 and HTTPS on port 8443
-node server.js
+# Start all services with one command:
+docker compose up -d --build
+
+# View logs:
+docker compose logs -f
+
+# Stop services:
+docker compose down
+```
+> See [`docs/guides/DOCKER_GUIDE.md`](file:///d:/XE_RC_FPV_V10/docs/guides/DOCKER_GUIDE.md) for full deployment details.
+
+### Option B: Run Locally on Host
+```bash
+# 1. Start Server (HTTP: 8080, HTTPS: 8443, UDP: 4210, 4213)
+npm start
+
+# 2. Run Verification Gate
+npm run doctor
 ```
 
-### 2. Launch in Meta Quest Browser
-1. Connect Meta Quest 3 to the same Wi-Fi network as your host PC.
+### 3. Launch in Meta Quest Browser
+1. Connect Meta Quest 3 to the same Wi-Fi network as the server host.
 2. Open Meta Quest Browser and navigate to:
    ```text
-   https://<YOUR_LOCAL_IP>:8443
+   https://<YOUR_LOCAL_IP>:8443/?vr=immersive
    ```
-3. Click **"VÀO THẾ GIỚI 360° VR"** on the top toolbar to enter immersive 6DoF WebXR mode.
+3. Click **"BẮT ĐẦU WEBXR"** to enter immersive 6DoF WebXR mode.
 
-### 3. Verify Engineering Matrix
-Run the project automated doctor to verify static syntax, SSRF security, and WebXR conformance:
+### 4. Phone FPV Camera (Optional Phone-as-Camera)
+Open mobile browser (Safari/Chrome) and navigate to:
+```text
+https://<YOUR_LOCAL_IP>:8443/fpv-cam.html
+```
+
+---
+
+## 🔬 Verification Gate
+Run the automated technical verification suite:
 ```bash
-node v2/golden_baseline_v2_20261020/tools/xr-doctor.js
+node tools/xr-doctor.js
 ```
 
 ---

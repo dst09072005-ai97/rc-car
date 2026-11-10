@@ -1,0 +1,53 @@
+# ==============================================================================
+# XE RC FPV V10 - Docker Compose Specification
+# Khởi chạy một chạm: docker compose up -d --build
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: xe-rc-fpv-server:latest
+    container_name: xe-rc-server
+    restart: unless-stopped
+    
+    # Khai báo các cổng giao thức kết nối
+    ports:
+      - "8080:8080"      # HTTP: Web Dashboard, Passenger Mobile, WebSocket Relay
+      - "8443:8443"      # HTTPS: WebXR Meta Quest 3, Mobile FPV Camera (Yêu cầu SSL)
+      - "4210:4210/udp"  # UDP: Nhận/phát Telemetry & Điều khiển vô lăng GOG R808/Gamepad
+      - "4213:4213/udp"  # UDP: Luồng nạp gói tin phân mảnh từ ESP32-CAM
+
+    # Biến môi trường linh hoạt (Có thể cấu hình trực tiếp hoặc qua file .env)
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - HTTPS_PORT=8443
+      - DUCKDNS_DOMAIN=${DUCKDNS_DOMAIN:-vr-cam-fpv}
+      - DUCKDNS_TOKEN=${DUCKDNS_TOKEN:-}
+      - PUBLIC_TUNNEL_URL=${PUBLIC_TUNNEL_URL:-}
+      - ESP32_FRONT_CAM_IP=${ESP32_FRONT_CAM_IP:-192.168.1.101}
+      - ESP32_FRONT_CAM_PORT=${ESP32_FRONT_CAM_PORT:-81}
+      - ESP32_REAR_CAM_IP=${ESP32_REAR_CAM_IP:-192.168.1.102}
+      - ESP32_REAR_CAM_PORT=${ESP32_REAR_CAM_PORT:-81}
+      - ESP32_CTRL_IP=${ESP32_CTRL_IP:-192.168.1.100}
+      - ESP32_CTRL_UDP_PORT=${ESP32_CTRL_UDP_PORT:-4210}
+      - ESP32_CONTROLLER_HOST=${ESP32_CONTROLLER_HOST:-192.168.1.238}
+      - ESP32_CONTROLLER_UDP_PORT=${ESP32_CONTROLLER_UDP_PORT:-4210}
+
+    # Giám sát trạng thái hoạt động tự động
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/network-info || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    # Tùy chọn gắn tệp cấu hình và chứng chỉ từ máy host (Bỏ comment nếu muốn dùng cert riêng)
+    # volumes:
+    #   - ./config/.env:/app/config/.env:ro
+    #   - ./tools/cert.pem:/app/tools/cert.pem:ro
+    #   - ./tools/key.pem:/app/tools/key.pem:ro

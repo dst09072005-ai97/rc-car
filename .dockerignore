@@ -1,0 +1,57 @@
+# ==============================================================================
+# XE RC FPV V10 - Docker Build Context Ignore
+# Tuân thủ nguyên tắc bảo mật: Không đóng gói secrets, certs, caches, binaries
+# ==============================================================================
+
+# Git & IDE
+.git/
+.gitignore
+.gitattributes
+.gemini/
+.agents/
+.vscode/
+.idea/
+
+# Secrets & Credentials (NGHIÊM CẤM đưa vào Docker Image)
+.env
+*.env
+**/.env
+**/*.env
+config/.env
+tools/*.pem
+tools/*.key
+tools/*.crt
+tools/*.pfx
+wifi_credentials.h
+*credentials*.h
+
+# Dependencies & Build artifacts (Sẽ cài đặt sạch trong container)
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Mobile / Android build cache
+meta_quest_3/android/.gradle/
+meta_quest_3/android/app/build/
+meta_quest_3/android/capacitor-cordova-android-plugins/build/
+meta_quest_3/apk/
+meta_quest_3/simulator/
+*.apk
+*.aab
+
+# 3D Source files & Binaries (Chỉ giữ .glb phục vụ WebXR, không đóng gói .blend)
+models/*.blend
+models/*.blend1
+models/*.blend@
+*.zip
+*.tar.gz
+*.7z
+
+# Backup & Historical data
+backups/
+**/backups/
+temp/
+tmp/
+*.log

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>[DEV-ONLY] Quest 3 WebXR DOM Overlay & YouTube Verification PoC</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #060a12;
+      color: #fff;
+      font-family: monospace;
+    }
+    #xr-overlay-root {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
+      padding: 12px;
+      box-sizing: border-box;
+      z-index: 1000;
+    }
+    .panel {
+      pointer-events: auto;
+      background: rgba(10, 16, 28, 0.94);
+      border: 2px solid #00e5ff;
+      border-radius: 12px;
+      padding: 12px 16px;
+      box-shadow: 0 8px 32px rgba(0, 229, 255, 0.25);
+      max-width: 620px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .badge-dev {
+      background: #ff9500;
+      color: #000;
+      font-weight: bold;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      vertical-align: middle;
+      display: inline-block;
+      margin-left: 6px;
+    }
+    h2 { margin: 0 0 6px 0; font-size: 15px; color: #00e5ff; }
+    p { margin: 3px 0; font-size: 11px; line-height: 1.35; color: #cbd5e1; }
+    .btn {
+      pointer-events: auto;
+      background: #00e5ff;
+      color: #000;
+      font-weight: bold;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: monospace;
+      font-size: 12px;
+      margin: 3px 2px;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #00ff88; }
+    .btn-exit { background: #ff3b30; color: #fff; }
+    .btn-plain { background: #334155; color: #e2e8f0; }
+
+    /* Matrix Table */
+    #test-matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      margin: 6px 0;
+    }
+    #test-matrix-table th, #test-matrix-table td {
+      border: 1px solid #1e293b;
+      padding: 3px 6px;
+      text-align: left;
+    }
+    #test-matrix-table th { background: #0f172a; color: #94a3b8; }
+    .status-pass { color: #00ff88; font-weight: bold; }
+    .status-fail { color: #ff3b30; font-weight: bold; }
+    .status-warn { color: #ffd60a; font-weight: bold; }
+    .status-wait { color: #64748b; }
+
+    #log-box {
+      height: 95px;
+      overflow-y: auto;
+      background: #020408;
+      border: 1px solid #1e293b;
+      padding: 6px;
+      font-size: 10px;
+      color: #38bdf8;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      margin-top: 6px;
+    }
+    .iframe-wrapper {
+      pointer-events: auto;
+      width: 100%;
+      height: 190px;
+      border: 1px solid #ff0055;
+      border-radius: 6px;
+      overflow: hidden;
+      margin-top: 6px;
+      background: #000;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+
+  <!-- Load YouTube IFrame Player API for authoritative event tracking -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./libs/three/three.module.js",
+        "three/addons/": "./libs/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- DOM Overlay Root Container -->
+  <div id="xr-overlay-root">
+    <div class="panel">
+      <h2>🥽 Quest 3 WebXR DOM Overlay PoC <span class="badge-dev">DEV-ONLY</span></h2>
+      <p><b>Purpose:</b> Strictly verify W3C DOM Overlay & YouTube IFrame Player behavior in <code>immersive-vr</code> on Meta Quest Browser.</p>
+      <p style="color:#f59e0b; font-size:10px;">⚠️ <i>Note: DOM Overlay position is User-Agent managed (screen/floating/head-locked). It cannot be arbitrary 6DoF positioned like THREE.Object3D.</i></p>
+      
+      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
+        <button id="btn-enter-overlay-vr" class="btn">▶ P02: Enter VR (With DOM Overlay)</button>
+        <button id="btn-enter-plain-vr" class="btn btn-plain">▶ P09: Enter VR (Baseline / No Overlay)</button>
+        <button id="btn-exit-vr" class="btn btn-exit" style="display:none;">⏹ Exit VR</button>
+      </div>
+
+      <!-- Test Metrics Matrix -->
+      <table id="test-matrix-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Test Item</th>
+            <th>Observed State</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>P00</td>
+            <td>HTTPS Secure Context</td>
+            <td id="m-p00-val">Checking...</td>
+            <td id="m-p00-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P01</td>
+            <td>WebXR immersive-vr Support</td>
+            <td id="m-p01-val">Checking...</td>
+            <td id="m-p01-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P02</td>
+            <td>session.domOverlayState</td>
+            <td id="m-p02-val">Awaiting XR Session</td>
+            <td id="m-p02-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P03</td>
+            <td>renderer.xr.isPresenting</td>
+            <td id="m-p03-val">false</td>
+            <td id="m-p03-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P04</td>
+            <td>YouTube API onReady</td>
+            <td id="m-p04-val">Loading API...</td>
+            <td id="m-p04-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P05</td>
+            <td>Controller Click / StateChange</td>
+            <td id="m-p05-val">No state change</td>
+            <td id="m-p05-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P06</td>
+            <td>Playback Active (Time > 0s)</td>
+            <td id="m-p06-val">0.0s</td>
+            <td id="m-p06-res" class="status-wait">WAIT</td>
+          </tr>
+          <tr>
+            <td>P07</td>
+            <td>XR Frame Pacing (VR FPS)</td>
+            <td id="m-p07-val">0 FPS</td>
+            <td id="m-p07-res" class="status-wait">WAIT</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- YouTube IFrame Container -->
+      <div class="iframe-wrapper">
+        <div id="yt-player-target"></div>
+      </div>
+
+      <div id="log-box">[INIT] Diagnostics console initialized. Awaiting session.\n</div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const logBox = document.getElementById('log-box');
+    const overlayRoot = document.getElementById('xr-overlay-root');
+    const btnEnterOverlayVr = document.getElementById('btn-enter-overlay-vr');
+    const btnEnterPlainVr = document.getElementById('btn-enter-plain-vr');
+    const btnExitVr = document.getElementById('btn-exit-vr');
+
+    function log(msg) {
+      console.log('[PoC]', msg);
+      const time = new Date().toISOString().substring(11, 19);
+      logBox.textContent += `[${time}] ${msg}\n`;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function setMetric(id, val, resClass, resText) {
+      const elVal = document.getElementById(`m-${id}-val`);
+      const elRes = document.getElementById(`m-${id}-res`);
+      if (elVal) elVal.textContent = String(val);
+      if (elRes) {
+        elRes.className = resClass;
+        elRes.textContent = resText;
+      }
+    }
+
+    // --- P00: HTTPS Secure Context ---
+    const isSecure = window.isSecureContext === true;
+    setMetric('p00', isSecure ? 'Secure (HTTPS)' : 'Insecure (HTTP)', isSecure ? 'status-pass' : 'status-fail', isSecure ? 'PASS' : 'FAIL');
+    log(`P00: window.isSecureContext = ${isSecure}`);
+
+    // --- 1. Three.js Scene Setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x060a14);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.6, 2.0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const grid = new THREE.GridHelper(10, 10, 0x00e5ff, 0x1e293b);
+    scene.add(grid);
+
+    const cubeGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    const cubeMat = new THREE.MeshStandardMaterial({ color: 0x00e5ff, roughness: 0.3, metalness: 0.7 });
+    const cube = new THREE.Mesh(cubeGeo, cubeMat);
+    cube.position.set(0, 1.4, -1.5);
+    scene.add(cube);
+
+    const light = new THREE.DirectionalLight(0xffffff, 1.5);
+    light.position.set(2, 4, 3);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // P07: Frame pacing tracker
+    let lastTime = performance.now();
+    let frameCounter = 0;
+    let fpsHistory = 0;
+
+    renderer.setAnimationLoop((timestamp, frame) => {
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.015;
+
+      frameCounter++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        fpsHistory = frameCounter;
+        frameCounter = 0;
+        lastTime = now;
+
+        if (renderer.xr.isPresenting) {
+          setMetric('p07', `${fpsHistory} FPS (XR Presenting)`, fpsHistory >= 65 ? 'status-pass' : 'status-warn', fpsHistory >= 65 ? 'PASS' : 'LOW');
+        }
+      }
+
+      if (renderer.xr.isPresenting) {
+        setMetric('p03', 'true (In Session)', 'status-pass', 'PASS');
+      }
+
+      renderer.render(scene, camera);
+    });
+
+    // --- P01: WebXR Capability Check ---
+    if ('xr' in navigator) {
+      navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
+        setMetric('p01', supported ? 'immersive-vr Supported' : 'Not Supported', supported ? 'status-pass' : 'status-fail', supported ? 'PASS' : 'FAIL');
+        log(`P01: isSessionSupported('immersive-vr') = ${supported}`);
+      }).catch(err => {
+        setMetric('p01', `Error: ${err.message}`, 'status-fail', 'ERR');
+        log(`P01 Error: ${err.message}`);
+      });
+    } else {
+      setMetric('p01', 'navigator.xr is undefined', 'status-fail', 'FAIL');
+      log('P01: WebXR API not found on this browser context.');
+    }
+
+    // --- YouTube IFrame API Initialization (Lỗi B & Lỗi C Fixed) ---
+    let ytPlayer = null;
+    let ytReady = false;
+
+    window.onYouTubeIframeAPIReady = function() {
+      log('YouTube IFrame API script loaded.');
+      const testVideoId = 'dQw4w9WgXcQ';
+      const playerOrigin = window.location.origin;
+
+      ytPlayer = new YT.Player('yt-player-target', {
+        videoId: testVideoId,
+        playerVars: {
+          autoplay: 0,
+          playsinline: 1,
+          rel: 0,
+          enablejsapi: 1,
+          origin: playerOrigin // Lỗi B Fixed: Explicitly declared origin
+        },
+        events: {
+          onReady: (event) => {
+            ytReady = true;
+            setMetric('p04', 'onReady (API Connected)', 'status-pass', 'PASS');
+            log(`P04: YouTube Player onReady fired. Origin: ${playerOrigin}`);
+          },
+          onStateChange: (event) => {
+            // State: -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (video cued)
+            const stateNames = {
+              '-1': 'UNSTARTED',
+              '0': 'ENDED',
+              '1': 'PLAYING',
+              '2': 'PAUSED',
+              '3': 'BUFFERING',
+              '5': 'CUED'
+            };
+            const sName = stateNames[event.data] || String(event.data);
+            log(`P05/P06 YouTube StateChange: ${sName} (${event.data})`);
+            setMetric('p05', `State: ${sName}`, event.data === 1 ? 'status-pass' : 'status-warn', event.data === 1 ? 'PLAYING' : 'INFO');
+
+            if (event.data === 1 && ytPlayer.getCurrentTime) {
+              const curTime = ytPlayer.getCurrentTime().toFixed(1);
+              setMetric('p06', `Playing: ${curTime}s`, 'status-pass', 'PASS');
+            }
+          },
+          onError: (event) => {
+            log(`⚠️ YouTube Player onError: Code ${event.data}`);
+            setMetric('p04', `Error code: ${event.data}`, 'status-fail', 'ERR');
+          },
+          onAutoplayBlocked: () => {
+            log('⚠️ YouTube Player onAutoplayBlocked fired.');
+          }
+        }
+      });
+    };
+
+    // --- WebXR Session Management (Lỗi A Fixed) ---
+    let currentSession = null;
+
+    async function startVr(withOverlay) {
+      try {
+        log(`[START] Requesting immersive-vr (withOverlay = ${withOverlay})...`);
+        const sessionInit = {
+          optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+        };
+
+        if (withOverlay) {
+          sessionInit.optionalFeatures.push('dom-overlay');
+          sessionInit.domOverlay = { root: overlayRoot };
+        }
+
+        const session = await navigator.xr.requestSession('immersive-vr', sessionInit);
+        currentSession = session;
+
+        btnExitVr.style.display = 'inline-block';
+        btnEnterOverlayVr.style.display = 'none';
+        btnEnterPlainVr.style.display = 'none';
+
+        log('Session granted.');
+
+        // Lỗi A Fixed: Accurate inspection of domOverlayState
+        const overlayState = session.domOverlayState ?? null;
+        if (!withOverlay) {
+          setMetric('p02', 'Disabled (Baseline Test)', 'status-wait', 'P09');
+          log('P02: Baseline plain VR (No dom-overlay requested).');
+        } else if (overlayState) {
+          const oType = overlayState.type; // 'screen' | 'floating' | 'head-locked'
+          const validTypes = ['screen', 'floating', 'head-locked'];
+          if (validTypes.includes(oType)) {
+            setMetric('p02', `type = "${oType}"`, 'status-pass', 'PASS');
+            log(`P02 PASS: session.domOverlayState.type = "${oType}" (W3C Supported)`);
+          } else {
+            setMetric('p02', `Unknown type: "${oType}"`, 'status-warn', 'WARN');
+            log(`P02 WARN: session.domOverlayState.type = "${oType}"`);
+          }
+        } else {
+          // Optional feature was ignored by UA: session is valid, but overlay is null
+          setMetric('p02', 'null (Unsupported by UA)', 'status-fail', 'NULL');
+          log('P02 NULL: session.domOverlayState is null. Meta Quest Browser did not grant dom-overlay for immersive-vr.');
+        }
+
+        session.addEventListener('end', () => {
+          log('XR Session ended.');
+          currentSession = null;
+          btnExitVr.style.display = 'none';
+          btnEnterOverlayVr.style.display = 'inline-block';
+          btnEnterPlainVr.style.display = 'inline-block';
+          setMetric('p03', 'false (Ended)', 'status-wait', 'WAIT');
+          renderer.xr.setSession(null);
+        });
+
+        await renderer.xr.setSession(session);
+        log(`renderer.xr.setSession complete. isPresenting = ${renderer.xr.isPresenting}`);
+      } catch (err) {
+        log(`❌ START VR FAILED: ${err.name} - ${err.message}`);
+        alert(`Start VR Error: ${err.message}`);
+      }
+    }
+
+    btnEnterOverlayVr.addEventListener('click', () => startVr(true));
+    btnEnterPlainVr.addEventListener('click', () => startVr(false));
+    btnExitVr.addEventListener('click', () => {
+      if (currentSession) currentSession.end();
+    });
+
+    // Time ticker for P06
+    setInterval(() => {
+      if (ytPlayer && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === 1 && ytPlayer.getCurrentTime) {
+        const cur = ytPlayer.getCurrentTime().toFixed(1);
+        setMetric('p06', `Playing: ${cur}s`, 'status-pass', 'PASS');
+      }
+    }, 1000);
+  </script>
+</body>
+</html>

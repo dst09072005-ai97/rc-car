@@ -7,7 +7,11 @@
     "start": "node server/server.js",
     "doctor": "node tools/xr-doctor.js",
     "test": "node tools/test_runtime_load.js",
-    "build:apk": "powershell -ExecutionPolicy Bypass -File meta_quest_3/scripts/build_apk.ps1"
+    "build:apk": "powershell -ExecutionPolicy Bypass -File meta_quest_3/scripts/build_apk.ps1",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
   },
   "dependencies": {
     "@capacitor/android": "^5.7.8",
