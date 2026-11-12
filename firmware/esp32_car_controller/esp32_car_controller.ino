@@ -158,8 +158,7 @@ void setup() {
 
 #if defined(WIFI_BACKUP_SSID)
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.print("
-[WiFi] Không thấy mạng chính, thử kết nối Hotspot dự phòng: ");
+    Serial.print("\n[WiFi] Không thấy mạng chính, thử kết nối Hotspot dự phòng: ");
     Serial.println(WIFI_BACKUP_SSID);
     WiFi.disconnect();
     delay(200);

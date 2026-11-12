@@ -1533,10 +1533,11 @@ function connectEsp32Windshield(rawUrl) {
   if (rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')) {
     try {
       let targetWs = rawUrl;
-      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
-      if (!isApkEnv && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
+      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
+      const isServedHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
+      if (isServedHost && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
         const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const host = (window.location.hostname && window.location.hostname !== 'localhost') ? window.location.host : `${pcIp}:8443`;
+        const host = (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:8443`;
         targetWs = `wss://${host}/esp32-front-ws`;
       }
       esp32Socket = new WebSocket(targetWs);
@@ -1578,12 +1579,12 @@ function connectEsp32Windshield(rawUrl) {
       };
       esp32Socket.onerror = () => {
         state.lastActionLog = '⚠️ Lỗi kết nối direct ESP32 Cam, chuyển sang Proxy Server...';
-        const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
+        const isApkErr = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
         const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const isHttps = !isApkEnv && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
+        const isHttps = !isApkErr && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
         const proxyProto = isHttps ? 'wss:' : 'ws:';
-        const proxyPort = isHttps ? ((window.location && window.location.port) || '8443') : '8080';
-        const host = (!isApkEnv && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? `${window.location.hostname}:${proxyPort}` : `${pcIp}:${proxyPort}`;
+        const proxyPort = isHttps ? '8443' : '8080';
+        const host = (!isApkErr && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:${proxyPort}`;
         const proxyWs = `${proxyProto}//${host}/esp32-front-ws`;
         if (targetWs !== proxyWs) {
           console.log('🔄 [ESP32-FRONT] Chuyển hướng kết nối qua Proxy Server:', proxyWs);
@@ -1620,19 +1621,20 @@ document.getElementById('btn-connect-esp32')?.addEventListener('click', () => {
 });
 // Tu dong ket noi ESP32-CAM sau 1 giay khi mo Web
 setTimeout(() => {
+  const isApkAuto = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
+  const isServedAuto = !isApkAuto && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
   const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-  const fallbackUrl = `ws://${pcIp}:8080/esp32-front-ws`;
+  const autoProto = (isServedAuto && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
+  const fallbackUrl = isServedAuto
+    ? `${autoProto}//${window.location.host}/esp32-front-ws`
+    : `ws://${pcIp}:8080/esp32-front-ws`;
   const raw = document.getElementById('esp32-front-ip')?.value.trim();
-  const url = (raw && !raw.includes('192.168.1.88') && !raw.includes('192.168.1.184')) ? raw : fallbackUrl;
+  const useRaw = raw && !raw.includes('192.168.1.88') && !raw.includes('192.168.1.184') && !(isServedAuto && raw.includes('192.168.1.76'));
+  const url = useRaw ? raw : fallbackUrl;
   if (document.getElementById('esp32-front-ip')) document.getElementById('esp32-front-ip').value = url;
-  if (url && (url.startsWith('ws://') || url.startsWith('http://'))) {
+  if (url && (url.startsWith('ws://') || url.startsWith('wss://') || url.startsWith('http://'))) {
     console.log('[AUTO CONNECT] Tu dong ket noi ESP32-CAM:', url);
-    // auto connect without resetting mode
     connectEsp32Windshield(url);
-    if (false) {
-      state.windshieldMode = 'TRANSPARENT';
-      if (typeof updateCamRoadUiButtons === 'function') updateCamRoadUiButtons();
-    }
   }
 }, 1200);
 document.getElementById('btn-sim-esp32-cam')?.addEventListener('click', () => {
@@ -3364,10 +3366,11 @@ function connectRearEsp32Camera(rawUrl) {
   if (rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')) {
     try {
       let targetWs = rawUrl;
-      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
-      if (!isApkEnv && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
+      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
+      const isServedHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
+      if (isServedHost && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
         const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const host = (window.location.hostname && window.location.hostname !== 'localhost') ? window.location.host : `${pcIp}:8443`;
+        const host = (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:8443`;
         targetWs = `wss://${host}/esp32-rear-ws`;
       }
       console.log('[ESP32-REAR] Đang kết nối WebSocket Cam Lùi:', targetWs);
@@ -3396,12 +3399,12 @@ function connectRearEsp32Camera(rawUrl) {
       };
       esp32RearSocket.onerror = () => {
         state.lastActionLog = '⚠️ Lỗi kết nối direct ESP32 Cam Lùi (' + rawUrl + '), chuyển sang Proxy Server...';
-        const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
+        const isApkErr = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
         const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const isHttps = !isApkEnv && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
+        const isHttps = !isApkErr && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
         const proxyProto = isHttps ? 'wss:' : 'ws:';
-        const proxyPort = isHttps ? ((window.location && window.location.port) || '8443') : '8080';
-        const host = (!isApkEnv && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? `${window.location.hostname}:${proxyPort}` : `${pcIp}:${proxyPort}`;
+        const proxyPort = isHttps ? '8443' : '8080';
+        const host = (!isApkErr && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:${proxyPort}`;
         const proxyWs = `${proxyProto}//${host}/esp32-rear-ws`;
         if (targetWs !== proxyWs) {
           console.log('🔄 [ESP32-REAR] Chuyển hướng kết nối qua Proxy Server:', proxyWs);
@@ -4174,15 +4177,29 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
           if (msg.lanIp && typeof localStorage !== 'undefined' && msg.lanIp !== '127.0.0.1') {
             localStorage.setItem('pc_server_ip', msg.lanIp);
           }
+          if (msg.publicTunnelUrl && typeof window !== 'undefined') {
+            window.__PUBLIC_TUNNEL_URL__ = msg.publicTunnelUrl;
+          }
           if (msg.cams && typeof window.applyEsp32CameraIps === 'function') {
-            window.applyEsp32CameraIps(msg.cams);
+            window.applyEsp32CameraIps({
+              ...msg.cams,
+              fpvPhone: msg.fpvPhone || msg.cams.fpvPhone,
+              publicTunnelUrl: msg.publicTunnelUrl || msg.cams.publicTunnelUrl
+            });
           }
           if (msg.car && typeof window.applyEsp32CameraIps === 'function') {
             window.applyEsp32CameraIps({ car: msg.car });
           }
         } else if (msg.type === 'CAM_IP_UPDATED' || msg.type === 'ESP32_CAM_UPDATE') {
+          if (msg.publicTunnelUrl && typeof window !== 'undefined') {
+            window.__PUBLIC_TUNNEL_URL__ = msg.publicTunnelUrl;
+          }
           if (typeof window.applyEsp32CameraIps === 'function') {
-            window.applyEsp32CameraIps(msg.cams || msg);
+            window.applyEsp32CameraIps({
+              ...(msg.cams || msg),
+              fpvPhone: msg.fpvPhone || (msg.cams && msg.cams.fpvPhone),
+              publicTunnelUrl: msg.publicTunnelUrl || (msg.cams && msg.cams.publicTunnelUrl)
+            });
           }
         } else if (msg.type === 'FPV_HOT_SWAP_ACTIVE') {
           state.lastActionLog = '📱 Đã thay nóng điện thoại FPV mới!';
@@ -4259,7 +4276,20 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             };
           }
           const wObj = window._racingWheel;
+          if (srcData.connected === false) {
+            wObj.connected = false;
+            wObj.isRemoteBridge = false;
+            wObj.rawSteer = 0;
+            wObj.steerAngleDeg = 0;
+            wObj.gasPercent = 0;
+            wObj.brakePercent = 0;
+            wObj.reversePercent = 0;
+            wObj.gear = 'D';
+            if (typeof syncWheelToFunctionPanel === 'function') syncWheelToFunctionPanel(wObj);
+            return;
+          }
           wObj.connected = true;
+          wObj.isRemoteBridge = true;
           wObj.deviceName = msg.deviceId || 'GOG R808 / Keyboard';
           const steeringNorm = typeof msg.steerNorm === 'number' ? msg.steerNorm : (typeof msg.steeringNorm === 'number' ? msg.steeringNorm : (typeof msg.steer === 'number' && msg.steer <= 180 ? (msg.steer - 90) / 45 : 0));
           const throttleNorm = typeof msg.driveNorm === 'number' ? msg.driveNorm : (typeof msg.throttleNorm === 'number' ? msg.throttleNorm : (typeof msg.throttle === 'number' ? (msg.throttle - 1500) / 260 : 0));
@@ -21506,11 +21536,45 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const front = data.front || (data.role === 'front' ? data : null);
     const rear = data.rear || (data.role === 'rear' ? data : null);
     const car = data.car || (data.role === 'car' ? data : null);
+    const fpvPhone = data.fpvPhone || null;
+    const publicTunnelUrl = data.publicTunnelUrl || (front && front.publicTunnelUrl) || (typeof window !== 'undefined' && window.__PUBLIC_TUNNEL_URL__) || null;
+    if (publicTunnelUrl && typeof window !== 'undefined') window.__PUBLIC_TUNNEL_URL__ = publicTunnelUrl;
 
     const frontInput = document.getElementById('esp32-front-ip');
     const rearInput = document.getElementById('esp32-rear-ip');
     const carInput = document.getElementById('esp32-car-ip');
     const carStatus = document.getElementById('esp32-car-status');
+
+    const isApkCamEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
+    const isServedCamHost = !isApkCamEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
+
+    const resolveCamWsUrl = (cam, fallbackPort) => {
+      if (!cam || !cam.ip) return '';
+      if (!cam.path) return `ws://${cam.ip}:${cam.port || fallbackPort}`;
+      if (isServedCamHost) {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${proto}//${window.location.host}${cam.path}`;
+      }
+      if (isApkCamEnv && window.__USE_TUNNEL_FALLBACK__ && publicTunnelUrl) {
+        try {
+          const u = new URL(publicTunnelUrl);
+          return `wss://${u.host}${cam.path}`;
+        } catch (e) {}
+      }
+      return `ws://${cam.ip}:${cam.port || 8080}${cam.path}`;
+    };
+
+    // Báo trạng thái Điện thoại FPV cho Kính Quest 3 (kể cả qua Wi-Fi LAN hoặc Cloudflare Public Tunnel)
+    if (fpvPhone && fpvPhone.connected) {
+      const phoneLabel = fpvPhone.ip || (publicTunnelUrl ? 'Cloudflare Tunnel' : 'FPV Phone');
+      if (state.fpvPhoneIp !== phoneLabel || !state.fpvPhoneConnected) {
+        state.fpvPhoneIp = phoneLabel;
+        state.fpvPhoneConnected = true;
+        state.lastActionLog = `📱 Đã tìm thấy Điện Thoại Cam FPV (${phoneLabel}) -> Kính Lái & Gương Hậu sẵn sàng!`;
+      }
+    } else if (fpvPhone && fpvPhone.connected === false && state.fpvPhoneConnected) {
+      state.fpvPhoneConnected = false;
+    }
 
     // 1. Tự động cập nhật IP Mạch Lái Xe
     if (car && car.ip) {
@@ -21521,15 +21585,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       state.esp32CarIp = car.ip;
       state.esp32CarConnected = Boolean(car.active);
       if (carStatus) {
-        carStatus.textContent = car.active ? `🟢 Đã nối xe (${car.ip}:4210)` : `🟠 Thấy xe (${car.ip} - Chờ lệnh)`;
+        const phoneBadge = (fpvPhone && fpvPhone.connected) ? ` | 📱 FPV: ${fpvPhone.ip || 'Tunnel OK'}` : '';
+        carStatus.textContent = (car.active ? `🟢 Đã nối xe (${car.ip}:4210)` : `🟠 Thấy xe (${car.ip} - Chờ lệnh)`) + phoneBadge;
         carStatus.style.color = car.active ? '#00ff88' : '#ff9500';
       }
     }
 
     // 2. Tự động cập nhật IP Cam Trước
     if (front && front.ip) {
-      const expectedFrontUrl = front.path ? `ws://${front.ip}:${front.port || 8080}${front.path}` : `ws://${front.ip}:${front.port || 4213}`;
-      state.esp32FrontIp = front.ip;
+      const expectedFrontUrl = resolveCamWsUrl(front, 4213);
+      state.esp32FrontIp = (fpvPhone && fpvPhone.connected && fpvPhone.ip) ? fpvPhone.ip : front.ip;
       if (typeof localStorage !== 'undefined') localStorage.setItem('rc_front_cam_ip', front.ip);
       if (frontInput && (frontInput.value !== expectedFrontUrl || !frontInput.value)) {
         frontInput.value = expectedFrontUrl;
@@ -21546,8 +21611,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // 3. Tự động cập nhật IP Cam Lùi
     if (rear && rear.ip) {
-      const expectedRearUrl = rear.path ? `ws://${rear.ip}:${rear.port || 8080}${rear.path}` : `ws://${rear.ip}:${rear.port || 4213}`;
-      state.esp32RearIp = rear.ip;
+      const expectedRearUrl = resolveCamWsUrl(rear, 4213);
+      state.esp32RearIp = (fpvPhone && fpvPhone.connected && fpvPhone.ip) ? fpvPhone.ip : rear.ip;
       if (typeof localStorage !== 'undefined') localStorage.setItem('rc_rear_cam_ip', rear.ip);
       if (rearInput && (rearInput.value !== expectedRearUrl || !rearInput.value)) {
         rearInput.value = expectedRearUrl;
@@ -21563,11 +21628,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   async function checkDiscoveredEsp32Ips() {
     try {
-      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
+      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
       const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
       const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
       const isHttps = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol === 'https:';
-      const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && (window.location.hostname === pcIp || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
       const baseUrl = isCurrentHost ? '' : (isHttps ? `https://${pcIp}:8443` : `http://${pcIp}:8080`);
       const res = await fetch(`${baseUrl}/api/esp32-discovered`);
       if (!res.ok) return;
@@ -21591,11 +21656,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     state.lastActionLog = '🔍 Đang quét toàn bộ mạng Wi-Fi để tự động tìm IP mới của Camera & Xe...';
 
     try {
-      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || window.location.hostname === 'localhost'));
+      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
       const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
       const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
       const isHttps = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol === 'https:';
-      const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && (window.location.hostname === pcIp || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
       const baseUrl = isCurrentHost ? '' : (isHttps ? `https://${pcIp}:8443` : `http://${pcIp}:8080`);
       const res = await fetch(`${baseUrl}/api/scan-esp32`);
       const data = await res.json();
@@ -22454,16 +22519,19 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }
     }
     if (!wheelPad) return;
+    // [ANTI-ECHO V504] Nếu Native Host Bridge đang đọc vô lăng USB ở 50Hz -> Browser không phát đè WHEEL_BRIDGE_INPUT
+    if (typeof isRemoteBridgeActive === 'function' && isRemoteBridgeActive()) return;
 
-    // Tự động hiệu chuẩn trạng thái nghỉ của các trục
+    // Tự động hiệu chuẩn trạng thái nghỉ của các trục (bỏ qua 10 frame đầu chống frame 0 dummy)
     if (!restAxesCalibrated) {
-      if (restCalibrationFrames === 0) {
-        restAxes = wheelPad.axes.map((v) => Number(v) || 0);
-        restButtons = wheelPad.buttons.map((b) => (b ? Number(b.value) || 0 : 0));
-      }
       restCalibrationFrames++;
+      if (restCalibrationFrames < 10) return;
+      restAxes = wheelPad.axes.map((v) => Number(v) || 0);
+      restButtons = wheelPad.buttons.map((b) => (b ? Number(b.value) || 0 : 0));
       if (restCalibrationFrames >= 12) {
         restAxesCalibrated = true;
+      } else {
+        return;
       }
     }
 
@@ -22472,7 +22540,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const steerDeadband = Math.abs(rawSteerAxis) < 0.035 ? 0 : rawSteerAxis;
     const steerNorm = THREE.MathUtils.clamp(steerDeadband, -1.0, 1.0);
 
-    // B. Đọc bàn đạp Ga & Bàn đạp Phanh / Lùi
+    // B. Đọc bàn đạp Ga & Bàn đạp Phanh / Lùi (Deadzone an toàn 0.08 chống phanh/lùi ảo)
     let gasVal = 0;
     let brakeVal = 0;
 
@@ -22489,11 +22557,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
       if (restGas < -0.65) gasVal = Math.max(0, (rawGasAxis + 1.0) / 2.0);
       else if (restGas > 0.65) gasVal = Math.max(0, (1.0 - rawGasAxis) / 2.0);
-      else gasVal = Math.max(0, rawGasAxis);
+      else gasVal = Math.abs(rawGasAxis - restGas) > 0.08 ? Math.max(0, Math.abs(rawGasAxis - restGas)) : 0;
 
       if (restBrake < -0.65) brakeVal = Math.max(0, (rawBrakeAxis + 1.0) / 2.0);
       else if (restBrake > 0.65) brakeVal = Math.max(0, (1.0 - rawBrakeAxis) / 2.0);
-      else brakeVal = Math.max(0, rawBrakeAxis);
+      else brakeVal = Math.abs(rawBrakeAxis - restBrake) > 0.08 ? Math.max(0, Math.abs(rawBrakeAxis - restBrake)) : 0;
     }
 
     // Nút cò L2 / R2 nếu bàn đạp báo qua Buttons
@@ -24469,9 +24537,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     liveWheel.steerNorm = Math.max(-1, Math.min(1, rawS));
     liveWheel.gasNorm = Number(w.gasNorm ?? (w.gasPercent ? w.gasPercent / 100 : 0)) || 0;
     liveWheel.brakeNorm = Number(w.brakeNorm ?? (w.brakePercent ? w.brakePercent / 100 : 0)) || 0;
+    const revNorm = Number(w.reverseNorm ?? (typeof w.reversePercent === 'number' ? w.reversePercent / 100 : (w.gear === 'R' ? liveWheel.brakeNorm : 0))) || 0;
     liveWheel.driveNorm = w.driveNorm !== undefined
       ? Number(w.driveNorm) || 0
-      : (liveWheel.gasNorm - liveWheel.brakeNorm);
+      : (liveWheel.gasNorm - Math.max(liveWheel.brakeNorm, revNorm));
     liveWheel.gear = w.gear || (liveWheel.driveNorm < -0.025 ? 'R' : 'D');
     liveWheel.escPulseUs = Number(w.escPulseUs) || 1500;
     liveWheel.updatedAt = nowPerf;
@@ -24487,7 +24556,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       gasPercent: Math.round(liveWheel.gasNorm * 100),
       brakeNorm: liveWheel.brakeNorm,
       brakePercent: Math.round(liveWheel.brakeNorm * 100),
-      reversePercent: liveWheel.gear === 'R' ? Math.round(liveWheel.brakeNorm * 100) : 0,
+      reversePercent: liveWheel.gear === 'R' ? Math.round(Math.max(liveWheel.brakeNorm, revNorm) * 100) : Math.round(revNorm * 100),
       driveNorm: liveWheel.driveNorm,
       gear: liveWheel.gear,
       lastUpdateMs: nowPerf,
@@ -24498,7 +24567,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       racingWheel.connected = true;
       racingWheel.gasPercent = Math.round(liveWheel.gasNorm * 100);
       racingWheel.brakePercent = Math.round(liveWheel.brakeNorm * 100);
-      racingWheel.reversePercent = liveWheel.gear === 'R' ? Math.round(liveWheel.brakeNorm * 100) : 0;
+      racingWheel.reversePercent = liveWheel.gear === 'R' ? Math.round(Math.max(liveWheel.brakeNorm, revNorm) * 100) : Math.round(revNorm * 100);
       racingWheel.steerAngleDeg = Math.round(liveWheel.steerNorm * 540);
       racingWheel.gear = liveWheel.gear;
       racingWheel.lastInputTime = nowPerf;

@@ -10,9 +10,9 @@
     .title { color: #00ff88; font-weight: bold; font-size: 14px; margin-bottom: 8px; letter-spacing: 0.5px; }
     .viewport-box { position: relative; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; margin: 0 auto 10px; border: 2px solid #00e5ff; border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.2); }
     .viewport-box.rear-active { border-color: #ffd60a; box-shadow: 0 4px 16px rgba(255, 214, 10, 0.2); }
-    canvas { width: 100%; height: 100%; display: block; object-fit: contain; }
-    /* QUAN TRỌNG: Ẩn offscreen để iOS WebKit không ngắt giải mã video */
-    video { position: fixed; top: -9999px; left: -9999px; width: 320px; height: 240px; opacity: 0.01; pointer-events: none; z-index: -100; }
+    canvas { position: relative; z-index: 2; width: 100%; height: 100%; display: block; object-fit: contain; }
+    /* QUAN TRỌNG: Giữ thẻ video nằm trong viewport (opacity 0.02 bên dưới canvas) để iOS Safari không ngừng giải mã frame ISP */
+    video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.02; pointer-events: none; z-index: 1; }
     .badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.85); color: #ffd60a; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-family: monospace; backdrop-filter: blur(4px); text-align: left; }
     .gear-badge { position: absolute; top: 6px; right: 6px; background: #00e5ff; color: #000; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 900; transition: background 0.2s ease; }
     .gear-badge.reverse { background: #ff3b30; color: #fff; }
@@ -132,6 +132,9 @@
     let currentStream = null;
     let isSwitchingCamera = false;
     let isBusyEncoding = false;
+    let isLoopStarted = false;
+    let wsStatusText = 'Chờ WS';
+    let lastBlobStartTs = 0;
 
     let fpsCounter = 0;
     let lastFpsTime = performance.now();
@@ -202,26 +205,57 @@
       const knownId = specificDeviceId || (isReverse ? cachedFrontCameraId : (cachedUltraWideCameraId || cachedRearCameraId));
 
       const constraints = knownId
-        ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60, min: 30 } } }
-        : { audio: false, video: { facingMode: desiredFacing, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60, min: 30 } } };
+        ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60 } } }
+        : { audio: false, video: { facingMode: desiredFacing, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60 } } };
+
+      const attachAndPlayStream = async (stream) => {
+        currentStream = stream;
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('playsinline', '');
+        video.setAttribute('webkit-playsinline', '');
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+        if (!video.videoWidth || video.readyState < 2) {
+          await new Promise((resolve) => {
+            let done = false;
+            const finish = () => { if (!done) { done = true; resolve(); } };
+            video.onloadedmetadata = finish;
+            video.oncanplay = finish;
+            setTimeout(finish, 600);
+          });
+          await video.play().catch(() => {});
+        }
+      };
 
       try {
-        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = currentStream;
-        await video.play().catch(() => {});
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        await attachAndPlayStream(stream);
         logEl.textContent = isReverse
           ? `🔙 Đang phát CAM LÙI (Gương Hậu) — 100% công suất mượt mà!`
           : `🚘 Đang phát CAM MŨI (Kính Lái) — 100% công suất mượt mà!`;
       } catch (e) {
         try {
-          currentStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: desiredFacing } });
-          video.srcObject = currentStream;
-          await video.play().catch(() => {});
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: desiredFacing } });
+          await attachAndPlayStream(fallbackStream);
+          logEl.textContent = isReverse
+            ? `🔙 Đang phát CAM LÙI (Fallback) — Mượt mà!`
+            : `🚘 Đang phát CAM MŨI (Fallback) — Mượt mà!`;
         } catch (err) {
           logEl.textContent = '❌ Lỗi mở Camera: ' + err.message;
         }
       } finally {
         isSwitchingCamera = false;
+      }
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'FPV_PHONE_PUBLISHER_INIT',
+            surface: targetSurface,
+            mode: phoneRole === 'auto' ? 'SINGLE_PHONE_AUTO_DR' : 'MULTI_PHONE_DEDICATED'
+          }));
+        } catch (e) {}
       }
     }
 
@@ -229,10 +263,12 @@
     function connectToServer() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsStatusText = '🟡 Đang nối WS...';
       ws = new WebSocket(`${proto}//${location.host}`);
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
+        wsStatusText = '🟢 WS OK';
         logEl.textContent = '🟢 Đã kết nối Server! Đang truyền luồng hình ảnh Zero-Lag HD...';
         ws.send(JSON.stringify({
           type: 'FPV_PHONE_PUBLISHER_INIT',
@@ -257,7 +293,12 @@
         } catch (e) {}
       };
 
+      ws.onerror = () => {
+        wsStatusText = '⚠️ Lỗi WS';
+      };
+
       ws.onclose = () => {
+        wsStatusText = '🔴 Thử nối lại...';
         setTimeout(connectToServer, 1200);
       };
     }
@@ -327,17 +368,23 @@
       // Cập nhật thống kê FPS mỗi giây
       if (now - lastFpsTime >= 1000) {
         const label = targetSurface === 'rear' ? '🔙 Gương Hậu' : '🚘 Kính Chắn Gió';
-        hudInfo.innerHTML = `${label}: ${canvas.width}x${canvas.height} | <b>${fpsCounter} FPS</b>`;
+        hudInfo.innerHTML = `${label}: ${canvas.width}x${canvas.height} | <b>${fpsCounter} FPS</b> | ${wsStatusText}`;
         fpsCounter = 0;
         lastFpsTime = now;
       }
 
-      if (isSwitchingCamera || !ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 98304) return;
-      if (isBusyEncoding || !video || video.readyState < 2 || !video.videoWidth) return;
+      if (isSwitchingCamera || !video || video.readyState < 2 || !video.videoWidth) return;
 
+      // Luôn vẽ camera lên Canvas ngay lập tức để Safari KHÔNG BAO GIỜ bị màn hình đen kể cả khi WS đang kết nối lại
       renderVideoToCanvas();
 
+      if (isBusyEncoding && (now - lastBlobStartTs > 1500)) {
+        isBusyEncoding = false;
+      }
+      if (isBusyEncoding || !ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 98304) return;
+
       isBusyEncoding = true;
+      lastBlobStartTs = now;
       const markerByte = targetSurface === 'rear' ? 0x02 : 0x01;
       const header = new Uint8Array([0x52, 0x43, 0x46, markerByte]);
 
@@ -447,16 +494,19 @@
     // 11. KÍCH HOẠT CAMERA FPV
     document.getElementById('btn-start').onclick = async () => {
       await keepScreenAwake();
-      await loadCameraLenses();
       connectToServer();
 
       logEl.textContent = '🔄 Đang khởi tạo Camera...';
       await activateCamera(targetSurface, lensSelect.value);
+      await loadCameraLenses();
 
       document.getElementById('btn-start').textContent = '✅ CAMERA FPV ĐANG PHÁT TRỰC TIẾP';
       document.getElementById('btn-start').style.background = '#00e5ff';
 
-      requestAnimationFrame(processLoop);
+      if (!isLoopStarted) {
+        isLoopStarted = true;
+        requestAnimationFrame(processLoop);
+      }
     };
 
     lensSelect.onchange = () => {

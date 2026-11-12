@@ -79,11 +79,12 @@ public class Gog808Bridge {
 
             reportedNoJoy = false;
 
-            // 2. Chờ driver ổn định (bỏ qua frame dummy khởi tạo 32767)
-            Thread.Sleep(300);
-            joyGetPosEx(joyId, ref info);
-            Thread.Sleep(50);
-            joyGetPosEx(joyId, ref info);
+            // 2. Chờ driver ổn định (bỏ qua 6 frame dummy khởi tạo)
+            Thread.Sleep(400);
+            for (int w = 0; w < 6; w++) {
+                joyGetPosEx(joyId, ref info);
+                Thread.Sleep(25);
+            }
 
             // 3. Đo đạc giá trị trạng thái nghỉ (rest calibration) qua 15 mẫu
             int sumX = 0, sumY = 0, sumZ = 0, sumR = 0, restBtns = 0;
@@ -105,18 +106,24 @@ public class Gog808Bridge {
             int restZ = samples > 0 ? sumZ / samples : 0;
             int restR = samples > 0 ? sumR / samples : 0;
 
-            // Chuẩn hóa điểm nghỉ cho các trục unipolar (nghỉ tại 0 hoặc 65535)
-            if (restZ < 8000) restZ = 0;
-            if (restR < 8000) restR = 0;
+            // Chuẩn hóa điểm nghỉ cho các trục unipolar (nghỉ tại 0, 32767 hoặc 65535)
+            if (restZ < 4000) restZ = 0;
+            if (restR < 4000) restR = 0;
+            if (restZ > 61000) restZ = 65535;
+            if (restR > 61000) restR = 65535;
             if (Math.Abs(restY - 32767) < 4000) restY = 32767;
             if (Math.Abs(restX - 32767) < 4000) restX = 32767;
 
             Console.Error.WriteLine(string.Format("CALIBRATED_REST: JoyId={0} X={1} Y={2} Z={3} R={4} Btns=0x{5:X}", joyId, restX, restY, restZ, restR, restBtns));
 
             float lastSteer = 999f, lastGas = 999f, lastBrake = 999f, lastRev = 999f;
+            float prevGas = 0f, prevBrake = 0f, prevRev = 0f;
+            int jumpHoldGas = 0, jumpHoldBrake = 0, jumpHoldRev = 0;
+            int lastRawY = restY, lastRawZ = restZ, lastRawR = restR;
             int lastSendTime = 0;
             int seq = 0;
             int startTick = Environment.TickCount;
+            bool startupArmChecked = false;
 
             // Vòng lặp đọc 50Hz khi thiết bị đang kết nối
             while (true) {
@@ -128,6 +135,29 @@ public class Gog808Bridge {
                     break;
                 }
 
+                int elapsedMs = Environment.TickCount - startTick;
+
+                // Khóa & hiệu chuẩn lại trong 1.8s đầu: nếu driver HID báo giá trị nghỉ muộn (0 <-> 65535 hoặc 32767),
+                // tự động cập nhật lại điểm nghỉ rest* cho tới khi hết 1.8s khóa an toàn.
+                if (elapsedMs < 1800) {
+                    if (ReadAxis(info.dwYpos, restY) > 0.35f) restY = info.dwYpos;
+                    if (ReadAxis(info.dwZpos, restZ) > 0.35f) restZ = info.dwZpos;
+                    if (ReadAxis(info.dwRpos, restR) > 0.35f) restR = info.dwRpos;
+                    if (Math.Abs(info.dwXpos - restX) > 20000) restX = info.dwXpos;
+                    restBtns = info.dwButtons;
+                    lastRawY = info.dwYpos;
+                    lastRawZ = info.dwZpos;
+                    lastRawR = info.dwRpos;
+                } else if (!startupArmChecked) {
+                    startupArmChecked = true;
+                    // Ngay khoảnh khắc mở khóa an toàn: nếu bất kỳ bàn đạp nào đang kích > 35% mà không có thao tác đạp thực tế,
+                    // xem như điểm nghỉ phần cứng bị lệch/ngược cực -> tái chuẩn hóa về vị trí hiện tại (Neutral 0%).
+                    if (ReadAxis(info.dwYpos, restY) > 0.35f) restY = info.dwYpos;
+                    if (ReadAxis(info.dwZpos, restZ) > 0.35f) restZ = info.dwZpos;
+                    if (ReadAxis(info.dwRpos, restR) > 0.35f) restR = info.dwRpos;
+                    Console.Error.WriteLine(string.Format("ARMED_REST: JoyId={0} X={1} Y={2} Z={3} R={4} Btns=0x{5:X}", joyId, restX, restY, restZ, restR, restBtns));
+                }
+
                 // A. Đánh lái: Tâm ở restX (~32767), biên -1.0 (Trái) .. +1.0 (Phải)
                 float rawSteer = (float)(info.dwXpos - restX) / 32767.5f;
                 if (Math.Abs(rawSteer) < 0.035f) rawSteer = 0f;
@@ -137,6 +167,29 @@ public class Gog808Bridge {
                 float rawGas = ReadAxis(info.dwYpos, restY);
                 float rawBrake = ReadAxis(info.dwZpos, restZ);
                 float rawRev = ReadAxis(info.dwRpos, restR);
+
+                // Chống kích ga/lùi ảo 100% khi driver WinMM lật cực đột ngột trong 10s đầu hoặc trên trục chưa dùng
+                if (elapsedMs >= 1800 && elapsedMs < 10000) {
+                    if (rawGas >= 0.88f && (prevGas < 0.10f || jumpHoldGas > 0) && Math.Abs(info.dwYpos - lastRawY) < 400) {
+                        jumpHoldGas++;
+                        rawGas = 0f;
+                        if (jumpHoldGas >= 6) { restY = info.dwYpos; jumpHoldGas = 0; }
+                    } else { jumpHoldGas = 0; }
+
+                    if (rawBrake >= 0.88f && (prevBrake < 0.10f || jumpHoldBrake > 0) && Math.Abs(info.dwZpos - lastRawZ) < 400) {
+                        jumpHoldBrake++;
+                        rawBrake = 0f;
+                        if (jumpHoldBrake >= 6) { restZ = info.dwZpos; jumpHoldBrake = 0; }
+                    } else { jumpHoldBrake = 0; }
+
+                    if (rawRev >= 0.88f && (prevRev < 0.10f || jumpHoldRev > 0) && Math.Abs(info.dwRpos - lastRawR) < 400) {
+                        jumpHoldRev++;
+                        rawRev = 0f;
+                        if (jumpHoldRev >= 6) { restR = info.dwRpos; jumpHoldRev = 0; }
+                    } else { jumpHoldRev = 0; }
+                }
+                prevGas = rawGas; prevBrake = rawBrake; prevRev = rawRev;
+                lastRawY = info.dwYpos; lastRawZ = info.dwZpos; lastRawR = info.dwRpos;
 
                 // Cò digital 6 (Trái) và 7 (Phải) dự phòng
                 bool bGas = ((info.dwButtons & (1 << 7)) != 0) && ((restBtns & (1 << 7)) == 0);
@@ -164,13 +217,14 @@ public class Gog808Bridge {
                     driveNorm = rawGas;
                 }
 
-                // Khóa an toàn 1.5s đầu sau khi bật bridge: Luôn giữ Neutral dừng xe tuyệt đối
-                if (Environment.TickCount - startTick < 1500) {
+                // Khóa an toàn 1.8s đầu sau khi bật bridge: Luôn giữ Neutral & Gear D dừng xe tuyệt đối
+                if (elapsedMs < 1800) {
                     rawGas = 0f;
                     rawBrake = 0f;
                     rawRev = 0f;
                     driveNorm = 0f;
                     steerNorm = 0f;
+                    gear = "D";
                 }
 
                 int now = Environment.TickCount;

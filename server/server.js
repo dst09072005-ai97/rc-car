@@ -518,32 +518,63 @@ const discoveredEsp32Cams = {
 
 const emulatedFrontCamSockets = new Set();
 const emulatedRearCamSockets = new Set();
+const fpvPhonePublishers = new Set();
+const fpvPhoneState = {
+  connected: false,
+  ip: '',
+  surface: 'front',
+  mode: 'SINGLE_PHONE_AUTO_DR',
+  lastSeen: 0,
+  lastFrameAt: 0
+};
 
 function getEffectiveCamEndpoints() {
   const lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.76';
   const now = Date.now();
   const frontHw = discoveredEsp32Cams.front && discoveredEsp32Cams.front.ip && (now - (discoveredEsp32Cams.front.lastSeen || 0) < 20000);
   const rearHw = discoveredEsp32Cams.rear && discoveredEsp32Cams.rear.ip && (now - (discoveredEsp32Cams.rear.lastSeen || 0) < 20000);
+  const publicTunnelUrl = (typeof cloudflareTunnelUrl === 'string' && cloudflareTunnelUrl) ? cloudflareTunnelUrl : null;
+  const phoneOnline = fpvPhoneState.connected || (now - (fpvPhoneState.lastFrameAt || 0) < 10000);
 
   const front = frontHw ? discoveredEsp32Cams.front : {
     ip: lanIp,
-    port: 8080,
+    port: typeof HTTP_PORT === 'number' ? HTTP_PORT : 8080,
+    httpsPort: 8443,
     path: '/esp32-front-ws',
     active: true,
-    lastSeen: now,
-    isEmulatedPhone: true
+    lastSeen: fpvPhoneState.lastSeen || now,
+    isEmulatedPhone: true,
+    phoneConnected: phoneOnline,
+    phoneIp: fpvPhoneState.ip || '',
+    publicTunnelUrl
   };
 
   const rear = rearHw ? discoveredEsp32Cams.rear : {
     ip: lanIp,
-    port: 8080,
+    port: typeof HTTP_PORT === 'number' ? HTTP_PORT : 8080,
+    httpsPort: 8443,
     path: '/esp32-rear-ws',
     active: true,
-    lastSeen: now,
-    isEmulatedPhone: true
+    lastSeen: fpvPhoneState.lastSeen || now,
+    isEmulatedPhone: true,
+    phoneConnected: phoneOnline,
+    phoneIp: fpvPhoneState.ip || '',
+    publicTunnelUrl
   };
 
-  return { front, rear };
+  return {
+    front,
+    rear,
+    fpvPhone: {
+      connected: phoneOnline,
+      ip: fpvPhoneState.ip || '',
+      surface: fpvPhoneState.surface || 'front',
+      mode: fpvPhoneState.mode || 'SINGLE_PHONE_AUTO_DR',
+      lastSeen: fpvPhoneState.lastSeen || 0,
+      lastFrameAt: fpvPhoneState.lastFrameAt || 0
+    },
+    publicTunnelUrl
+  };
 }
 
 let lastUdpCommandLog = '';
@@ -761,6 +792,8 @@ app.get('/api/esp32-discovered', (req, res) => {
       active: true,
       ageSec: 0
     },
+    fpvPhone: effective.fpvPhone,
+    publicTunnelUrl: effective.publicTunnelUrl,
     car: {
       ...esp32CarConfig,
       active: (now - (esp32CarConfig.lastSeen || 0)) < 20000,
@@ -923,8 +956,12 @@ function broadcastCameraIpUpdate() {
     type: 'CAM_IP_UPDATED',
     cams: {
       front: effective.front,
-      rear: effective.rear
+      rear: effective.rear,
+      fpvPhone: effective.fpvPhone,
+      publicTunnelUrl: effective.publicTunnelUrl
     },
+    fpvPhone: effective.fpvPhone,
+    publicTunnelUrl: effective.publicTunnelUrl,
     car: esp32CarConfig,
     front: effective.front,
     rear: effective.rear
@@ -1072,7 +1109,10 @@ function attachMultiplayerServer(serverInstance) {
       return;
     }
 
-    const clientIp = (req && req.socket && req.socket.remoteAddress) || '';
+    const rawForwarded = (req && req.headers && (req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'])) || '';
+    const forwardedIp = String(rawForwarded).split(',')[0].trim();
+    const rawSocketIp = (req && req.socket && req.socket.remoteAddress) || '';
+    const clientIp = (forwardedIp || rawSocketIp).replace(/^::ffff:/, '');
     ws._clientIp = clientIp;
 
     const hostCar = cars.get('car_host');
@@ -1150,32 +1190,32 @@ function attachMultiplayerServer(serverInstance) {
       hostCar.occupants[assignedSeat] = playerId;
     }
 
+    const effectiveInit = typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
+      front: discoveredEsp32Cams.front,
+      rear: discoveredEsp32Cams.rear
+    };
     ws.send(JSON.stringify({
       type: 'SERVER_LAN_INFO',
       lanIp: getLocalLanIp(),
       port: HTTP_PORT,
+      publicTunnelUrl: effectiveInit.publicTunnelUrl || null,
+      fpvPhone: effectiveInit.fpvPhone || null,
       car: {
         ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
         port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
       },
-      cams: typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
-        front: discoveredEsp32Cams.front,
-        rear: discoveredEsp32Cams.rear
-      }
+      cams: effectiveInit
     }));
-    if (discoveredEsp32Cams.front.ip || discoveredEsp32Cams.rear.ip) {
-      try {
-        ws.send(JSON.stringify({
-          type: 'CAM_IP_UPDATED',
-          cams: typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
-            front: discoveredEsp32Cams.front,
-            rear: discoveredEsp32Cams.rear
-          },
-          front: discoveredEsp32Cams.front,
-          rear: discoveredEsp32Cams.rear
-        }));
-      } catch (e) {}
-    }
+    try {
+      ws.send(JSON.stringify({
+        type: 'CAM_IP_UPDATED',
+        cams: effectiveInit,
+        fpvPhone: effectiveInit.fpvPhone || null,
+        publicTunnelUrl: effectiveInit.publicTunnelUrl || null,
+        front: effectiveInit.front,
+        rear: effectiveInit.rear
+      }));
+    } catch (e) {}
     ws.send(JSON.stringify({
       type: 'WELCOME',
       playerId,
@@ -1202,6 +1242,17 @@ function attachMultiplayerServer(serverInstance) {
 
       if (isRcf) {
         const isRear = msg[3] === 0x02;
+        const nowFrame = Date.now();
+        fpvPhoneState.lastFrameAt = nowFrame;
+        fpvPhoneState.lastSeen = nowFrame;
+        fpvPhoneState.surface = isRear ? 'rear' : 'front';
+        if (!fpvPhoneState.connected) {
+          fpvPhoneState.connected = true;
+          fpvPhoneState.ip = ws._clientIp || fpvPhoneState.ip || '';
+          fpvPhonePublishers.add(ws);
+          ws._isFpvPhone = true;
+          if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+        }
         const rawJpeg = msg.subarray(4);
         const targetCamSet = isRear ? emulatedRearCamSockets : emulatedFrontCamSockets;
         for (const camWs of targetCamSet) {
@@ -1234,12 +1285,23 @@ function attachMultiplayerServer(serverInstance) {
       try {
         const data = JSON.parse(msg.toString());
         if (data.type === 'FPV_PHONE_PUBLISHER_INIT') {
-          console.log('📱 [FPV PHONE] Điện thoại FPV đã kết nối phát hình (' + (data.surface || 'front') + ', mode: ' + (data.mode || 'SINGLE_PHONE_AUTO_DR') + ')');
+          const phoneIp = (ws._clientIp || '').replace(/^::ffff:/, '');
+          ws._isFpvPhone = true;
+          fpvPhonePublishers.add(ws);
+          fpvPhoneState.connected = true;
+          fpvPhoneState.ip = phoneIp || fpvPhoneState.ip || '';
+          fpvPhoneState.surface = data.surface || 'front';
+          fpvPhoneState.mode = data.mode || 'SINGLE_PHONE_AUTO_DR';
+          fpvPhoneState.lastSeen = Date.now();
+          console.log('📱 [FPV PHONE] Điện thoại FPV đã kết nối phát hình (' + fpvPhoneState.surface + ', mode: ' + fpvPhoneState.mode + ', IP: ' + (fpvPhoneState.ip || 'tunnel') + ')');
           try {
             ws.send(JSON.stringify({
               type: 'FPV_PHONE_PUBLISHER_ACK',
               ok: true,
-              role: data.surface || 'front'
+              role: fpvPhoneState.surface,
+              phoneIp: fpvPhoneState.ip,
+              lanIp: typeof getLocalLanIp === 'function' ? getLocalLanIp() : '',
+              publicTunnelUrl: cloudflareTunnelUrl || null
             }));
           } catch (e) {}
           if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
@@ -1580,6 +1642,13 @@ function computeSafeEscPulseUs(msg) {
 
     ws.on('close', () => {
       activeMultiplayerSockets.delete(ws);
+      if (ws._isFpvPhone || fpvPhonePublishers.has(ws)) {
+        fpvPhonePublishers.delete(ws);
+        if (fpvPhonePublishers.size === 0) {
+          fpvPhoneState.connected = false;
+          if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
+        }
+      }
       for (const carObj of cars.values()) {
         for (const s of [0, 1, 2, 3]) {
           if (carObj.occupants[s] === playerId) carObj.occupants[s] = null;
@@ -1688,17 +1757,22 @@ let cloudflareTunnelUrl = null;
 
 function startCloudflareTunnelManager(httpPort = 8080) {
   if (cloudflareTunnelProcess) return;
+  const wingetLink = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'cloudflared.exe')
+    : '';
   const binaryCandidates = [
     'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe',
     'C:\\Program Files\\cloudflared\\cloudflared.exe',
+    ...(wingetLink ? [wingetLink] : []),
     'cloudflared'
   ];
-  let binaryPath = binaryCandidates.find(p => fs.existsSync(p));
+  let binaryPath = binaryCandidates.find(p => p && fs.existsSync(p));
   if (!binaryPath) {
     try {
       require('child_process').execSync('where cloudflared', { stdio: 'ignore' });
       binaryPath = 'cloudflared';
     } catch (e) {
+      console.warn('⚠️ [Cloudflare Tunnel] Chưa tìm thấy binary cloudflared trên máy.');
       return;
     }
   }
@@ -1710,6 +1784,9 @@ function startCloudflareTunnelManager(httpPort = 8080) {
     });
 
     let urlCaptured = false;
+    cloudflareTunnelProcess.on('error', (err) => {
+      console.warn(`[Cloudflare Tunnel] Lỗi tiến trình cloudflared: ${err.message}`);
+    });
     cloudflareTunnelProcess.stderr.on('data', (data) => {
       if (urlCaptured) return;
       const str = data.toString();
@@ -1718,6 +1795,7 @@ function startCloudflareTunnelManager(httpPort = 8080) {
         urlCaptured = true;
         cloudflareTunnelUrl = match[0].trim();
         printCloudflareTunnelQr(cloudflareTunnelUrl);
+        if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
       }
     });
 
@@ -2668,10 +2746,11 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       }
     }
 
-    // Khóa trọng tài: Nếu vô lăng USB vật lý trên host (WINMM_USB) đang hoạt động,
-    // TUYỆT ĐỐI BỎ QUA mọi nguồn điều khiển khác (WHEEL_BRIDGE, QUEST_CAR_CONTROL, UDP_CAR_CMD, v.v.)
+    // Khóa trọng tài: Nếu vô lăng USB vật lý trên host (WINMM_USB) đang kết nối hoặc vừa hoạt động,
+    // TUYỆT ĐỐI BỎ QUA mọi nguồn điều khiển khác (WHEEL_BRIDGE, QUEST_CAR_CONTROL, UDP_CAR_CMD) để chống xung đột và ga/lùi ảo từ trình duyệt!
+    const isNativeWheelMaster = Boolean(latestBridgeState && latestBridgeState.connected && latestBridgeState.source === 'GOG808_NATIVE' && (now - (latestBridgeState.timestamp || 0) < 2000));
     if (source !== 'WINMM_USB' &&
-        (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS)) {
+        (isNativeWheelMaster || (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS))) {
       return;
     }
 
@@ -2777,14 +2856,10 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     const pkt = Buffer.alloc(4);
     pkt.writeInt16LE(steerDeg, 0);
     pkt.writeInt16LE(escPulseUs, 2);
+    const activeUdpSocket = (typeof udpOutSocket !== 'undefined' && udpOutSocket) ? udpOutSocket : udpServer;
     try {
-      if (typeof udpServer !== 'undefined' && udpServer) {
-        udpServer.send(pkt, 0, 4, targetPort, targetHost, () => {});
-      }
-    } catch (e) {}
-    try {
-      if (typeof udpOutSocket !== 'undefined' && udpOutSocket) {
-        udpOutSocket.send(pkt, 0, 4, targetPort, targetHost, (err) => {
+      if (activeUdpSocket) {
+        activeUdpSocket.send(pkt, 0, 4, targetPort, targetHost, (err) => {
           if (!err && typeof esp32CarConfig !== 'undefined' && esp32CarConfig) {
             esp32CarConfig.lastSentTime = now;
             esp32CarConfig.packetsSent++;
@@ -2855,33 +2930,33 @@ app.get('/api/sc-search', handleSoundCloudSearch);
         ws.on('close', () => activeMultiplayerSockets.delete(ws));
         ws.on('error', () => activeMultiplayerSockets.delete(ws));
       }
+      const unifiedCams = typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
+        front: discoveredEsp32Cams.front,
+        rear: discoveredEsp32Cams.rear
+      };
       ws.send(JSON.stringify({
           type: 'SERVER_LAN_INFO',
           ips: getLanIpv4List(),
           lanIp: typeof getLocalLanIp === 'function' ? getLocalLanIp() : (getLanIpv4List()[0] || '127.0.0.1'),
-          port: 8080,
+          port: typeof HTTP_PORT === 'number' ? HTTP_PORT : 8080,
+          publicTunnelUrl: unifiedCams.publicTunnelUrl || null,
+          fpvPhone: unifiedCams.fpvPhone || null,
           car: {
             ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
             port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
           },
-          cams: {
-            front: discoveredEsp32Cams.front,
-            rear: discoveredEsp32Cams.rear
-          }
+          cams: unifiedCams
         }));
-        if (discoveredEsp32Cams.front.ip || discoveredEsp32Cams.rear.ip) {
-          try {
-            ws.send(JSON.stringify({
-              type: 'CAM_IP_UPDATED',
-              cams: {
-                front: discoveredEsp32Cams.front,
-                rear: discoveredEsp32Cams.rear
-              },
-              front: discoveredEsp32Cams.front,
-              rear: discoveredEsp32Cams.rear
-            }));
-          } catch (e) {}
-        }
+        try {
+          ws.send(JSON.stringify({
+            type: 'CAM_IP_UPDATED',
+            cams: unifiedCams,
+            fpvPhone: unifiedCams.fpvPhone || null,
+            publicTunnelUrl: unifiedCams.publicTunnelUrl || null,
+            front: unifiedCams.front,
+            rear: unifiedCams.rear
+          }));
+        } catch (e) {}
         if (latestBridgeState.connected && (Date.now() - latestBridgeState.timestamp < 2000)) {
           ws.send(JSON.stringify({
             type: 'WHEEL_BRIDGE_STATE',
@@ -2927,6 +3002,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
           const buttonEvents = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
 
           latestBridgeState.connected = Boolean(src.connected !== false);
+          latestBridgeState.source = src.source || 'BROWSER_BRIDGE';
           latestBridgeState.steerNorm = steerNorm;
           latestBridgeState.gasNorm = gasNorm;
           latestBridgeState.brakeNorm = brakeNorm;
@@ -2944,14 +3020,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
             steerAngleDeg: Math.max(-540, Math.min(540, Math.round(steerNorm * 540))),
             gasNorm,
             brakeNorm,
-            reverseNorm: gear === 'R' ? brakeNorm : reverseNorm,
+            reverseNorm: gear === 'R' ? Math.max(brakeNorm, reverseNorm) : reverseNorm,
             driveNorm,
             throttleNorm: driveNorm,
             gasPercent: Math.round(gasNorm * 100),
             brakePercent: Math.round(brakeNorm * 100),
-            reversePercent: gear === 'R' ? Math.round(brakeNorm * 100) : Math.round(reverseNorm * 100),
+            reversePercent: gear === 'R' ? Math.round(Math.max(brakeNorm, reverseNorm) * 100) : Math.round(reverseNorm * 100),
             gear,
-            steer: Math.max(45, Math.min(135, Math.round(90 + steerNorm * 45))),
+            steer: Math.max(45, Math.min(135, Math.round(90 - steerNorm * 45))),
             throttle: Math.max(1000, Math.min(2000, Math.round(1500 + driveNorm * 260))),
             buttonEvents,
             seq: latestBridgeState.seq,
@@ -3069,6 +3145,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
           if (data && data.type === 'WHEEL_BRIDGE_STATE') {
             if (data.connected) {
               latestBridgeState.connected = true;
+              latestBridgeState.source = 'GOG808_NATIVE';
             latestBridgeState.steerNorm = data.steerNorm;
             latestBridgeState.gasNorm = data.gasNorm;
             latestBridgeState.brakeNorm = data.brakeNorm;
