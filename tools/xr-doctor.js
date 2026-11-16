@@ -50,12 +50,12 @@ if (fpvCamHtmlPath) {
     new Function(strippedJs);
     const hasFpvProto = fpvHtml.includes('FPV_PHONE_PUBLISHER_INIT') && fpvHtml.includes('SWITCH_FPV_SURFACE');
     const hasThree3d = fpvHtml.includes('renderer.setAnimationLoop') && fpvHtml.includes('popup-backdrop');
-    record('FPV Phone Web3D', 'Cú pháp & Giao thức fpv-cam.html (Three.js 3D + Pop-up)',
+    record('FPV Phone Smoke Test', 'Cú pháp tĩnh & Token fpv-cam.html (Structural Smoke Test)',
       hasFpvProto && hasThree3d ? 'VERIFIED' : 'PARTIAL',
       `JS syntax OK, FPV_PHONE_PUBLISHER_INIT: ${hasFpvProto}, Three.js 3D & Pop-up: ${hasThree3d}`
     );
   } catch (err) {
-    record('FPV Phone Web3D', 'Cú pháp & Giao thức fpv-cam.html (Three.js 3D + Pop-up)', 'BLOCKED', err.message.split('\n')[0]);
+    record('FPV Phone Smoke Test', 'Cú pháp tĩnh & Token fpv-cam.html (Structural Smoke Test)', 'BLOCKED', err.message.split('\n')[0]);
   }
 }
 

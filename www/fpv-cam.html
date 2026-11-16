@@ -11,7 +11,7 @@
   <link rel="manifest" href="/fpv-manifest.json" />
   <link rel="icon" type="image/png" href="/icons/fpv-icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/fpv-icon-192.png" />
-  <title>FPV Smart Camera 3D — Zero-Lag Web3D</title>
+  <title>FPV Smart Camera 3D — Low-Latency Web3D</title>
   <style>
     :root {
       --bg: #050912;
@@ -231,7 +231,7 @@
       <div class="seg-grid-3">
         <button id="mode-fast" class="chip-btn active">⚡ Siêu Tốc<br><small>480p • 40 FPS</small></button>
         <button id="mode-hd" class="chip-btn">💎 Cực Nét<br><small>720p • 30 FPS</small></button>
-        <button id="mode-zerolag" class="chip-btn">🏎️ Zero-Lag<br><small>360p • 60 FPS</small></button>
+        <button id="mode-zerolag" class="chip-btn">🏎️ 60 FPS Thử Nghiệm<br><small>360p • Exp 60 FPS</small></button>
       </div>
 
       <div class="section-label">2. Vai trò thiết bị trên xe RC</div>
@@ -331,6 +331,10 @@
     let wsStatusText = 'Chờ WS';
     let ackInfoText = 'LAN/Tunnel: Chờ ACK';
     let wakeLockActive = false;
+    let wakeLockSentinel = null;
+    let isShuttingDown = false;
+    let reconnectTimerId = null;
+    let isDisposed = false;
     let lastBlobStartTs = 0;
 
     let fpsCounter = 0;
@@ -642,9 +646,13 @@
     // ==================== CAMERA & WEBSOCKET PIPELINE ====================
     async function keepScreenAwake() {
       try {
-        if ('wakeLock' in navigator) {
-          await navigator.wakeLock.request('screen');
+        if ('wakeLock' in navigator && !wakeLockSentinel) {
+          wakeLockSentinel = await navigator.wakeLock.request('screen');
           wakeLockActive = true;
+          wakeLockSentinel.addEventListener('release', () => {
+            wakeLockActive = false;
+            wakeLockSentinel = null;
+          });
         }
       } catch (e) {}
     }
@@ -764,7 +772,7 @@
       ws.onopen = () => {
         wsStatusText = 'WS OK';
         wsDot.className = 'status-dot online';
-        logEl.textContent = '🟢 Đã nối Server! Luồng RCF Zero-Lag sẵn sàng.';
+        logEl.textContent = '🟢 Đã nối Server! Luồng RCF sẵn sàng.';
         ws.send(JSON.stringify({
           type: 'FPV_PHONE_PUBLISHER_INIT',
           surface: targetSurface,
@@ -809,9 +817,11 @@
       };
 
       ws.onclose = () => {
+        if (isShuttingDown) return;
         wsStatusText = 'Thử nối lại...';
         wsDot.className = 'status-dot error';
-        setTimeout(connectToServer, 1200);
+        if (reconnectTimerId) clearTimeout(reconnectTimerId);
+        reconnectTimerId = setTimeout(connectToServer, 1200);
       };
     }
 
@@ -1126,7 +1136,7 @@
     };
 
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/fpv-sw.js', { scope: '/' }).catch(() => {});
+      navigator.serviceWorker.register('/fpv-sw.js', { scope: '/fpv-cam.html' }).catch(() => {});
     }
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -1148,16 +1158,61 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    window.addEventListener('pagehide', () => {
-      renderer.setAnimationLoop(null);
-      if (currentStream) currentStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
-      [screenGeo, bezelGeo, reticleGeo, ringGeo, chassis.geometry, canopy.geometry, wheelGeo, frontPod.geometry, rearPod.geometry, coneGeo].forEach(g => g.dispose());
-      [screenMat, bezelMat, reticleMat, ringMat, chassisMat, canopyMat, wheelMat, frontLedMat, rearLedMat, frontConeMat, rearConeMat].forEach(m => m.dispose());
-      videoTexture.dispose();
-      overlayTexture.dispose();
-      controls.dispose();
-      renderer.dispose();
-    });
+    function disposePhonePublisher() {
+      if (isDisposed) return;
+      isDisposed = true;
+      isShuttingDown = true;
+
+      // 1. Hủy timer reconnect & đóng WebSocket lập tức
+      if (reconnectTimerId) {
+        clearTimeout(reconnectTimerId);
+        reconnectTimerId = null;
+      }
+      if (ws) {
+        try {
+          ws.onopen = null;
+          ws.onmessage = null;
+          ws.onerror = null;
+          ws.onclose = null;
+          ws.close(1000, 'Normal Pagehide Shutdown');
+        } catch (e) {}
+        ws = null;
+      }
+
+      // 2. Dừng toàn bộ camera tracks & giải phóng video element
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+        currentStream = null;
+      }
+      if (video) {
+        video.srcObject = null;
+      }
+
+      // 3. Giải phóng WakeLock nếu đang bật
+      if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
+        try { wakeLockSentinel.release(); } catch (e) {}
+        wakeLockSentinel = null;
+        wakeLockActive = false;
+      }
+
+      // 4. Ngắt render loop và giải phóng tài nguyên Three.js một lần duy nhất
+      if (renderer) {
+        try { renderer.setAnimationLoop(null); } catch (e) {}
+      }
+      [screenGeo, bezelGeo, reticleGeo, ringGeo, chassis.geometry, canopy.geometry, wheelGeo, frontPod.geometry, rearPod.geometry, coneGeo].forEach(g => {
+        if (g && typeof g.dispose === 'function') try { g.dispose(); } catch (e) {}
+      });
+      [screenMat, bezelMat, reticleMat, ringMat, chassisMat, canopyMat, wheelMat, frontLedMat, rearLedMat, frontConeMat, rearConeMat].forEach(m => {
+        if (m && typeof m.dispose === 'function') try { m.dispose(); } catch (e) {}
+      });
+      if (videoTexture && typeof videoTexture.dispose === 'function') try { videoTexture.dispose(); } catch (e) {}
+      if (overlayTexture && typeof overlayTexture.dispose === 'function') try { overlayTexture.dispose(); } catch (e) {}
+      if (controls && typeof controls.dispose === 'function') try { controls.dispose(); } catch (e) {}
+      if (renderer && typeof renderer.dispose === 'function') try { renderer.dispose(); } catch (e) {}
+    }
+
+    window.addEventListener('pagehide', disposePhonePublisher);
+    window.addEventListener('beforeunload', disposePhonePublisher);
   </script>
 </body>
 </html>
