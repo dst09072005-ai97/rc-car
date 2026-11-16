@@ -184,6 +184,30 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 10.5px; color: #9ad1ff; line-height: 1.45;
     }
+
+    /* FPV Engineering Monitor (Development Diagnostics Panel) */
+    .debug-panel {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: min(94vw, 420px); max-height: 85vh; overflow-y: auto; z-index: 120;
+      background: rgba(6, 12, 24, 0.96); border: 1px solid var(--cyan); border-radius: 14px;
+      padding: 14px; box-shadow: 0 16px 40px rgba(0,0,0,0.85); backdrop-filter: blur(16px);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text);
+    }
+    .debug-header {
+      display: flex; justify-content: space-between; align-items: center;
+      font-weight: 700; color: var(--cyan); border-bottom: 1px solid rgba(0,229,255,0.2);
+      padding-bottom: 8px; margin-bottom: 10px; font-size: 11.5px;
+    }
+    .debug-close {
+      background: none; border: none; color: #fff; font-size: 16px; cursor: pointer; padding: 2px 6px;
+    }
+    .debug-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .debug-card {
+      background: rgba(12, 22, 42, 0.8); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 8px; padding: 8px 10px; line-height: 1.6;
+    }
+    .debug-card b { color: var(--green); float: right; font-weight: 700; }
+    .debug-title { font-weight: 700; color: var(--amber); margin-bottom: 4px; font-size: 11px; }
   </style>
 
   <script type="importmap">
@@ -216,7 +240,38 @@
     <button id="btn-start" class="dock-btn primary">🚀 BẬT FPV</button>
     <button id="btn-quick-swap" class="dock-btn" title="Đổi nhanh Cam Mũi / Lùi">🔄 Cam</button>
     <button id="btn-reset-3d" class="dock-btn" title="Căn lại góc nhìn 3D">🎯 3D</button>
+    <button id="btn-toggle-monitor" class="dock-btn" title="FPV Engineering Monitor">📊 Diag</button>
     <button id="btn-open-popup" class="dock-btn accent">⚙️ Chức Năng</button>
+  </div>
+
+  <!-- FPV Engineering Monitor (Development Diagnostics Overlay) -->
+  <div id="fpv-debug-panel" class="debug-panel" style="display: none;" role="dialog" aria-label="FPV Engineering Monitor">
+    <div class="debug-header">
+      <span>🛡️ FPV ENGINEERING MONITOR (DEV)</span>
+      <button id="btn-close-debug" class="debug-close" aria-label="Đóng">✕</button>
+    </div>
+    <div class="debug-grid">
+      <div class="debug-card">
+        <div class="debug-title">📱 IPHONE PUBLISHER</div>
+        <div>Camera: <b id="dbg-cam-state">Inactive</b></div>
+        <div>Stream: <b id="dbg-cam-res">0x0</b></div>
+        <div>Capture FPS: <b id="dbg-capture-fps">0</b></div>
+        <div>JPEG Encode FPS: <b id="dbg-encode-fps">0</b></div>
+        <div>WS Send FPS: <b id="dbg-send-fps">0</b></div>
+        <div>Bandwidth: <b id="dbg-kb-sec">0 KB/s</b></div>
+        <div>Lifecycle: <b id="dbg-lifecycle">ACTIVE</b></div>
+      </div>
+      <div class="debug-card">
+        <div class="debug-title">🌐 NETWORK &amp; WSS</div>
+        <div>State: <b id="dbg-ws-state">DISCONNECTED</b></div>
+        <div>Buffered: <b id="dbg-ws-buffer">0 B</b></div>
+        <div>Reconnects: <b id="dbg-reconnects">0</b></div>
+        <div>Target Role: <b id="dbg-target-role">FRONT</b></div>
+        <div>Server ACK: <b id="dbg-ack-state">WAITING</b></div>
+        <div>WakeLock: <b id="dbg-wakelock">OFF</b></div>
+        <div>SW Scope: <b id="dbg-sw-scope">/fpv-cam.html</b></div>
+      </div>
+    </div>
   </div>
 
   <!-- Pop-up Tinh Gọn các chức năng -->
@@ -290,6 +345,26 @@
     const btnStart = document.getElementById('btn-start');
     const btnQuickSwap = document.getElementById('btn-quick-swap');
     const btnReset3d = document.getElementById('btn-reset-3d');
+    const btnToggleMonitor = document.getElementById('btn-toggle-monitor');
+    const fpvDebugPanel = document.getElementById('fpv-debug-panel');
+    const btnCloseDebug = document.getElementById('btn-close-debug');
+
+    const dbgCamState = document.getElementById('dbg-cam-state');
+    const dbgCamRes = document.getElementById('dbg-cam-res');
+    const dbgCaptureFps = document.getElementById('dbg-capture-fps');
+    const dbgEncodeFps = document.getElementById('dbg-encode-fps');
+    const dbgSendFps = document.getElementById('dbg-send-fps');
+    const dbgKbSec = document.getElementById('dbg-kb-sec');
+    const dbgLifecycle = document.getElementById('dbg-lifecycle');
+
+    const dbgWsState = document.getElementById('dbg-ws-state');
+    const dbgWsBuffer = document.getElementById('dbg-ws-buffer');
+    const dbgReconnects = document.getElementById('dbg-reconnects');
+    const dbgTargetRole = document.getElementById('dbg-target-role');
+    const dbgAckState = document.getElementById('dbg-ack-state');
+    const dbgWakeLock = document.getElementById('dbg-wakelock');
+    const dbgSwScope = document.getElementById('dbg-sw-scope');
+
     const btnOpenPopup = document.getElementById('btn-open-popup');
     const btnClosePopup = document.getElementById('btn-close-popup');
     const popupBackdrop = document.getElementById('popup-backdrop');
@@ -336,6 +411,16 @@
     let reconnectTimerId = null;
     let isDisposed = false;
     let lastBlobStartTs = 0;
+
+    let lifecycleState = 'ACTIVE'; // 'ACTIVE' | 'SUSPENDED_BFCACHE' | 'SUSPENDED_BACKGROUND' | 'SHUTTING_DOWN' | 'DISPOSED'
+    let isPausedForBackground = false;
+    let reconnectCount = 0;
+    let captureFps = 0;
+    let encodeFps = 0;
+    let sendFps = 0;
+    let captureFrameCount = 0;
+    let encodeFrameCount = 0;
+    let sendFrameCount = 0;
 
     let fpsCounter = 0;
     let bytesSentSec = 0;
@@ -641,6 +726,24 @@
       telemetryEl.innerHTML =
         `WS: ${wsStatusText} | ${ackInfoText} | Servo: ${liveSteerDeg}° • ESC: ${liveEscPulseUs}µs<br>` +
         `Mode: ${modeStr} | ${kbPerSec} KB/s | Encode: ${lastEncodeMs.toFixed(1)} ms | WakeLock: ${wakeLockActive ? 'ON' : 'OFF'}`;
+
+      if (dbgCamState) {
+        dbgCamState.textContent = isStreamingActive ? (isStreamingPaused ? 'PAUSED' : 'ACTIVE') : 'INACTIVE';
+        dbgCamRes.textContent = (video && video.videoWidth) ? `${video.videoWidth}x${video.videoHeight}` : '0x0';
+        dbgCaptureFps.textContent = String(captureFps);
+        dbgEncodeFps.textContent = String(encodeFps);
+        dbgSendFps.textContent = String(sendFps);
+        dbgKbSec.textContent = `${kbPerSec} KB/s`;
+        dbgLifecycle.textContent = lifecycleState;
+
+        dbgWsState.textContent = ws ? (ws.readyState === 1 ? 'OPEN' : (ws.readyState === 0 ? 'CONNECTING' : 'CLOSING/CLOSED')) : 'NULL';
+        dbgWsBuffer.textContent = ws ? `${(ws.bufferedAmount / 1024).toFixed(1)} KB` : '0 KB';
+        dbgReconnects.textContent = String(reconnectCount);
+        dbgTargetRole.textContent = `${targetSurface.toUpperCase()} (${phoneRole})`;
+        dbgAckState.textContent = ackInfoText;
+        dbgWakeLock.textContent = wakeLockActive ? 'ON' : 'OFF';
+        dbgSwScope.textContent = '/fpv-cam.html';
+      }
     }
 
     // ==================== CAMERA & WEBSOCKET PIPELINE ====================
@@ -817,9 +920,10 @@
       };
 
       ws.onclose = () => {
-        if (isShuttingDown) return;
+        if (isShuttingDown || lifecycleState === 'SUSPENDED_BFCACHE') return;
         wsStatusText = 'Thử nối lại...';
         wsDot.className = 'status-dot error';
+        reconnectCount++;
         if (reconnectTimerId) clearTimeout(reconnectTimerId);
         reconnectTimerId = setTimeout(connectToServer, 1200);
       };
@@ -907,16 +1011,20 @@
       lastCaptureTs = now;
 
       if (now - lastFpsTime >= 1000) {
-        hudInfo.textContent = `${currentPreset.name} • ${fpsCounter} FPS • ${wsStatusText}`;
+        captureFps = captureFrameCount; captureFrameCount = 0;
+        encodeFps = encodeFrameCount; encodeFrameCount = 0;
+        sendFps = sendFrameCount; sendFrameCount = 0;
+        hudInfo.textContent = `${currentPreset.name} • ${sendFps} FPS • ${wsStatusText}`;
         updateTelemetryStrip();
         fpsCounter = 0;
         bytesSentSec = 0;
         lastFpsTime = now;
       }
 
-      if (isSwitchingCamera || !video || video.readyState < 2 || !video.videoWidth) return;
+      if (isSwitchingCamera || isPausedForBackground || !video || video.readyState < 2 || !video.videoWidth) return;
 
       renderVideoToCanvas();
+      captureFrameCount++;
 
       if (isBusyEncoding && (now - lastBlobStartTs > 1500)) {
         isBusyEncoding = false;
@@ -930,10 +1038,12 @@
 
       canvas.toBlob((blob) => {
         isBusyEncoding = false;
+        encodeFrameCount++;
         lastEncodeMs = performance.now() - encodeStart;
         if (blob && ws && ws.readyState === WebSocket.OPEN) {
           bytesSentSec += blob.size + 4;
           ws.send(new Blob([header, blob], { type: 'image/jpeg' }));
+          sendFrameCount++;
           fpsCounter++;
         }
       }, 'image/jpeg', currentPreset.quality);
@@ -1135,13 +1245,68 @@
         : '📲 Android: Bấm Menu ⋮ ở Chrome ➜ Thêm vào Màn hình chính / Cài ứng dụng';
     };
 
+    // ==================== P0: LEGACY SERVICE WORKER MIGRATION ====================
+    async function migrateLegacyFpvWorker() {
+      if (!('serviceWorker' in navigator)) return;
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+          const workers = [
+            registration.active,
+            registration.waiting,
+            registration.installing
+          ].filter(Boolean);
+
+          const isRootScope = registration.scope === new URL('/', location.origin).href;
+          const isOwnedByFpv = workers.some((worker) => {
+            try {
+              const url = new URL(worker.scriptURL);
+              return url.pathname === '/fpv-sw.js';
+            } catch (e) {
+              return false;
+            }
+          });
+
+          // Unregister ONLY if it is the legacy root-scoped worker owned by /fpv-sw.js
+          if (isRootScope && isOwnedByFpv) {
+            console.log('🛡️ [SW MIGRATION] Found legacy root-scoped FPV Service Worker. Unregistering...');
+            await registration.unregister();
+            console.log('✅ [SW MIGRATION] Legacy root worker unregistered successfully.');
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ [SW MIGRATION] Error migrating legacy worker:', err);
+      }
+    }
+
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/fpv-sw.js', { scope: '/fpv-cam.html' }).catch(() => {});
+      migrateLegacyFpvWorker().finally(() => {
+        navigator.serviceWorker.register('/fpv-sw.js', { scope: '/fpv-cam.html' }).catch(() => {});
+      });
     }
 
     const urlParams = new URLSearchParams(window.location.search);
     if (autoStartPref && (isStandalonePwa || urlParams.get('autostart') === '1')) {
       setTimeout(() => { startFpvPipeline(true); }, 250);
+    }
+
+    // Auto-open debug monitor if ?debug=1
+    if (urlParams.get('debug') === '1' && fpvDebugPanel) {
+      fpvDebugPanel.style.display = 'block';
+    }
+
+    if (btnToggleMonitor) {
+      btnToggleMonitor.onclick = () => {
+        if (fpvDebugPanel) {
+          const isOpen = fpvDebugPanel.style.display !== 'none';
+          fpvDebugPanel.style.display = isOpen ? 'none' : 'block';
+        }
+      };
+    }
+    if (btnCloseDebug) {
+      btnCloseDebug.onclick = () => {
+        if (fpvDebugPanel) fpvDebugPanel.style.display = 'none';
+      };
     }
 
     // ==================== ORIENTATION & RESIZE & CLEANUP ====================
@@ -1158,47 +1323,95 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    function disposePhonePublisher() {
-      if (isDisposed) return;
-      isDisposed = true;
-      isShuttingDown = true;
+    // ==================== P1: BROWSER PAGE LIFECYCLE (BFCACHE & SUSPENSION) ====================
+    function suspendPhonePublisher(isBfcache = false) {
+      lifecycleState = isBfcache ? 'SUSPENDED_BFCACHE' : 'SUSPENDED_BACKGROUND';
+      console.log(`⏸️ [LIFECYCLE] Suspending Phone Publisher (${lifecycleState})...`);
 
-      // 1. Hủy timer reconnect & đóng WebSocket lập tức
+      // 1. Clear reconnect timer
       if (reconnectTimerId) {
         clearTimeout(reconnectTimerId);
         reconnectTimerId = null;
       }
+
+      // 2. Close active WebSocket cleanly without reconnect trigger
       if (ws) {
         try {
           ws.onopen = null;
           ws.onmessage = null;
           ws.onerror = null;
           ws.onclose = null;
-          ws.close(1000, 'Normal Pagehide Shutdown');
+          ws.close(1000, isBfcache ? 'bfcache suspension' : 'background suspension');
         } catch (e) {}
         ws = null;
       }
 
-      // 2. Dừng toàn bộ camera tracks & giải phóng video element
+      // 3. Stop active camera streams
       if (currentStream) {
-        currentStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+        currentStream.getTracks().forEach((t) => {
+          try { t.stop(); } catch (e) {}
+        });
         currentStream = null;
       }
       if (video) {
         video.srcObject = null;
       }
 
-      // 3. Giải phóng WakeLock nếu đang bật
+      // 4. Release WakeLock
       if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
         try { wakeLockSentinel.release(); } catch (e) {}
         wakeLockSentinel = null;
         wakeLockActive = false;
       }
 
-      // 4. Ngắt render loop và giải phóng tài nguyên Three.js một lần duy nhất
+      // 5. Pause WebGL animation loop
       if (renderer) {
         try { renderer.setAnimationLoop(null); } catch (e) {}
       }
+
+      isStreamingActive = false;
+      isStreamingPaused = true;
+      wsStatusText = 'Tạm dừng (Bfcache)';
+      wsDot.className = 'status-dot';
+      updateTelemetryStrip();
+    }
+
+    async function resumePhonePublisher() {
+      if (lifecycleState === 'SHUTTING_DOWN' || isDisposed) return;
+      console.log('▶️ [LIFECYCLE] Resuming Phone Publisher from bfcache/background...');
+      lifecycleState = 'ACTIVE';
+      isStreamingPaused = false;
+
+      // 1. Re-initialize WebGL animation loop
+      if (renderer) {
+        try { renderer.setAnimationLoop(onRenderFrame); } catch (e) {}
+      }
+
+      // 2. Re-acquire WakeLock
+      await keepScreenAwake();
+
+      // 3. Re-acquire camera and reconnect WebSocket
+      const ok = await activateCamera(targetSurface, lensSelect.value);
+      if (ok) {
+        connectToServer();
+        isStreamingActive = true;
+        logEl.textContent = '🟢 Đã phục hồi luồng FPV sau khi quay lại trang!';
+      } else {
+        logEl.textContent = '👆 Chạm [🚀 BẬT FPV] để kích hoạt lại Camera';
+      }
+      updateTelemetryStrip();
+    }
+
+    function disposePhonePublisher() {
+      if (isDisposed) return;
+      isDisposed = true;
+      isShuttingDown = true;
+      lifecycleState = 'DISPOSED';
+      console.log('🛑 [LIFECYCLE] Disposing Phone Publisher permanently...');
+
+      suspendPhonePublisher(false);
+
+      // Dispose Three.js objects
       [screenGeo, bezelGeo, reticleGeo, ringGeo, chassis.geometry, canopy.geometry, wheelGeo, frontPod.geometry, rearPod.geometry, coneGeo].forEach(g => {
         if (g && typeof g.dispose === 'function') try { g.dispose(); } catch (e) {}
       });
@@ -1211,7 +1424,36 @@
       if (renderer && typeof renderer.dispose === 'function') try { renderer.dispose(); } catch (e) {}
     }
 
-    window.addEventListener('pagehide', disposePhonePublisher);
+    window.addEventListener('pagehide', (e) => {
+      if (e.persisted) {
+        suspendPhonePublisher(true);
+      } else {
+        disposePhonePublisher();
+      }
+    });
+
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted || lifecycleState === 'SUSPENDED_BFCACHE') {
+        resumePhonePublisher();
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (lifecycleState === 'ACTIVE') {
+          lifecycleState = 'SUSPENDED_BACKGROUND';
+          isPausedForBackground = true;
+        }
+      } else {
+        if (lifecycleState === 'SUSPENDED_BACKGROUND') {
+          lifecycleState = 'ACTIVE';
+          isPausedForBackground = false;
+          keepScreenAwake();
+        }
+      }
+      updateTelemetryStrip();
+    });
+
     window.addEventListener('beforeunload', disposePhonePublisher);
   </script>
 </body>

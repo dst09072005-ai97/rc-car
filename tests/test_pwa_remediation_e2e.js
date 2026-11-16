@@ -46,11 +46,17 @@ async function testServiceWorkerGovernance() {
   // 4. Check Fetch URL Quarantine
   assert.strictEqual(swContent.includes('const isFpvResource = url.pathname === \'/fpv-cam.html\' || SHELL_ASSETS.includes(url.pathname);'), true, 'Fetch interception quarantined to FPV resources');
 
-  console.log('   ✅ Part 1 Passed: Scope and CacheStorage namespace quarantined 100%!');
+  // 5. Check P0 Legacy Service Worker Migration
+  assert.strictEqual(htmlContent.includes('async function migrateLegacyFpvWorker()'), true, 'Legacy Service Worker migration function defined');
+  assert.strictEqual(htmlContent.includes("const isRootScope = registration.scope === new URL('/', location.origin).href;"), true, 'Root scope matching strictly verified');
+  assert.strictEqual(htmlContent.includes("url.pathname === '/fpv-sw.js'"), true, 'Worker ownership check verified (only unregister legacy fpv-sw.js)');
+  assert.strictEqual(htmlContent.includes('await registration.unregister()'), true, 'Legacy worker unregister call present');
+
+  console.log('   ✅ Part 1 Passed: Scope, Legacy SW Migration, and CacheStorage namespace quarantined 100%!');
 }
 
 async function testPublisherLifecycle() {
-  console.log('🧪 [PART 2] Testing Phone Publisher Shutdown Lifecycle & Cleanup...');
+  console.log('🧪 [PART 2] Testing Phone Publisher Shutdown Lifecycle, Bfcache & Dev Diagnostics...');
   
   const htmlPath = path.join(worktreeRoot, 'www', 'fpv-cam.html');
   const htmlContent = fs.readFileSync(htmlPath, 'utf8');
@@ -59,30 +65,37 @@ async function testPublisherLifecycle() {
   assert.strictEqual(htmlContent.includes('let isShuttingDown = false;'), true, 'isShuttingDown flag declared');
   assert.strictEqual(htmlContent.includes('let reconnectTimerId = null;'), true, 'reconnectTimerId declared');
   assert.strictEqual(htmlContent.includes('let wakeLockSentinel = null;'), true, 'wakeLockSentinel declared');
+  assert.strictEqual(htmlContent.includes("let lifecycleState = 'ACTIVE';"), true, 'lifecycleState state machine declared');
 
-  // 2. Check reconnect suppression when shutting down
-  assert.strictEqual(htmlContent.includes('if (isShuttingDown) return;'), true, 'ws.onclose checks isShuttingDown before reconnecting');
+  // 2. Check reconnect suppression when shutting down or suspended
+  assert.strictEqual(htmlContent.includes("if (isShuttingDown || lifecycleState === 'SUSPENDED_BFCACHE') return;"), true, 'ws.onclose checks isShuttingDown and bfcache before reconnecting');
 
-  // 3. Check disposePhonePublisher implementation
+  // 3. Check suspendPhonePublisher & resumePhonePublisher (bfcache handling)
+  assert.strictEqual(htmlContent.includes('function suspendPhonePublisher(isBfcache = false)'), true, 'suspendPhonePublisher function defined');
+  assert.strictEqual(htmlContent.includes('function resumePhonePublisher()'), true, 'resumePhonePublisher function defined');
+  assert.strictEqual(htmlContent.includes("window.addEventListener('pageshow'"), true, 'pageshow listener bound for bfcache restoration');
+  assert.strictEqual(htmlContent.includes("document.addEventListener('visibilitychange'"), true, 'visibilitychange listener bound for background throttling');
+
+  // 4. Check disposePhonePublisher implementation
   assert.strictEqual(htmlContent.includes('function disposePhonePublisher()'), true, 'disposePhonePublisher function defined');
   assert.strictEqual(htmlContent.includes('clearTimeout(reconnectTimerId)'), true, 'Reconnect timer cleared on shutdown');
-  assert.strictEqual(htmlContent.includes("ws.close(1000, 'Normal Pagehide Shutdown')"), true, 'WebSocket cleanly closed on shutdown');
   assert.strictEqual(htmlContent.includes('t.stop()'), true, 'MediaStream tracks stopped');
   assert.strictEqual(htmlContent.includes('video.srcObject = null;'), true, 'Video srcObject unlinked');
   assert.strictEqual(htmlContent.includes('wakeLockSentinel.release()'), true, 'WakeLock explicitly released');
 
-  // 4. Check pagehide and beforeunload listeners
-  assert.strictEqual(htmlContent.includes("window.addEventListener('pagehide', disposePhonePublisher)"), true, 'pagehide listener bound');
-  assert.strictEqual(htmlContent.includes("window.addEventListener('beforeunload', disposePhonePublisher)"), true, 'beforeunload listener bound');
-
   // 5. Check FPS preset relabeling
   assert.strictEqual(htmlContent.includes('60 FPS Thử Nghiệm'), true, 'Zero-Lag 60 FPS relabeled to Experimental');
 
-  console.log('   ✅ Part 2 Passed: Publisher lifecycle, WakeLock, and reconnect teardown verified!');
+  // 6. Check Development Diagnostics Monitor Panel
+  assert.strictEqual(htmlContent.includes('fpv-debug-panel'), true, 'FPV Engineering Monitor panel markup present');
+  assert.strictEqual(htmlContent.includes('dbg-capture-fps'), true, 'Capture FPS diagnostic metric bound');
+  assert.strictEqual(htmlContent.includes('dbg-send-fps'), true, 'WS Send FPS diagnostic metric bound');
+
+  console.log('   ✅ Part 2 Passed: Publisher lifecycle, Bfcache, WakeLock, and Dev Monitor verified!');
 }
 
 async function testRcfEndToEndProtocol() {
-  console.log('🧪 [PART 3] Testing RCF Protocol End-to-End WebSocket Framing...');
+  console.log('🧪 [PART 3] Testing RCF Protocol Integration Simulation (Mock Publisher -> Router -> Receiver)...');
 
   // Setup mock server router
   const server = http.createServer();
