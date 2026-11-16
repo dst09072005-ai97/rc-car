@@ -2,141 +2,340 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>FPV Smart Camera (Ultra-Clear Zero-Lag)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#050912" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="FPV Cam 3D" />
+  <link rel="manifest" href="/fpv-manifest.json" />
+  <link rel="icon" type="image/png" href="/icons/fpv-icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/fpv-icon-192.png" />
+  <title>FPV Smart Camera 3D — Zero-Lag Web3D</title>
   <style>
-    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
-    body { margin: 0; padding: 10px; background: #060a12; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-align: center; }
-    .title { color: #00ff88; font-weight: bold; font-size: 14px; margin-bottom: 8px; letter-spacing: 0.5px; }
-    .viewport-box { position: relative; width: 100%; max-width: 480px; aspect-ratio: 16 / 9; margin: 0 auto 10px; border: 2px solid #00e5ff; border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 4px 16px rgba(0, 229, 255, 0.2); }
-    .viewport-box.rear-active { border-color: #ffd60a; box-shadow: 0 4px 16px rgba(255, 214, 10, 0.2); }
-    canvas { position: relative; z-index: 2; width: 100%; height: 100%; display: block; object-fit: contain; }
-    /* QUAN TRỌNG: Giữ thẻ video nằm trong viewport (opacity 0.02 bên dưới canvas) để iOS Safari không ngừng giải mã frame ISP */
-    video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.02; pointer-events: none; z-index: 1; }
-    .badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.85); color: #ffd60a; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-family: monospace; backdrop-filter: blur(4px); text-align: left; }
-    .gear-badge { position: absolute; top: 6px; right: 6px; background: #00e5ff; color: #000; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 900; transition: background 0.2s ease; }
-    .gear-badge.reverse { background: #ff3b30; color: #fff; }
-    .cam-label { position: absolute; bottom: 6px; left: 6px; background: rgba(0,0,0,0.85); color: #00e5ff; padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 480px; margin: 0 auto 8px; }
-    .modes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; max-width: 480px; margin: 0 auto 8px; }
-    button, select { padding: 11px 6px; border-radius: 8px; border: 1px solid #2b394f; background: #111a2e; color: #fff; font-size: 12px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
-    button:active { transform: scale(0.98); }
-    button.primary { grid-column: span 2; background: #00ff88; color: #000; border: none; font-size: 15px; padding: 14px; box-shadow: 0 2px 10px rgba(0, 255, 136, 0.3); }
-    button.active { background: #00e5ff; color: #000; border-color: #fff; }
-    .mode-btn { font-size: 11px; padding: 9px 4px; background: #0b1526; border: 1px solid #1f3354; color: #8ecae6; }
-    .mode-btn.active { background: #00ff88; color: #000; border-color: #fff; font-weight: 900; box-shadow: 0 0 10px rgba(0,255,136,0.3); }
-    .tip-box { max-width: 480px; margin: 0 auto 8px; padding: 8px; border-radius: 6px; background: rgba(0, 229, 255, 0.1); border: 1px dashed #00e5ff; font-size: 11px; color: #00e5ff; line-height: 1.4; text-align: left; }
-    .role-section { max-width: 480px; margin: 0 auto 8px; padding: 8px; border-radius: 8px; background: #0d1b2a; border: 1px solid #1b263b; }
-    .role-title { font-size: 11px; color: #ffd60a; font-weight: bold; margin-bottom: 6px; text-transform: uppercase; }
-    #log { font-size: 12px; color: #8ecae6; font-family: monospace; margin-top: 6px; word-break: break-all; }
+    :root {
+      --bg: #050912;
+      --glass: rgba(10, 17, 32, 0.78);
+      --glass-strong: rgba(8, 13, 25, 0.92);
+      --border: rgba(0, 229, 255, 0.28);
+      --cyan: #00e5ff;
+      --green: #00ff88;
+      --amber: #ffd60a;
+      --red: #ff3b30;
+      --text: #eaf4ff;
+      --muted: #8ca4c4;
+    }
+
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    /* QUAN TRỌNG: Giữ thẻ video nằm trong viewport (opacity 0.02 bên dưới canvas 3D) để iOS Safari không ngừng giải mã frame ISP */
+    #raw-video {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; opacity: 0.02; pointer-events: none; z-index: 0;
+    }
+
+    /* Canvas offscreen dùng để crop/encode RCF JPEG sạch sẽ (không dính HUD 3D) */
+    #crop-preview { display: none; }
+
+    /* Viewport Three.js Web 3D toàn màn hình */
+    #webgl-stage {
+      position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; touch-action: none;
+    }
+
+    /* Thanh trạng thái tinh gọn phía trên */
+    .top-hud {
+      position: fixed; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+      z-index: 10; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 20px);
+      padding: 6px 12px; border-radius: 999px;
+      background: var(--glass); border: 1px solid var(--border);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+      font-size: 11.5px; white-space: nowrap; overflow: hidden;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--amber);
+      box-shadow: 0 0 8px var(--amber); flex-shrink: 0;
+    }
+    .status-dot.online { background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .status-dot.error { background: var(--red); box-shadow: 0 0 10px var(--red); }
+    .hud-stats {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--text); overflow: hidden; text-overflow: ellipsis;
+    }
+    .gear-pill {
+      padding: 3px 9px; border-radius: 999px; font-weight: 800; font-size: 11px;
+      background: var(--cyan); color: #021019; letter-spacing: 0.4px; flex-shrink: 0;
+      transition: background 0.2s, color 0.2s;
+    }
+    .gear-pill.reverse { background: var(--red); color: #fff; }
+
+    /* Nhãn trạng thái nhỏ gọn trên sân khấu */
+    .stage-toast {
+      position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 44px); left: 50%;
+      transform: translateX(-50%); z-index: 9;
+      padding: 4px 12px; border-radius: 999px;
+      background: rgba(5, 9, 18, 0.65); border: 1px solid rgba(255,255,255,0.1);
+      color: var(--muted); font-size: 11px; pointer-events: none;
+      max-width: calc(100vw - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* Thanh Dock điều khiển tinh gọn ở đáy */
+    .bottom-dock {
+      position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+      z-index: 12; display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px; border-radius: 20px;
+      background: var(--glass); border: 1px solid var(--border);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
+      max-width: calc(100vw - 16px);
+    }
+    .dock-btn {
+      border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(18, 28, 48, 0.85);
+      color: var(--text); border-radius: 14px; padding: 10px 12px;
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+      transition: transform 0.12s, background 0.2s, border-color 0.2s;
+    }
+    .dock-btn:active { transform: scale(0.96); }
+    .dock-btn.primary {
+      background: linear-gradient(135deg, var(--green), #00c4a7); color: #02140d;
+      border-color: transparent; padding: 10px 16px;
+      box-shadow: 0 0 18px rgba(0, 255, 136, 0.35);
+    }
+    .dock-btn.primary.streaming {
+      background: linear-gradient(135deg, #00e5ff, #0096c7); color: #021019;
+      box-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
+    }
+    .dock-btn.primary.paused {
+      background: linear-gradient(135deg, #ffd60a, #ff9f1c); color: #191000;
+    }
+    .dock-btn.accent { border-color: rgba(0, 229, 255, 0.45); color: var(--cyan); }
+
+    /* Pop-up Chức Năng Tinh Gọn */
+    .popup-backdrop {
+      position: fixed; inset: 0; z-index: 20;
+      background: rgba(2, 6, 14, 0.52); backdrop-filter: blur(4px);
+      display: flex; align-items: flex-end; justify-content: center;
+      padding: 12px 12px calc(max(12px, env(safe-area-inset-bottom)) + 68px);
+      opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+    }
+    .popup-backdrop.open { opacity: 1; pointer-events: auto; }
+
+    .popup-card {
+      width: 100%; max-width: 430px; max-height: 72dvh; overflow-y: auto;
+      background: var(--glass-strong); border: 1px solid rgba(0, 229, 255, 0.36);
+      border-radius: 20px; padding: 14px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.72);
+      transform: translateY(14px); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .popup-backdrop.open .popup-card { transform: translateY(0); }
+
+    .popup-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .popup-title { font-size: 13px; font-weight: 800; color: var(--cyan); letter-spacing: 0.3px; }
+    .popup-close {
+      width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.06); color: var(--text); font-size: 14px; cursor: pointer;
+    }
+
+    .section-label {
+      font-size: 10.5px; font-weight: 700; color: var(--amber);
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 10px 0 6px;
+    }
+    .section-label:first-of-type { margin-top: 2px; }
+
+    .seg-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .seg-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+
+    .chip-btn {
+      padding: 8px 6px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(16, 26, 46, 0.9); color: var(--muted);
+      font-size: 11px; font-weight: 700; cursor: pointer; text-align: center; line-height: 1.25;
+      transition: all 0.15s;
+    }
+    .chip-btn small { font-weight: 500; opacity: 0.85; font-size: 10px; }
+    .chip-btn.active {
+      background: rgba(0, 255, 136, 0.18); border-color: var(--green); color: var(--green);
+      box-shadow: 0 0 12px rgba(0, 255, 136, 0.18);
+    }
+    .chip-btn.active-cyan {
+      background: rgba(0, 229, 255, 0.18); border-color: var(--cyan); color: var(--cyan);
+    }
+    .chip-btn.active-amber {
+      background: rgba(255, 214, 10, 0.18); border-color: var(--amber); color: var(--amber);
+    }
+
+    .select-input {
+      width: 100%; margin-top: 6px; padding: 9px 10px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.16); background: rgba(12, 20, 36, 0.95);
+      color: var(--text); font-size: 11.5px; outline: none;
+    }
+
+    .telemetry-strip {
+      margin-top: 10px; padding: 8px 10px; border-radius: 10px;
+      background: rgba(4, 9, 18, 0.85); border: 1px dashed rgba(0, 229, 255, 0.25);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 10.5px; color: #9ad1ff; line-height: 1.45;
+    }
   </style>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./libs/three/three.module.js",
+        "three/addons/": "./libs/three/addons/"
+      }
+    }
+  </script>
 </head>
 <body>
-  <div class="title">📡 CAMERA FPV THAY NÓNG (TỰ ĐỔI SỐ D/R &amp; ĐA THIẾT BỊ)</div>
+  <!-- Video nguồn giữ trong viewport cho iOS Safari ISP decode -->
+  <video id="raw-video" autoplay playsinline muted></video>
+  <!-- Canvas sạch để đóng gói binary RCF JPEG gửi qua WS -->
+  <canvas id="crop-preview" width="854" height="480"></canvas>
+  <!-- Sân khấu WebGL Three.js 3D -->
+  <div id="webgl-stage"></div>
 
-  <!-- KHUNG HÌNH CAMERA CHÍNH -->
-  <div class="viewport-box" id="viewport-box">
-    <video id="raw-video" autoplay playsinline muted></video>
-    <canvas id="crop-preview" width="854" height="480"></canvas>
-    <div class="badge" id="hud-info">🚘 Kính Chắn Gió: Chờ kích hoạt...</div>
-    <div class="gear-badge" id="gear-indicator">SỐ TIẾN (D)</div>
-    <div class="cam-label" id="cam-surface-label">🚘 KÍNH CHẮN GIÓ (CAM SAU - MŨI XE)</div>
+  <!-- Thanh trạng thái trên cùng -->
+  <div class="top-hud">
+    <span id="ws-dot" class="status-dot"></span>
+    <span id="hud-info" class="hud-stats">Chờ kích hoạt FPV 3D...</span>
+    <span id="gear-indicator" class="gear-pill">D • MŨI</span>
+  </div>
+  <div id="log" class="stage-toast">Chạm BẬT FPV để phát Web 3D &amp; truyền trực tiếp tới Quest 3</div>
+
+  <!-- Thanh Dock tinh gọn ở đáy -->
+  <div class="bottom-dock">
+    <button id="btn-start" class="dock-btn primary">🚀 BẬT FPV</button>
+    <button id="btn-quick-swap" class="dock-btn" title="Đổi nhanh Cam Mũi / Lùi">🔄 Cam</button>
+    <button id="btn-reset-3d" class="dock-btn" title="Căn lại góc nhìn 3D">🎯 3D</button>
+    <button id="btn-open-popup" class="dock-btn accent">⚙️ Chức Năng</button>
   </div>
 
-  <div class="tip-box" id="tip-info">
-    💡 <b>Cơ chế hoạt động tối ưu:</b><br>
-    • <b>Khi dùng 1 điện thoại:</b> Hệ thống tự dồn 100% chip cho <b>Cam Sau (Mũi Xe) đạt 40–60 FPS</b> mượt mà, và <b>tự động đổi Cam Lùi khi xe lùi (R)</b>.<br>
-    • <b>Để xem đồng thời 2 cam cùng lúc trên kính Quest 3:</b> Hãy mở trang này trên <b>2 chiếc điện thoại riêng biệt</b> (1 máy đầu xe làm Kính Lái, 1 máy đuôi xe làm Gương Hậu)!
-  </div>
+  <!-- Pop-up Tinh Gọn các chức năng -->
+  <div id="popup-backdrop" class="popup-backdrop" aria-hidden="true">
+    <div class="popup-card" role="dialog" aria-label="Bảng chức năng FPV">
+      <div class="popup-header">
+        <div class="popup-title">⚙️ BẢNG ĐIỀU KHIỂN FPV 3D</div>
+        <button id="btn-close-popup" class="popup-close" aria-label="Đóng">✕</button>
+      </div>
 
-  <!-- Chọn chế độ độ nét & tốc độ khung hình -->
-  <div class="modes">
-    <button id="mode-fast" class="mode-btn active" title="Tối ưu 40 FPS mượt mà không khựng">⚡ SIÊU TỐC<br><small>480p | 40 FPS</small></button>
-    <button id="mode-hd" class="mode-btn" title="Hình ảnh cực nét chuẩn 720p HD">💎 CỰC NÉT HD<br><small>720p | 30 FPS</small></button>
-    <button id="mode-zerolag" class="mode-btn" title="Độ trễ thấp nhất cho thi đấu tốc độ cao">🏎️ ZERO-LAG<br><small>360p | 60 FPS</small></button>
-  </div>
+      <div class="section-label">1. Chất lượng &amp; Tốc độ khung hình</div>
+      <div class="seg-grid-3">
+        <button id="mode-fast" class="chip-btn active">⚡ Siêu Tốc<br><small>480p • 40 FPS</small></button>
+        <button id="mode-hd" class="chip-btn">💎 Cực Nét<br><small>720p • 30 FPS</small></button>
+        <button id="mode-zerolag" class="chip-btn">🏎️ Zero-Lag<br><small>360p • 60 FPS</small></button>
+      </div>
 
-  <!-- Chọn vai trò của điện thoại này -->
-  <div class="role-section">
-    <div class="role-title">🎯 VAI TRÒ CỦA ĐIỆN THOẠI NÀY TRÊN XE RC:</div>
-    <div class="grid" style="margin-bottom: 0;">
-      <button id="btn-role-auto" class="active" style="grid-column: span 2; background:#00ff88; color:#000;">🚘 1 ĐIỆN THOẠI DUY NHẤT (TỰ ĐỔI D/R - KHUYÊN DÙNG)</button>
-      <button id="btn-role-front">🚘 Máy Làm Kính Lái (Cam Mũi)</button>
-      <button id="btn-role-rear">🔙 Máy Làm Gương Hậu (Cam Lùi)</button>
+      <div class="section-label">2. Vai trò thiết bị trên xe RC</div>
+      <div class="seg-grid-3">
+        <button id="btn-role-auto" class="chip-btn active">🚘 1 Máy<br><small>Auto D/R</small></button>
+        <button id="btn-role-front" class="chip-btn">🎥 Kính Lái<br><small>Khóa Mũi</small></button>
+        <button id="btn-role-rear" class="chip-btn">🔙 Gương Hậu<br><small>Khóa Lùi</small></button>
+      </div>
+
+      <div class="section-label">3. Khung hình &amp; Ống kính</div>
+      <div class="seg-grid-2">
+        <button id="btn-toggle-fov" class="chip-btn active-cyan">📐 FOV: Full 16:9</button>
+        <button id="btn-toggle-ultra" class="chip-btn">📸 Cam 0.5x Rộng</button>
+      </div>
+      <select id="lens-select" class="select-input">
+        <option value="">🔍 Ống kính mặc định theo hướng (Trước/Sau)</option>
+      </select>
+
+      <div class="section-label">4. Không gian 3D &amp; Tối ưu pin</div>
+      <div class="seg-grid-3">
+        <button id="btn-toggle-reticle" class="chip-btn active-cyan">🎯 Tâm Ngắm 3D</button>
+        <button id="btn-toggle-mirror" class="chip-btn">🪞 Lật Gương: Auto</button>
+        <button id="btn-toggle-eco" class="chip-btn">🔋 3D Đầy Đủ</button>
+      </div>
+
+      <div class="section-label">5. Cài App lên Màn hình chính (PWA)</div>
+      <div class="seg-grid-2">
+        <button id="btn-install-pwa" class="chip-btn active-cyan">📲 Cài App Ngay</button>
+        <button id="btn-toggle-autostart" class="chip-btn active">⚡ Tự Bật Cam: Bật</button>
+      </div>
+
+      <div id="telemetry-strip" class="telemetry-strip">
+        WS: Chờ kết nối | Chế độ: SINGLE_PHONE_AUTO_DR<br>
+        Truyền tải: 0 KB/s | Encode: 0 ms | WakeLock: Chưa bật
+      </div>
     </div>
   </div>
 
-  <!-- Nút điều khiển tính năng -->
-  <div class="grid">
-    <button id="btn-toggle-fov" style="background:#2a9d8f; color:#fff; border-color:#2a9d8f;">📐 Khung: FULL 16:9 (TRÀN KHUNG)</button>
-    <button id="btn-toggle-ultra" style="background:#4a154b; color:#ffd60a; border-color:#e01e5a;">📸 Chọn Ống Kính 0.5x Siêu Rộng</button>
-    <button id="btn-start" class="primary">🚀 BẬT CAMERA FPV NGAY BÂY GIỜ</button>
-    <select id="lens-select" style="grid-column: span 2;">
-      <option value="">🔍 Ống kính mặc định theo hướng (Trước/Sau)</option>
-    </select>
-  </div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-  <div id="log">Quét bằng bất kỳ ĐT nào — 100% Khóa Xanh SSL</div>
-
-  <script>
+    // ==================== DOM REFS ====================
     const video = document.getElementById('raw-video');
     const canvas = document.getElementById('crop-preview');
     const ctx = canvas.getContext('2d', { alpha: false });
     ctx.imageSmoothingQuality = 'medium';
 
-    const viewportBox = document.getElementById('viewport-box');
+    const webglStage = document.getElementById('webgl-stage');
+    const wsDot = document.getElementById('ws-dot');
     const hudInfo = document.getElementById('hud-info');
     const gearEl = document.getElementById('gear-indicator');
-    const camLabel = document.getElementById('cam-surface-label');
     const logEl = document.getElementById('log');
+    const telemetryEl = document.getElementById('telemetry-strip');
+
+    const btnStart = document.getElementById('btn-start');
+    const btnQuickSwap = document.getElementById('btn-quick-swap');
+    const btnReset3d = document.getElementById('btn-reset-3d');
+    const btnOpenPopup = document.getElementById('btn-open-popup');
+    const btnClosePopup = document.getElementById('btn-close-popup');
+    const popupBackdrop = document.getElementById('popup-backdrop');
+
     const lensSelect = document.getElementById('lens-select');
     const btnToggleFov = document.getElementById('btn-toggle-fov');
     const btnToggleUltra = document.getElementById('btn-toggle-ultra');
     const btnRoleAuto = document.getElementById('btn-role-auto');
     const btnRoleFront = document.getElementById('btn-role-front');
     const btnRoleRear = document.getElementById('btn-role-rear');
+    const btnToggleReticle = document.getElementById('btn-toggle-reticle');
+    const btnToggleMirror = document.getElementById('btn-toggle-mirror');
+    const btnToggleEco = document.getElementById('btn-toggle-eco');
+    const btnInstallPwa = document.getElementById('btn-install-pwa');
+    const btnToggleAutostart = document.getElementById('btn-toggle-autostart');
 
-    // Preset cấu hình chất lượng & tốc độ truyền hình ảnh
+    // ==================== PIPELINE STATE ====================
     const PRESETS = {
-      fast: {
-        name: 'Siêu Tốc (480p)',
-        width: 854, height: 480,
-        quality: 0.68,
-        intervalMs: 25 // 40 FPS mượt mà
-      },
-      hd: {
-        name: 'Cực Nét HD (720p)',
-        width: 1280, height: 720,
-        quality: 0.74,
-        intervalMs: 33 // 30 FPS
-      },
-      zerolag: {
-        name: 'Zero-Lag (360p)',
-        width: 640, height: 360,
-        quality: 0.60,
-        intervalMs: 16 // 60 FPS
-      }
+      fast: { name: '480p', width: 854, height: 480, quality: 0.68, intervalMs: 25 },
+      hd: { name: '720p', width: 1280, height: 720, quality: 0.74, intervalMs: 33 },
+      zerolag: { name: '360p', width: 640, height: 360, quality: 0.60, intervalMs: 16 }
     };
 
     let currentPresetKey = 'fast';
     let currentPreset = PRESETS.fast;
-
-    // Chế độ khung hình: 'fill' (Full 16:9 tràn khung chữ nhật) | 'rotate' (Xoay 90° xe RC) | 'fit' (Toàn cảnh có viền)
-    let fovMode = 'fill';
-
-    // Vai trò điện thoại: 'auto' (1 máy tự đổi D/R) | 'front_only' (chuyên kính lái) | 'rear_only' (chuyên gương hậu)
-    let phoneRole = 'auto';
+    let fovMode = 'fill'; // 'fill' | 'rotate' | 'fit'
+    let phoneRole = 'auto'; // 'auto' | 'front_only' | 'rear_only'
+    let mirrorMode = 'auto'; // 'auto' | 'on' | 'off'
+    let showReticle = true;
+    let ecoMode = false;
 
     let ws = null;
     let targetSurface = 'front'; // 'front' (0x01) | 'rear' (0x02)
     let currentStream = null;
+    let isStreamingActive = false;
+    let isStreamingPaused = false;
     let isSwitchingCamera = false;
     let isBusyEncoding = false;
-    let isLoopStarted = false;
     let wsStatusText = 'Chờ WS';
+    let ackInfoText = 'LAN/Tunnel: Chờ ACK';
+    let wakeLockActive = false;
     let lastBlobStartTs = 0;
 
     let fpsCounter = 0;
+    let bytesSentSec = 0;
+    let lastEncodeMs = 0;
     let lastFpsTime = performance.now();
     let lastCaptureTs = 0;
 
@@ -144,19 +343,317 @@
     let cachedRearCameraId = '';
     let cachedUltraWideCameraId = '';
 
-    // 1. Giữ màn hình điện thoại luôn sáng
+    // Gyro & Live RC Telemetry (zero-allocation state)
+    let targetPitch = 0;
+    let targetRoll = 0;
+    let liveSteerNorm = 0;
+    let liveDriveNorm = 0;
+    let liveSteerDeg = 90;
+    let liveEscPulseUs = 1500;
+    let wheelSpinRad = 0;
+    let lastDrawnSteerBucket = 0;
+    let isVisorCloseView = false;
+
+    // ==================== THREE.JS WEB 3D SCENE (MOBILE TIER) ====================
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050912);
+    scene.fog = new THREE.FogExp2(0x050912, 0.045);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / Math.max(1, window.innerHeight), 0.1, 60);
+    const DEFAULT_CAM_POS = new THREE.Vector3(0, 1.45, 3.85);
+    const DEFAULT_CAM_TARGET = new THREE.Vector3(0, 0.88, 0);
+    const VISOR_CAM_POS = new THREE.Vector3(0, 1.12, 2.05);
+    const VISOR_CAM_TARGET = new THREE.Vector3(0, 1.12, -0.35);
+    camera.position.copy(DEFAULT_CAM_POS);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+    renderer.shadowMap.enabled = false; // Mobile tier: no shadow maps
+    webglStage.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(DEFAULT_CAM_TARGET);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.07;
+    controls.minDistance = 2.0;
+    controls.maxDistance = 8.5;
+    controls.maxPolarAngle = Math.PI * 0.56;
+    controls.minPolarAngle = Math.PI * 0.15;
+    controls.update();
+
+    // Lighting (Mobile Tier: Ambient + 1 Directional, <= 2 lights)
+    const ambientLight = new THREE.AmbientLight(0xdbeafe, 0.75);
+    scene.add(ambientLight);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.35);
+    keyLight.position.set(3.5, 6.0, 4.5);
+    scene.add(keyLight);
+
+    // 3D Stage Floor & Horizon Ring
+    const stageRigGroup = new THREE.Group();
+    scene.add(stageRigGroup);
+
+    const gridHelper = new THREE.GridHelper(18, 24, 0x00e5ff, 0x102138);
+    gridHelper.position.y = -0.35;
+    gridHelper.material.opacity = 0.45;
+    gridHelper.material.transparent = true;
+    stageRigGroup.add(gridHelper);
+
+    const ringGeo = new THREE.RingGeometry(1.55, 1.62, 48);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.45 });
+    const horizonRing = new THREE.Mesh(ringGeo, ringMat);
+    horizonRing.position.y = -0.34;
+    stageRigGroup.add(horizonRing);
+
+    // Curved 3D FPV Monitor (binds live video canvasTexture)
+    const monitorGroup = new THREE.Group();
+    monitorGroup.position.set(0, 1.12, -0.35);
+    scene.add(monitorGroup);
+
+    const videoTexture = new THREE.CanvasTexture(canvas);
+    videoTexture.colorSpace = THREE.SRGBColorSpace;
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+    videoTexture.generateMipmaps = false;
+
+    // Draw initial standby graphic on crop-preview before camera starts
+    function drawStandbyScreen() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.fillStyle = '#071122';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(18, 18, w - 36, h - 36);
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = 'bold 28px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('FPV 3D VISOR — STANDBY', w * 0.5, h * 0.46);
+      ctx.fillStyle = '#8ca4c4';
+      ctx.font = '18px monospace';
+      ctx.fillText('Bấm [🚀 BẬT FPV] bên dưới để truyền hình ảnh', w * 0.5, h * 0.56);
+      videoTexture.needsUpdate = true;
+    }
+    drawStandbyScreen();
+
+    // Curved screen arc: radius 3.4, height 1.58, thetaLength ~ 0.84 rad (~16:9 arc)
+    const screenRadius = 3.4;
+    const screenHeight = 1.58;
+    const screenArc = 0.82;
+    const screenGeo = new THREE.CylinderGeometry(
+      screenRadius, screenRadius, screenHeight, 32, 1, true,
+      Math.PI - screenArc * 0.5, screenArc
+    );
+    // Flip UV horizontally so inner concave surface faces +Z viewer naturally
+    const uvAttr = screenGeo.attributes.uv;
+    for (let i = 0; i < uvAttr.count; i++) {
+      uvAttr.setX(i, 1.0 - uvAttr.getX(i));
+    }
+    const screenMat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.BackSide });
+    const screenMesh = new THREE.Mesh(screenGeo, screenMat);
+    screenMesh.position.z = screenRadius;
+    monitorGroup.add(screenMesh);
+
+    // Top & Bottom glowing bezel bars
+    const bezelGeo = new THREE.CylinderGeometry(
+      screenRadius + 0.015, screenRadius + 0.015, 0.045, 32, 1, true,
+      Math.PI - screenArc * 0.52, screenArc * 1.04
+    );
+    const bezelMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide });
+    const topBezel = new THREE.Mesh(bezelGeo, bezelMat);
+    topBezel.position.set(0, screenHeight * 0.5 + 0.025, screenRadius);
+    const bottomBezel = new THREE.Mesh(bezelGeo, bezelMat);
+    bottomBezel.position.set(0, -screenHeight * 0.5 - 0.025, screenRadius);
+    monitorGroup.add(topBezel, bottomBezel);
+
+    // 3D HUD Reticle / Reverse Guide Overlay (separate transparent curved layer, NOT sent in JPEG!)
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.width = 640;
+    overlayCanvas.height = 360;
+    const oCtx = overlayCanvas.getContext('2d');
+    const overlayTexture = new THREE.CanvasTexture(overlayCanvas);
+    overlayTexture.colorSpace = THREE.SRGBColorSpace;
+    overlayTexture.minFilter = THREE.LinearFilter;
+
+    function redrawReticleOverlay(isReverse, steerNormVal = 0) {
+      const w = overlayCanvas.width;
+      const h = overlayCanvas.height;
+      const shiftMid = steerNormVal * 42;
+      const shiftFar = steerNormVal * 95;
+      oCtx.clearRect(0, 0, w, h);
+
+      // Center crosshair
+      oCtx.strokeStyle = isReverse ? 'rgba(255, 214, 10, 0.75)' : 'rgba(0, 229, 255, 0.65)';
+      oCtx.lineWidth = 2;
+      oCtx.beginPath();
+      oCtx.moveTo(w * 0.5 - 16, h * 0.5); oCtx.lineTo(w * 0.5 - 5, h * 0.5);
+      oCtx.moveTo(w * 0.5 + 5, h * 0.5); oCtx.lineTo(w * 0.5 + 16, h * 0.5);
+      oCtx.moveTo(w * 0.5, h * 0.5 - 16); oCtx.lineTo(w * 0.5, h * 0.5 - 5);
+      oCtx.moveTo(w * 0.5, h * 0.5 + 5); oCtx.lineTo(w * 0.5, h * 0.5 + 16);
+      oCtx.stroke();
+
+      // Corner brackets
+      const m = 20, b = 22;
+      oCtx.beginPath();
+      oCtx.moveTo(m, m + b); oCtx.lineTo(m, m); oCtx.lineTo(m + b, m);
+      oCtx.moveTo(w - m - b, m); oCtx.lineTo(w - m, m); oCtx.lineTo(w - m, m + b);
+      oCtx.moveTo(m, h - m - b); oCtx.lineTo(m, h - m); oCtx.lineTo(m + b, h - m);
+      oCtx.moveTo(w - m - b, h - m); oCtx.lineTo(w - m, h - m); oCtx.lineTo(w - m, h - m - b);
+      oCtx.stroke();
+
+      // Dynamic reverse parking trajectory guidelines (curve with steering)
+      if (isReverse) {
+        oCtx.lineWidth = 3;
+        oCtx.strokeStyle = 'rgba(255, 59, 48, 0.88)';
+        oCtx.beginPath();
+        oCtx.moveTo(w * 0.28, h * 0.92);
+        oCtx.quadraticCurveTo(w * 0.31 + shiftMid * 0.4, h * 0.84, w * 0.34 + shiftMid, h * 0.76);
+        oCtx.moveTo(w * 0.72, h * 0.92);
+        oCtx.quadraticCurveTo(w * 0.69 + shiftMid * 0.4, h * 0.84, w * 0.66 + shiftMid, h * 0.76);
+        oCtx.stroke();
+
+        oCtx.strokeStyle = 'rgba(255, 214, 10, 0.82)';
+        oCtx.beginPath();
+        oCtx.moveTo(w * 0.34 + shiftMid, h * 0.76);
+        oCtx.quadraticCurveTo(w * 0.37 + shiftFar * 0.65, h * 0.68, w * 0.40 + shiftFar, h * 0.60);
+        oCtx.moveTo(w * 0.66 + shiftMid, h * 0.76);
+        oCtx.quadraticCurveTo(w * 0.63 + shiftFar * 0.65, h * 0.68, w * 0.60 + shiftFar, h * 0.60);
+        oCtx.stroke();
+      }
+      overlayTexture.needsUpdate = true;
+    }
+    redrawReticleOverlay(false, 0);
+
+    const reticleGeo = new THREE.CylinderGeometry(
+      screenRadius - 0.04, screenRadius - 0.04, screenHeight, 24, 1, true,
+      Math.PI - screenArc * 0.5, screenArc
+    );
+    const rUv = reticleGeo.attributes.uv;
+    for (let i = 0; i < rUv.count; i++) rUv.setX(i, 1.0 - rUv.getX(i));
+    const reticleMat = new THREE.MeshBasicMaterial({
+      map: overlayTexture, transparent: true, depthWrite: false, side: THREE.BackSide
+    });
+    const reticleMesh = new THREE.Mesh(reticleGeo, reticleMat);
+    reticleMesh.position.z = screenRadius;
+    monitorGroup.add(reticleMesh);
+
+    // 3D Miniature RC Car Rig (below curved monitor, instanced wheels = minimal draw calls)
+    const carRig = new THREE.Group();
+    carRig.position.set(0, -0.14, 0.85);
+    stageRigGroup.add(carRig);
+
+    const chassisMat = new THREE.MeshStandardMaterial({ color: 0x16243b, roughness: 0.35, metalness: 0.65 });
+    const canopyMat = new THREE.MeshStandardMaterial({ color: 0x0d1728, roughness: 0.25, metalness: 0.8 });
+    const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.14, 1.24), chassisMat);
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.12, 0.62), canopyMat);
+    canopy.position.set(0, 0.12, 0.04);
+    carRig.add(chassis, canopy);
+
+    // 4 Instanced Wheels (1 draw call!)
+    const wheelGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.11, 18);
+    wheelGeo.rotateZ(Math.PI * 0.5);
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0b0f17, roughness: 0.75, metalness: 0.2 });
+    const wheelsInstanced = new THREE.InstancedMesh(wheelGeo, wheelMat, 4);
+    const wheelOffsets = [
+      [-0.38, -0.05, -0.40],
+      [0.38, -0.05, -0.40],
+      [-0.38, -0.05, 0.40],
+      [0.38, -0.05, 0.40]
+    ];
+    const tmpMatrix = new THREE.Matrix4();
+    const tmpWheelPos = new THREE.Vector3();
+    const tmpWheelQuat = new THREE.Quaternion();
+    const tmpWheelScale = new THREE.Vector3(1, 1, 1);
+    const tmpWheelEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+    wheelOffsets.forEach((pos, idx) => {
+      tmpMatrix.makeTranslation(pos[0], pos[1], pos[2]);
+      wheelsInstanced.setMatrixAt(idx, tmpMatrix);
+    });
+    wheelsInstanced.instanceMatrix.needsUpdate = true;
+    carRig.add(wheelsInstanced);
+
+    // Front & Rear Camera Indicator Cones
+    const frontLedMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff });
+    const rearLedMat = new THREE.MeshBasicMaterial({ color: 0x331111 });
+    const frontPod = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.045, 0.04), frontLedMat);
+    frontPod.position.set(0, 0.02, -0.63);
+    const rearPod = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.045, 0.04), rearLedMat);
+    rearPod.position.set(0, 0.02, 0.63);
+    carRig.add(frontPod, rearPod);
+
+    const coneGeo = new THREE.ConeGeometry(0.28, 0.65, 16, 1, true);
+    const frontConeMat = new THREE.MeshBasicMaterial({
+      color: 0x00e5ff, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false
+    });
+    const frontCone = new THREE.Mesh(coneGeo, frontConeMat);
+    frontCone.rotation.x = Math.PI * 0.5;
+    frontCone.position.set(0, 0.08, -0.96);
+
+    const rearConeMat = new THREE.MeshBasicMaterial({
+      color: 0xff3b30, transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false
+    });
+    const rearCone = new THREE.Mesh(coneGeo, rearConeMat);
+    rearCone.rotation.x = -Math.PI * 0.5;
+    rearCone.position.set(0, 0.08, 0.96);
+    carRig.add(frontCone, rearCone);
+
+    function update3DSurfaceTheme(isReverse) {
+      const hex = isReverse ? 0xff3b30 : 0x00e5ff;
+      bezelMat.color.setHex(hex);
+      ringMat.color.setHex(isReverse ? 0xffd60a : 0x00e5ff);
+      frontLedMat.color.setHex(isReverse ? 0x1a3340 : 0x00e5ff);
+      rearLedMat.color.setHex(isReverse ? 0xff3b30 : 0x331111);
+      frontConeMat.opacity = isReverse ? 0.03 : 0.24;
+      rearConeMat.opacity = isReverse ? 0.26 : 0.03;
+      redrawReticleOverlay(isReverse, liveSteerNorm);
+    }
+
+    // ==================== POP-UP & UI HELPERS ====================
+    function setPopupOpen(open) {
+      popupBackdrop.classList.toggle('open', open);
+      popupBackdrop.setAttribute('aria-hidden', open ? 'false' : 'true');
+    }
+    btnOpenPopup.onclick = () => setPopupOpen(true);
+    btnClosePopup.onclick = () => setPopupOpen(false);
+    popupBackdrop.onclick = (e) => {
+      if (e.target === popupBackdrop) setPopupOpen(false);
+    };
+
+    btnReset3d.onclick = () => {
+      isVisorCloseView = !isVisorCloseView;
+      camera.position.copy(isVisorCloseView ? VISOR_CAM_POS : DEFAULT_CAM_POS);
+      controls.target.copy(isVisorCloseView ? VISOR_CAM_TARGET : DEFAULT_CAM_TARGET);
+      controls.update();
+      btnReset3d.textContent = isVisorCloseView ? '🎯 Visor' : '🎯 3D';
+    };
+
+    function updateTelemetryStrip() {
+      const modeStr = phoneRole === 'auto' ? 'SINGLE_PHONE_AUTO_DR' : 'MULTI_PHONE_DEDICATED';
+      const kbPerSec = (bytesSentSec / 1024).toFixed(1);
+      telemetryEl.innerHTML =
+        `WS: ${wsStatusText} | ${ackInfoText} | Servo: ${liveSteerDeg}° • ESC: ${liveEscPulseUs}µs<br>` +
+        `Mode: ${modeStr} | ${kbPerSec} KB/s | Encode: ${lastEncodeMs.toFixed(1)} ms | WakeLock: ${wakeLockActive ? 'ON' : 'OFF'}`;
+    }
+
+    // ==================== CAMERA & WEBSOCKET PIPELINE ====================
     async function keepScreenAwake() {
       try {
-        if ('wakeLock' in navigator) await navigator.wakeLock.request('screen');
+        if ('wakeLock' in navigator) {
+          await navigator.wakeLock.request('screen');
+          wakeLockActive = true;
+        }
       } catch (e) {}
     }
 
-    // 2. Liệt kê danh sách cảm biến ống kính
     async function loadCameraLenses() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(d => d.kind === 'videoinput');
-        lensSelect.innerHTML = '<option value="">🔍 Danh sách cảm biến Camera tìm thấy (' + videoInputs.length + ')</option>';
+        lensSelect.innerHTML = `<option value="">🔍 Cảm biến tìm thấy (${videoInputs.length})</option>`;
         videoInputs.forEach((dev, idx) => {
           const label = (dev.label || '').toLowerCase();
           if (label.includes('front') || label.includes('user') || label.includes('selfie') || label.includes('trước')) {
@@ -173,29 +670,24 @@
         });
 
         if (cachedUltraWideCameraId) {
-          btnToggleUltra.textContent = '📸 ĐÃ SẴN SÀNG CAM 0.5X (BẤM ĐỔI)';
-          btnToggleUltra.style.background = '#00ff88';
-          btnToggleUltra.style.color = '#000';
+          btnToggleUltra.textContent = '📸 Cam 0.5x Sẵn Sàng';
+          btnToggleUltra.classList.add('active');
         }
       } catch (e) {}
     }
 
-    // 3. Khởi tạo Camera Duy Nhất (Chống xung đột phần cứng iOS Safari)
     async function activateCamera(surface, specificDeviceId = '') {
       if (isSwitchingCamera) return;
       isSwitchingCamera = true;
       targetSurface = surface;
 
       const isReverse = surface === 'rear';
-      gearEl.textContent = isReverse ? 'SỐ LÙI (R) - CAM SAU' : 'SỐ TIẾN (D) - CAM MŨI';
+      gearEl.textContent = isReverse ? 'R • LÙI' : 'D • MŨI';
       gearEl.classList.toggle('reverse', isReverse);
-      viewportBox.classList.toggle('rear-active', isReverse);
-      camLabel.textContent = isReverse ? '🔙 GƯƠNG HẬU (CAM TRƯỚC - LÙI XE)' : '🚘 KÍNH CHẮN GIÓ (CAM SAU - MŨI XE)';
-      camLabel.style.color = isReverse ? '#ffd60a' : '#00e5ff';
+      update3DSurfaceTheme(isReverse);
 
-      // Đóng luồng cũ sạch sẽ trước khi mở luồng mới để giải phóng ISP phần cứng
       if (currentStream) {
-        currentStream.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+        currentStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
         currentStream = null;
       }
       video.srcObject = null;
@@ -203,7 +695,6 @@
 
       const desiredFacing = isReverse ? 'user' : 'environment';
       const knownId = specificDeviceId || (isReverse ? cachedFrontCameraId : (cachedUltraWideCameraId || cachedRearCameraId));
-
       const constraints = knownId
         ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60 } } }
         : { audio: false, video: { facingMode: desiredFacing, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60 } } };
@@ -228,19 +719,20 @@
         }
       };
 
+      let camOpened = false;
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         await attachAndPlayStream(stream);
+        camOpened = true;
         logEl.textContent = isReverse
-          ? `🔙 Đang phát CAM LÙI (Gương Hậu) — 100% công suất mượt mà!`
-          : `🚘 Đang phát CAM MŨI (Kính Lái) — 100% công suất mượt mà!`;
+          ? '🔙 Đang phát CAM LÙI (Gương Hậu) lên sân khấu 3D & Quest 3'
+          : '🚘 Đang phát CAM MŨI (Kính Lái) lên sân khấu 3D & Quest 3';
       } catch (e) {
         try {
           const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: desiredFacing } });
           await attachAndPlayStream(fallbackStream);
-          logEl.textContent = isReverse
-            ? `🔙 Đang phát CAM LÙI (Fallback) — Mượt mà!`
-            : `🚘 Đang phát CAM MŨI (Fallback) — Mượt mà!`;
+          camOpened = true;
+          logEl.textContent = isReverse ? '🔙 CAM LÙI (Fallback)' : '🚘 CAM MŨI (Fallback)';
         } catch (err) {
           logEl.textContent = '❌ Lỗi mở Camera: ' + err.message;
         }
@@ -257,53 +749,72 @@
           }));
         } catch (e) {}
       }
+      return camOpened;
     }
 
-    // 4. Kết nối WebSocket Server
     function connectToServer() {
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsStatusText = '🟡 Đang nối WS...';
+      wsStatusText = 'Đang nối WS...';
+      wsDot.className = 'status-dot';
+
       ws = new WebSocket(`${proto}//${location.host}`);
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
-        wsStatusText = '🟢 WS OK';
-        logEl.textContent = '🟢 Đã kết nối Server! Đang truyền luồng hình ảnh Zero-Lag HD...';
+        wsStatusText = 'WS OK';
+        wsDot.className = 'status-dot online';
+        logEl.textContent = '🟢 Đã nối Server! Luồng RCF Zero-Lag sẵn sàng.';
         ws.send(JSON.stringify({
           type: 'FPV_PHONE_PUBLISHER_INIT',
           surface: targetSurface,
           mode: phoneRole === 'auto' ? 'SINGLE_PHONE_AUTO_DR' : 'MULTI_PHONE_DEDICATED'
         }));
+        updateTelemetryStrip();
       };
 
       ws.onmessage = (evt) => {
         if (typeof evt.data !== 'string') return;
         try {
           const msg = JSON.parse(evt.data);
-          // Chỉ tự động đổi cam khi người dùng chọn chế độ 1 MÁY TỰ ĐỔI D/R
+          if (msg.type === 'FPV_PHONE_PUBLISHER_ACK') {
+            ackInfoText = `IP: ${msg.phoneIp || msg.lanIp || 'Tunnel'}`;
+            updateTelemetryStrip();
+            return;
+          }
+          if (msg.type === 'WHEEL_BRIDGE_STATE') {
+            if (typeof msg.steerNorm === 'number') liveSteerNorm = Math.max(-1, Math.min(1, msg.steerNorm));
+            if (typeof msg.driveNorm === 'number') liveDriveNorm = Math.max(-1, Math.min(1, msg.driveNorm));
+            if (typeof msg.steer === 'number') liveSteerDeg = Math.round(msg.steer);
+            if (typeof msg.throttle === 'number') liveEscPulseUs = Math.round(msg.throttle);
+            const steerBucket = Math.round(liveSteerNorm * 20);
+            if (targetSurface === 'rear' && steerBucket !== lastDrawnSteerBucket) {
+              lastDrawnSteerBucket = steerBucket;
+              redrawReticleOverlay(true, liveSteerNorm);
+            }
+            return;
+          }
           if (phoneRole === 'auto' && (msg.type === 'SWITCH_FPV_SURFACE' || msg.type === 'FPV_SWITCH_CAMERA')) {
             const nextSurface = msg.surface || (msg.gear === 'R' ? 'rear' : 'front');
-            if (nextSurface === 'front' || nextSurface === 'rear') {
-              if (nextSurface !== targetSurface) {
-                activateCamera(nextSurface, '');
-              }
+            if ((nextSurface === 'front' || nextSurface === 'rear') && nextSurface !== targetSurface) {
+              activateCamera(nextSurface, '');
             }
           }
         } catch (e) {}
       };
 
       ws.onerror = () => {
-        wsStatusText = '⚠️ Lỗi WS';
+        wsStatusText = 'Lỗi WS';
+        wsDot.className = 'status-dot error';
       };
 
       ws.onclose = () => {
-        wsStatusText = '🔴 Thử nối lại...';
+        wsStatusText = 'Thử nối lại...';
+        wsDot.className = 'status-dot error';
         setTimeout(connectToServer, 1200);
       };
     }
 
-    // 5. Vẽ Frame lên Canvas với khả năng Full Khung 16:9 ở cả dạng Dọc và Ngang
     function renderVideoToCanvas() {
       const vw = video.videoWidth;
       const vh = video.videoHeight;
@@ -311,26 +822,23 @@
 
       const cw = canvas.width;
       const ch = canvas.height;
-      const targetAspect = cw / ch; // 16:9
+      const targetAspect = cw / ch;
       const sourceAspect = vw / vh;
-      const isReverse = targetSurface === 'rear';
+      const shouldMirror = mirrorMode === 'on' || (mirrorMode === 'auto' && targetSurface === 'rear');
 
       ctx.clearRect(0, 0, cw, ch);
       ctx.save();
 
-      // Lật gương cho Cam trước (Selfie/Lùi) để hướng lái tự nhiên
-      if (isReverse) {
+      if (shouldMirror) {
         ctx.translate(cw, 0);
         ctx.scale(-1, 1);
       }
 
       if (fovMode === 'rotate') {
-        // [CHẾ ĐỘ XOAY 90° CHO XE RC]: Biến cảm biến đứng thành ngang 16:9 toàn cảnh
         ctx.translate(cw * 0.5, ch * 0.5);
         ctx.rotate(Math.PI * 0.5);
         ctx.drawImage(video, 0, 0, vw, vh, -ch * 0.5, -cw * 0.5, ch, cw);
       } else if (fovMode === 'fit') {
-        // [CHẾ ĐỘ TOÀN CẢNH PILLARBOX]: Giữ trọn cảm biến, có viền đen
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, cw, ch);
         let dw = cw, dh = ch, dx = 0, dy = 0;
@@ -343,7 +851,6 @@
         }
         ctx.drawImage(video, 0, 0, vw, vh, dx, dy, dw, dh);
       } else {
-        // [CHẾ ĐỘ FULL 16:9 - MẶC ĐỊNH]: Cắt tràn viền lấp đầy 100% khung chữ nhật, KHÔNG BỊ VẠCH ĐEN DỌC BÉ!
         let sx = 0, sy = 0, sw = vw, sh = vh;
         if (sourceAspect > targetAspect) {
           sw = vh * targetAspect;
@@ -354,28 +861,51 @@
         }
         ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
       }
-
       ctx.restore();
+      videoTexture.needsUpdate = true;
     }
 
-    // 6. Vòng lặp truyền khung hình siêu mượt Zero-Lag (Độc quyền 1 Camera không tranh chấp)
-    function processLoop(now) {
-      requestAnimationFrame(processLoop);
+    // ==================== UNIFIED SINGLE RENDER PIPELINE ====================
+    const rcfHeaderFront = new Uint8Array([0x52, 0x43, 0x46, 0x01]);
+    const rcfHeaderRear = new Uint8Array([0x52, 0x43, 0x46, 0x02]);
 
+    function onRenderFrame(now) {
+      // 1. Update 3D scene smoothly (Zero per-frame allocation)
+      if (!ecoMode) {
+        carRig.rotation.x += (targetPitch - carRig.rotation.x) * 0.1;
+        carRig.rotation.z += (targetRoll - carRig.rotation.z) * 0.1;
+        carRig.position.y = -0.14 + Math.sin(now * 0.0022) * 0.015;
+
+        wheelSpinRad = (wheelSpinRad - liveDriveNorm * 0.22) % (Math.PI * 2);
+        const frontYaw = -liveSteerNorm * 0.48;
+        for (let i = 0; i < 4; i++) {
+          const pos = wheelOffsets[i];
+          tmpWheelPos.set(pos[0], pos[1], pos[2]);
+          tmpWheelEuler.set(wheelSpinRad, i < 2 ? frontYaw : 0, 0);
+          tmpWheelQuat.setFromEuler(tmpWheelEuler);
+          tmpMatrix.compose(tmpWheelPos, tmpWheelQuat, tmpWheelScale);
+          wheelsInstanced.setMatrixAt(i, tmpMatrix);
+        }
+        wheelsInstanced.instanceMatrix.needsUpdate = true;
+      }
+      controls.update();
+      renderer.render(scene, camera);
+
+      // 2. Capture & Encode RCF frame on preset cadence
+      if (!isStreamingActive || isStreamingPaused) return;
       if (now - lastCaptureTs < currentPreset.intervalMs) return;
       lastCaptureTs = now;
 
-      // Cập nhật thống kê FPS mỗi giây
       if (now - lastFpsTime >= 1000) {
-        const label = targetSurface === 'rear' ? '🔙 Gương Hậu' : '🚘 Kính Chắn Gió';
-        hudInfo.innerHTML = `${label}: ${canvas.width}x${canvas.height} | <b>${fpsCounter} FPS</b> | ${wsStatusText}`;
+        hudInfo.textContent = `${currentPreset.name} • ${fpsCounter} FPS • ${wsStatusText}`;
+        updateTelemetryStrip();
         fpsCounter = 0;
+        bytesSentSec = 0;
         lastFpsTime = now;
       }
 
       if (isSwitchingCamera || !video || video.readyState < 2 || !video.videoWidth) return;
 
-      // Luôn vẽ camera lên Canvas ngay lập tức để Safari KHÔNG BAO GIỜ bị màn hình đen kể cả khi WS đang kết nối lại
       renderVideoToCanvas();
 
       if (isBusyEncoding && (now - lastBlobStartTs > 1500)) {
@@ -385,78 +915,23 @@
 
       isBusyEncoding = true;
       lastBlobStartTs = now;
-      const markerByte = targetSurface === 'rear' ? 0x02 : 0x01;
-      const header = new Uint8Array([0x52, 0x43, 0x46, markerByte]);
+      const encodeStart = performance.now();
+      const header = targetSurface === 'rear' ? rcfHeaderRear : rcfHeaderFront;
 
       canvas.toBlob((blob) => {
         isBusyEncoding = false;
+        lastEncodeMs = performance.now() - encodeStart;
         if (blob && ws && ws.readyState === WebSocket.OPEN) {
-          // Zero-copy Blob streaming trực tiếp qua WebSocket
+          bytesSentSec += blob.size + 4;
           ws.send(new Blob([header, blob], { type: 'image/jpeg' }));
           fpsCounter++;
         }
       }, 'image/jpeg', currentPreset.quality);
     }
 
-    // 7. Đổi chế độ Khung hình (Full 16:9 / Xoay 90° Xe RC / Toàn Cảnh)
-    btnToggleFov.onclick = () => {
-      if (fovMode === 'fill') {
-        fovMode = 'rotate';
-        btnToggleFov.textContent = '🔄 Khung: XOAY 90° (XE RC)';
-        btnToggleFov.style.background = '#e76f51';
-      } else if (fovMode === 'rotate') {
-        fovMode = 'fit';
-        btnToggleFov.textContent = '🔲 Khung: TOÀN CẢNH (FIT VIỀN)';
-        btnToggleFov.style.background = '#1d3557';
-      } else {
-        fovMode = 'fill';
-        btnToggleFov.textContent = '📐 Khung: FULL 16:9 (TRÀN KHUNG)';
-        btnToggleFov.style.background = '#2a9d8f';
-      }
-    };
+    renderer.setAnimationLoop(onRenderFrame);
 
-    // 8. Chuyển đổi Vai Trò của điện thoại
-    function setPhoneRole(role) {
-      phoneRole = role;
-      btnRoleAuto.classList.toggle('active', role === 'auto');
-      btnRoleFront.classList.toggle('active', role === 'front_only');
-      btnRoleRear.classList.toggle('active', role === 'rear_only');
-
-      if (role === 'auto') {
-        btnRoleAuto.style.background = '#00ff88';
-        btnRoleAuto.style.color = '#000';
-        btnRoleFront.style.background = '#111a2e';
-        btnRoleFront.style.color = '#fff';
-        btnRoleRear.style.background = '#111a2e';
-        btnRoleRear.style.color = '#fff';
-        activateCamera('front', lensSelect.value);
-        logEl.textContent = '🚘 Chế độ 1 Máy: Cam Sau chạy cực mượt, tự đổi Cam Trước khi vào số lùi!';
-      } else if (role === 'front_only') {
-        btnRoleFront.style.background = '#00e5ff';
-        btnRoleFront.style.color = '#000';
-        btnRoleAuto.style.background = '#111a2e';
-        btnRoleAuto.style.color = '#fff';
-        btnRoleRear.style.background = '#111a2e';
-        btnRoleRear.style.color = '#fff';
-        activateCamera('front', lensSelect.value);
-        logEl.textContent = '🚘 Máy này KHÓA CHẶT làm Cam Mũi (Kính Lái). Hãy mở máy thứ 2 làm Gương Hậu!';
-      } else if (role === 'rear_only') {
-        btnRoleRear.style.background = '#ffd60a';
-        btnRoleRear.style.color = '#000';
-        btnRoleAuto.style.background = '#111a2e';
-        btnRoleAuto.style.color = '#fff';
-        btnRoleFront.style.background = '#111a2e';
-        btnRoleFront.style.color = '#fff';
-        activateCamera('rear', '');
-        logEl.textContent = '🔙 Máy này KHÓA CHẶT làm Cam Lùi (Gương Hậu). Truyền liên tục lên kính VR!';
-      }
-    }
-
-    btnRoleAuto.onclick = () => setPhoneRole('auto');
-    btnRoleFront.onclick = () => setPhoneRole('front_only');
-    btnRoleRear.onclick = () => setPhoneRole('rear_only');
-
-    // 9. Chuyển đổi Preset chất lượng
+    // ==================== POP-UP ACTIONS & CONTROLS ====================
     function setQualityPreset(key) {
       if (!PRESETS[key]) return;
       currentPresetKey = key;
@@ -467,53 +942,222 @@
       document.getElementById('mode-fast').classList.toggle('active', key === 'fast');
       document.getElementById('mode-hd').classList.toggle('active', key === 'hd');
       document.getElementById('mode-zerolag').classList.toggle('active', key === 'zerolag');
-      logEl.textContent = `⚡ Chế độ: ${currentPreset.name} (${currentPreset.quality * 100}%, ${Math.round(1000 / currentPreset.intervalMs)} FPS)`;
+      logEl.textContent = `⚡ Chất lượng: ${currentPreset.name} (~${Math.round(1000 / currentPreset.intervalMs)} FPS)`;
+      if (!isStreamingActive) drawStandbyScreen();
     }
-
     document.getElementById('mode-fast').onclick = () => setQualityPreset('fast');
     document.getElementById('mode-hd').onclick = () => setQualityPreset('hd');
     document.getElementById('mode-zerolag').onclick = () => setQualityPreset('zerolag');
 
-    // 10. Chọn Ống Kính 0.5x Siêu Rộng
+    function setPhoneRole(role) {
+      phoneRole = role;
+      btnRoleAuto.classList.toggle('active', role === 'auto');
+      btnRoleFront.classList.toggle('active-cyan', role === 'front_only');
+      btnRoleFront.classList.toggle('active', false);
+      btnRoleRear.classList.toggle('active-amber', role === 'rear_only');
+      btnRoleRear.classList.toggle('active', false);
+
+      if (role === 'auto') {
+        activateCamera('front', lensSelect.value);
+      } else if (role === 'front_only') {
+        activateCamera('front', lensSelect.value);
+      } else {
+        activateCamera('rear', '');
+      }
+      updateTelemetryStrip();
+    }
+    btnRoleAuto.onclick = () => setPhoneRole('auto');
+    btnRoleFront.onclick = () => setPhoneRole('front_only');
+    btnRoleRear.onclick = () => setPhoneRole('rear_only');
+
+    btnToggleFov.onclick = () => {
+      if (fovMode === 'fill') {
+        fovMode = 'rotate';
+        btnToggleFov.textContent = '🔄 FOV: Xoay 90°';
+      } else if (fovMode === 'rotate') {
+        fovMode = 'fit';
+        btnToggleFov.textContent = '🔲 FOV: Fit Viền';
+      } else {
+        fovMode = 'fill';
+        btnToggleFov.textContent = '📐 FOV: Full 16:9';
+      }
+    };
+
     btnToggleUltra.onclick = async () => {
       if (cachedUltraWideCameraId) {
         lensSelect.value = cachedUltraWideCameraId;
         await activateCamera('front', cachedUltraWideCameraId);
-        btnToggleUltra.textContent = '✅ ĐANG DÙNG CAM 0.5X SIÊU RỘNG!';
+        btnToggleUltra.textContent = '✅ Đang dùng 0.5x';
       } else {
         await loadCameraLenses();
         if (cachedUltraWideCameraId) {
           lensSelect.value = cachedUltraWideCameraId;
           await activateCamera('front', cachedUltraWideCameraId);
+          btnToggleUltra.textContent = '✅ Đang dùng 0.5x';
         } else {
-          alert('Thiết bị này không có cảm biến 0.5x góc siêu rộng riêng, hãy để điện thoại nằm ngang và dùng chế độ Full 16:9!');
+          logEl.textContent = 'ℹ️ Thiết bị không lộ cam 0.5x riêng — hãy dùng Full 16:9 ngang.';
         }
       }
     };
 
-    // 11. KÍCH HOẠT CAMERA FPV
-    document.getElementById('btn-start').onclick = async () => {
-      await keepScreenAwake();
-      connectToServer();
+    btnToggleReticle.onclick = () => {
+      showReticle = !showReticle;
+      reticleMesh.visible = showReticle;
+      btnToggleReticle.classList.toggle('active-cyan', showReticle);
+      btnToggleReticle.textContent = showReticle ? '🎯 Tâm Ngắm 3D' : '🎯 Tâm Ngắm: Tắt';
+    };
 
-      logEl.textContent = '🔄 Đang khởi tạo Camera...';
-      await activateCamera(targetSurface, lensSelect.value);
-      await loadCameraLenses();
-
-      document.getElementById('btn-start').textContent = '✅ CAMERA FPV ĐANG PHÁT TRỰC TIẾP';
-      document.getElementById('btn-start').style.background = '#00e5ff';
-
-      if (!isLoopStarted) {
-        isLoopStarted = true;
-        requestAnimationFrame(processLoop);
+    btnToggleMirror.onclick = () => {
+      if (mirrorMode === 'auto') {
+        mirrorMode = 'on';
+        btnToggleMirror.textContent = '🪞 Lật Gương: Bật';
+        btnToggleMirror.classList.add('active-cyan');
+      } else if (mirrorMode === 'on') {
+        mirrorMode = 'off';
+        btnToggleMirror.textContent = '🪞 Lật Gương: Tắt';
+        btnToggleMirror.classList.remove('active-cyan');
+      } else {
+        mirrorMode = 'auto';
+        btnToggleMirror.textContent = '🪞 Lật Gương: Auto';
+        btnToggleMirror.classList.remove('active-cyan');
       }
+    };
+
+    btnToggleEco.onclick = () => {
+      ecoMode = !ecoMode;
+      stageRigGroup.visible = !ecoMode;
+      btnToggleEco.classList.toggle('active', ecoMode);
+      btnToggleEco.textContent = ecoMode ? '🔋 Tiết Kiệm 3D' : '🔋 3D Đầy Đủ';
+    };
+
+    btnQuickSwap.onclick = () => {
+      const next = targetSurface === 'rear' ? 'front' : 'rear';
+      activateCamera(next, next === 'front' ? lensSelect.value : '');
     };
 
     lensSelect.onchange = () => {
-      if (lensSelect.value) {
-        activateCamera('front', lensSelect.value);
-      }
+      if (lensSelect.value) activateCamera('front', lensSelect.value);
     };
+
+    async function startFpvPipeline(isAuto = false) {
+      if (!isStreamingActive) {
+        isStreamingActive = true;
+        isStreamingPaused = false;
+        await keepScreenAwake();
+        connectToServer();
+        logEl.textContent = '🔄 Đang khởi tạo Camera & WebGL 3D...';
+        const ok = await activateCamera(targetSurface, lensSelect.value);
+        if (!ok) {
+          isStreamingActive = false;
+          if (isAuto) {
+            logEl.textContent = '👆 Chạm [🚀 BẬT FPV] để cấp quyền Camera lần đầu';
+          }
+          return false;
+        }
+        await loadCameraLenses();
+        btnStart.textContent = '⏸ TẠM DỪNG';
+        btnStart.classList.add('streaming');
+        return true;
+      }
+      isStreamingPaused = !isStreamingPaused;
+      btnStart.textContent = isStreamingPaused ? '▶ TIẾP TỤC' : '⏸ TẠM DỪNG';
+      btnStart.classList.toggle('paused', isStreamingPaused);
+      btnStart.classList.toggle('streaming', !isStreamingPaused);
+      logEl.textContent = isStreamingPaused ? '⏸ Đã tạm dừng gửi frame (WS vẫn giữ)' : '🟢 Tiếp tục phát FPV 3D';
+      return true;
+    }
+
+    btnStart.onclick = () => startFpvPipeline(false);
+
+    // ==================== PWA INSTALL & AUTO-START ====================
+    let deferredInstallPrompt = null;
+    const isStandalonePwa = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    let autoStartPref = localStorage.getItem('fpv_autostart') !== '0';
+
+    function syncAutoStartButton() {
+      btnToggleAutostart.classList.toggle('active', autoStartPref);
+      btnToggleAutostart.textContent = autoStartPref ? '⚡ Tự Bật Cam: Bật' : '⚡ Tự Bật Cam: Tắt';
+    }
+    syncAutoStartButton();
+
+    btnToggleAutostart.onclick = () => {
+      autoStartPref = !autoStartPref;
+      localStorage.setItem('fpv_autostart', autoStartPref ? '1' : '0');
+      syncAutoStartButton();
+    };
+
+    if (isStandalonePwa) {
+      btnInstallPwa.textContent = '✅ Đang chạy App PWA';
+      btnInstallPwa.classList.add('active');
+    }
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      btnInstallPwa.textContent = '📲 Cài App Ngay (1 Chạm)';
+      btnInstallPwa.classList.add('active');
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      btnInstallPwa.textContent = '✅ Đã Cài Thành Công';
+      btnInstallPwa.classList.add('active');
+      logEl.textContent = '✅ Đã cài FPV Cam 3D lên Màn hình chính!';
+    });
+
+    btnInstallPwa.onclick = async () => {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        const choice = await deferredInstallPrompt.userChoice.catch(() => null);
+        if (choice && choice.outcome === 'accepted') {
+          deferredInstallPrompt = null;
+        }
+        return;
+      }
+      if (isStandalonePwa) {
+        logEl.textContent = '✅ Bạn đang mở trực tiếp từ App trên màn hình chính!';
+        return;
+      }
+      const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      setPopupOpen(false);
+      logEl.textContent = isIos
+        ? '📲 iPhone: Bấm nút Chia sẻ (↑) ở Safari ➜ Thêm vào Màn hình chính'
+        : '📲 Android: Bấm Menu ⋮ ở Chrome ➜ Thêm vào Màn hình chính / Cài ứng dụng';
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/fpv-sw.js', { scope: '/' }).catch(() => {});
+    }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (autoStartPref && (isStandalonePwa || urlParams.get('autostart') === '1')) {
+      setTimeout(() => { startFpvPipeline(true); }, 250);
+    }
+
+    // ==================== ORIENTATION & RESIZE & CLEANUP ====================
+    window.addEventListener('deviceorientation', (e) => {
+      if (typeof e.beta === 'number' && typeof e.gamma === 'number') {
+        targetPitch = THREE.MathUtils.clamp((e.beta - 45) * 0.004, -0.22, 0.22);
+        targetRoll = THREE.MathUtils.clamp(-e.gamma * 0.005, -0.28, 0.28);
+      }
+    }, { passive: true });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / Math.max(1, window.innerHeight);
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    window.addEventListener('pagehide', () => {
+      renderer.setAnimationLoop(null);
+      if (currentStream) currentStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
+      [screenGeo, bezelGeo, reticleGeo, ringGeo, chassis.geometry, canopy.geometry, wheelGeo, frontPod.geometry, rearPod.geometry, coneGeo].forEach(g => g.dispose());
+      [screenMat, bezelMat, reticleMat, ringMat, chassisMat, canopyMat, wheelMat, frontLedMat, rearLedMat, frontConeMat, rearConeMat].forEach(m => m.dispose());
+      videoTexture.dispose();
+      overlayTexture.dispose();
+      controls.dispose();
+      renderer.dispose();
+    });
   </script>
 </body>
 </html>

@@ -33,12 +33,31 @@ function record(category, item, status, evidence) {
 const appJsPath = findFile('app.js');
 const serverJsPath = findFile('server.js');
 const indexHtmlPath = findFile('index.html');
+const fpvCamHtmlPath = findFile('fpv-cam.html');
 const ytExtractorPath = findFile('youtube-dom-extractor.js');
 
-record('Workspace', 'Core files (app.js, server.js, index.html)',
-  appJsPath && serverJsPath && indexHtmlPath ? 'VERIFIED' : 'BLOCKED',
-  `app.js: ${Boolean(appJsPath)}, server.js: ${Boolean(serverJsPath)}, index.html: ${Boolean(indexHtmlPath)}`
+record('Workspace', 'Core files (app.js, server.js, index.html, fpv-cam.html)',
+  appJsPath && serverJsPath && indexHtmlPath && fpvCamHtmlPath ? 'VERIFIED' : 'BLOCKED',
+  `app.js: ${Boolean(appJsPath)}, server.js: ${Boolean(serverJsPath)}, index.html: ${Boolean(indexHtmlPath)}, fpv-cam.html: ${Boolean(fpvCamHtmlPath)}`
 );
+
+if (fpvCamHtmlPath) {
+  try {
+    const fpvHtml = fs.readFileSync(fpvCamHtmlPath, 'utf8');
+    const modMatch = fpvHtml.match(/<script type="module">([\s\S]*?)<\/script>/);
+    if (!modMatch) throw new Error('Thiếu <script type="module"> trong fpv-cam.html');
+    const strippedJs = modMatch[1].replace(/import\s+[\s\S]*?from\s+['"].*?['"];/g, '');
+    new Function(strippedJs);
+    const hasFpvProto = fpvHtml.includes('FPV_PHONE_PUBLISHER_INIT') && fpvHtml.includes('SWITCH_FPV_SURFACE');
+    const hasThree3d = fpvHtml.includes('renderer.setAnimationLoop') && fpvHtml.includes('popup-backdrop');
+    record('FPV Phone Web3D', 'Cú pháp & Giao thức fpv-cam.html (Three.js 3D + Pop-up)',
+      hasFpvProto && hasThree3d ? 'VERIFIED' : 'PARTIAL',
+      `JS syntax OK, FPV_PHONE_PUBLISHER_INIT: ${hasFpvProto}, Three.js 3D & Pop-up: ${hasThree3d}`
+    );
+  } catch (err) {
+    record('FPV Phone Web3D', 'Cú pháp & Giao thức fpv-cam.html (Three.js 3D + Pop-up)', 'BLOCKED', err.message.split('\n')[0]);
+  }
+}
 
 // 2. Kiểm tra cú pháp JavaScript tĩnh (node --check)
 [

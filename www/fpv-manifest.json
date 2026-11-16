@@ -1,0 +1,26 @@
+{
+  "id": "/fpv-cam.html",
+  "name": "FPV RC Smart Camera 3D",
+  "short_name": "FPV Cam 3D",
+  "description": "Web 3D FPV Smart Camera cho xe RC & kính Meta Quest 3 (Zero-Lag RCF)",
+  "start_url": "/fpv-cam.html?autostart=1",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#050912",
+  "theme_color": "#050912",
+  "icons": [
+    {
+      "src": "/icons/fpv-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/fpv-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
