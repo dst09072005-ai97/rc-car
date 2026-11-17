@@ -89,7 +89,7 @@
     .top-hud {
       position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
       z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 6px;
-      width: calc(100vw - 16px); max-width: 440px;
+      width: calc(100vw - 16px); max-width: 520px;
       padding: 4px 10px; border-radius: 999px;
       background: var(--lg-bg-base); border: 1px solid var(--lg-border-subtle);
       backdrop-filter: var(--lg-blur-hud); -webkit-backdrop-filter: var(--lg-blur-hud);
@@ -109,6 +109,38 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       font-size: 11px;
+    }
+
+    /* Micro-Typography: Ngày Giờ, Pin Điện Thoại & Pin Kính Quest 3 (Gọn, Không Icon) */
+    .hud-micro-meta {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .meta-item {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #9ebddf;
+      white-space: nowrap;
+    }
+    .meta-item.phone-tag {
+      color: #b8d7ff;
+      border-color: rgba(184, 215, 255, 0.22);
+    }
+    .meta-item.quest-tag {
+      color: var(--cyan);
+      background: rgba(0, 240, 255, 0.12);
+      border-color: rgba(0, 240, 255, 0.45);
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.25);
+      font-weight: 700;
     }
     .gear-pill {
       padding: 2px 7px; border-radius: 999px; font-weight: 800; font-size: 10.5px;
@@ -774,6 +806,11 @@
       <span id="ws-dot" class="status-dot"></span>
       <span id="hud-info" class="hud-stats">Chờ Bật FPV...</span>
     </div>
+    <div id="hud-micro-meta" class="hud-micro-meta">
+      <span id="meta-datetime" class="meta-item">--/-- --:--</span>
+      <span id="meta-phone-bat" class="meta-item phone-tag" style="display:none;">PHN --%</span>
+      <span id="meta-quest-bat" class="meta-item quest-tag" style="display:none;">Q3 --%</span>
+    </div>
     <span id="gear-indicator" class="gear-pill">D • MŨI</span>
   </div>
   <div id="log" class="stage-toast">Chạm 🚀 BẬT để phát camera trực tiếp lên kính Meta Quest 3</div>
@@ -1020,6 +1057,61 @@
     const gearEl = document.getElementById('gear-indicator');
     const logEl = document.getElementById('log');
     const telemetryEl = document.getElementById('telemetry-strip');
+    const hudMicroMeta = document.getElementById('hud-micro-meta');
+    const metaDateTime = document.getElementById('meta-datetime');
+    const metaPhoneBat = document.getElementById('meta-phone-bat');
+    const metaQuestBat = document.getElementById('meta-quest-bat');
+
+    let phoneBatteryLevel = null;
+    let phoneCharging = false;
+    let quest3Connected = false;
+    let quest3Battery = null;
+    let quest3Charging = false;
+
+    function updateClockAndTelemetry() {
+      if (metaDateTime) {
+        const now = new Date();
+        const d = String(now.getDate()).padStart(2, '0');
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        metaDateTime.textContent = `${d}/${m} ${hh}:${mm}`;
+      }
+      if (metaPhoneBat) {
+        if (typeof phoneBatteryLevel === 'number') {
+          metaPhoneBat.textContent = `PHN ${phoneBatteryLevel}%`;
+          metaPhoneBat.style.display = 'inline-block';
+        } else {
+          metaPhoneBat.style.display = 'none';
+        }
+      }
+      if (metaQuestBat) {
+        if (quest3Connected) {
+          const qBatText = (typeof quest3Battery === 'number') ? `${quest3Battery}%` : '--%';
+          metaQuestBat.textContent = `Q3 ${qBatText}`;
+          metaQuestBat.style.display = 'inline-block';
+        } else {
+          metaQuestBat.style.display = 'none';
+        }
+      }
+    }
+
+    // Khởi động đồng hồ micro và theo dõi pin điện thoại
+    updateClockAndTelemetry();
+    setInterval(updateClockAndTelemetry, 1000);
+
+    if (typeof navigator.getBattery === 'function') {
+      navigator.getBattery().then((bat) => {
+        const readPhoneBat = () => {
+          phoneBatteryLevel = Math.round(bat.level * 100);
+          phoneCharging = Boolean(bat.charging);
+          updateClockAndTelemetry();
+        };
+        readPhoneBat();
+        bat.addEventListener('levelchange', readPhoneBat);
+        bat.addEventListener('chargingchange', readPhoneBat);
+      }).catch(() => {});
+    }
 
     try {
       console.table({
@@ -2131,8 +2223,34 @@
           const msg = JSON.parse(evt.data);
           if (msg.type === 'FPV_PHONE_PUBLISHER_ACK') {
             ackInfoText = `IP: ${msg.phoneIp || msg.lanIp || 'Tunnel'}`;
+            if (msg.questStatus) {
+              quest3Connected = Boolean(msg.questStatus.connected);
+              quest3Battery = (typeof msg.questStatus.battery === 'number') ? msg.questStatus.battery : null;
+              quest3Charging = Boolean(msg.questStatus.charging);
+              updateClockAndTelemetry();
+            }
             updateTelemetryStrip();
             return;
+          }
+          if (msg.type === 'QUEST_STATUS_UPDATE') {
+            quest3Connected = Boolean(msg.connected);
+            quest3Battery = (typeof msg.battery === 'number') ? msg.battery : null;
+            quest3Charging = Boolean(msg.charging);
+            updateClockAndTelemetry();
+            return;
+          }
+          if (msg.type === 'WORLD_STATE' && Array.isArray(msg.players)) {
+            const questPlayer = msg.players.find(p => p && (p.isQuestVR || p.deviceType === 'META_QUEST'));
+            if (questPlayer) {
+              quest3Connected = true;
+              if (typeof questPlayer.battery === 'number') quest3Battery = questPlayer.battery;
+              if (typeof questPlayer.charging === 'boolean') quest3Charging = questPlayer.charging;
+              updateClockAndTelemetry();
+            } else if (quest3Connected) {
+              quest3Connected = false;
+              quest3Battery = null;
+              updateClockAndTelemetry();
+            }
           }
           if (msg.type === 'WHEEL_BRIDGE_STATE') {
             if (typeof msg.steerNorm === 'number') liveSteerNorm = Math.max(-1, Math.min(1, msg.steerNorm));
@@ -2161,6 +2279,9 @@
       };
 
       ws.onclose = () => {
+        quest3Connected = false;
+        quest3Battery = null;
+        updateClockAndTelemetry();
         if (isShuttingDown || lifecycleState === 'SUSPENDED_BFCACHE') return;
         wsStatusText = 'Thử nối lại...';
         wsDot.className = 'status-dot error';
