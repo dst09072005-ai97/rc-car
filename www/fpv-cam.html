@@ -14,16 +14,47 @@
   <title>FPV Smart Camera 3D — Low-Latency Web3D</title>
   <style>
     :root {
+      /* ==================== PHOTONIC LIQUID GLASS TOKENS ==================== */
       --bg: #050912;
-      --glass: rgba(10, 17, 32, 0.78);
-      --glass-strong: rgba(8, 13, 25, 0.92);
-      --border: rgba(0, 229, 255, 0.28);
-      --cyan: #00e5ff;
+      --lg-bg-base: rgba(6, 12, 24, 0.72);
+      --lg-bg-surface: rgba(12, 22, 44, 0.65);
+      --lg-bg-surface-active: rgba(0, 240, 255, 0.18);
+      --lg-bg-sheen: linear-gradient(115deg, transparent 20%, rgba(255, 255, 255, 0.28) 46%, rgba(0, 240, 255, 0.4) 52%, transparent 75%);
+
+      /* Viền khúc xạ quang học đa tầng (Refractive Borders) */
+      --lg-border-subtle: rgba(0, 240, 255, 0.22);
+      --lg-border-bright: rgba(0, 240, 255, 0.65);
+      --lg-border-specular: rgba(255, 255, 255, 0.45);
+      
+      /* Lọc quang học và khúc xạ nền (Optical Filters) */
+      --lg-blur-hud: blur(20px) saturate(190%) contrast(108%);
+      --lg-blur-popup: blur(28px) saturate(200%) contrast(112%);
+      
+      /* Đổ bóng quang phổ đa tầng (Volumetric Layered Shadows) */
+      --lg-shadow-dock: 
+        0 16px 40px -8px rgba(0, 0, 0, 0.75),
+        0 0 1px 1px rgba(255, 255, 255, 0.22) inset,
+        0 -1px 2px 0 rgba(0, 0, 0, 0.6) inset,
+        0 0 20px -2px rgba(0, 240, 255, 0.25);
+      --lg-shadow-btn:
+        0 4px 14px rgba(0, 0, 0, 0.45),
+        0 1px 0 rgba(255, 255, 255, 0.35) inset,
+        0 -1px 0 rgba(0, 0, 0, 0.5) inset;
+      --lg-shadow-active:
+        0 0 18px rgba(0, 240, 255, 0.55),
+        0 1px 0 rgba(255, 255, 255, 0.65) inset;
+
+      /* Bảng màu HUD Khí tài Quân sự (Tactical Neon Colorway) */
+      --cyan: #00f0ff;
       --green: #00ff88;
       --amber: #ffd60a;
-      --red: #ff3b30;
-      --text: #eaf4ff;
-      --muted: #8ca4c4;
+      --red: #ff334b;
+      --text: #f2f7ff;
+      --muted: #90a8cb;
+
+      /* Nhịp độ tương tác đàn hồi (Spring Easing) */
+      --ease-tactile: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --ease-liquid: cubic-bezier(0.2, 0.8, 0.2, 1);
     }
 
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
@@ -33,88 +64,529 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
 
-    /* QUAN TRỌNG: Giữ thẻ video nằm trong viewport (opacity 0.02 bên dưới canvas 3D) để iOS Safari không ngừng giải mã frame ISP */
+    /* Lớp mô phỏng toàn màn hình trên iOS Safari */
+    body.ios-simulated-fs {
+      position: fixed; inset: 0; width: 100vw; height: 100dvh; overflow: hidden;
+    }
+
+    /* QUAN TRỌNG: Thẻ video luôn hiển thị 100% để iOS Safari ISP giải mã liên tục, không bao giờ bị dừng do opacity/occlusion */
     #raw-video {
       position: fixed; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; opacity: 0.02; pointer-events: none; z-index: 0;
+      object-fit: cover; opacity: 1; pointer-events: none; z-index: 0;
+      background: #000;
     }
 
     /* Canvas offscreen dùng để crop/encode RCF JPEG sạch sẽ (không dính HUD 3D) */
     #crop-preview { display: none; }
 
-    /* Viewport Three.js Web 3D toàn màn hình */
+    /* Viewport Three.js Web 3D phủ trong suốt trên nền camera */
     #webgl-stage {
       position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; touch-action: none;
+      pointer-events: auto;
     }
 
     /* Thanh trạng thái tinh gọn phía trên */
     .top-hud {
-      position: fixed; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
-      z-index: 10; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 20px);
-      padding: 6px 12px; border-radius: 999px;
-      background: var(--glass); border: 1px solid var(--border);
-      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-      font-size: 11.5px; white-space: nowrap; overflow: hidden;
+      position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+      z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      width: calc(100vw - 16px); max-width: 440px;
+      padding: 4px 10px; border-radius: 999px;
+      background: var(--lg-bg-base); border: 1px solid var(--lg-border-subtle);
+      backdrop-filter: var(--lg-blur-hud); -webkit-backdrop-filter: var(--lg-blur-hud);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
+      font-size: 11px; box-sizing: border-box;
+    }
+    .hud-left {
+      display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden;
     }
     .status-dot {
-      width: 8px; height: 8px; border-radius: 50%; background: var(--amber);
+      width: 7px; height: 7px; border-radius: 50%; background: var(--amber);
       box-shadow: 0 0 8px var(--amber); flex-shrink: 0;
     }
     .status-dot.online { background: var(--green); box-shadow: 0 0 10px var(--green); }
     .status-dot.error { background: var(--red); box-shadow: 0 0 10px var(--red); }
     .hud-stats {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      color: var(--text); overflow: hidden; text-overflow: ellipsis;
+      color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 11px;
     }
     .gear-pill {
-      padding: 3px 9px; border-radius: 999px; font-weight: 800; font-size: 11px;
-      background: var(--cyan); color: #021019; letter-spacing: 0.4px; flex-shrink: 0;
+      padding: 2px 7px; border-radius: 999px; font-weight: 800; font-size: 10.5px;
+      background: var(--cyan); color: #021019; letter-spacing: 0.3px; flex-shrink: 0;
       transition: background 0.2s, color 0.2s;
     }
     .gear-pill.reverse { background: var(--red); color: #fff; }
 
     /* Nhãn trạng thái nhỏ gọn trên sân khấu */
     .stage-toast {
-      position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 44px); left: 50%;
+      position: fixed; top: calc(max(8px, env(safe-area-inset-top)) + 36px); left: 50%;
       transform: translateX(-50%); z-index: 9;
       padding: 4px 12px; border-radius: 999px;
-      background: rgba(5, 9, 18, 0.65); border: 1px solid rgba(255,255,255,0.1);
-      color: var(--muted); font-size: 11px; pointer-events: none;
-      max-width: calc(100vw - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      background: rgba(5, 9, 18, 0.88); border: 1px solid rgba(0, 240, 255, 0.25);
+      color: #9ad1ff; font-size: 11px; pointer-events: none;
+      max-width: calc(100vw - 20px); width: max-content; text-align: center; line-height: 1.35;
+      white-space: normal; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
     }
 
-    /* Thanh Dock điều khiển tinh gọn ở đáy */
-    .bottom-dock {
-      position: fixed; bottom: max(12px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
-      z-index: 12; display: flex; align-items: center; gap: 8px;
-      padding: 7px 10px; border-radius: 20px;
-      background: var(--glass); border: 1px solid var(--border);
-      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
-      max-width: calc(100vw - 16px);
+    /* ==================== KEYFRAME ANIMATIONS ==================== */
+    @keyframes liquidSheenGlide {
+      0% { transform: translateX(-160%) skewX(-22deg); opacity: 0; }
+      15% { opacity: 1; }
+      55% { opacity: 1; }
+      100% { transform: translateX(220%) skewX(-22deg); opacity: 0; }
     }
+
+    @keyframes liquidPulseCyan {
+      0%, 100% {
+        box-shadow: 0 0 10px rgba(0, 240, 255, 0.35), 0 1px 0 rgba(255, 255, 255, 0.4) inset;
+      }
+      50% {
+        box-shadow: 0 0 20px rgba(0, 240, 255, 0.75), 0 1px 0 rgba(255, 255, 255, 0.7) inset;
+      }
+    }
+
+    @keyframes liquidPulseGreen {
+      0%, 100% {
+        box-shadow: 0 0 12px rgba(0, 255, 136, 0.35), 0 1px 0 rgba(255, 255, 255, 0.45) inset;
+      }
+      50% {
+        box-shadow: 0 0 22px rgba(0, 255, 136, 0.75), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+      }
+    }
+
+    /* ==================== LIQUID GLASS BUTTONS & ICONS ==================== */
+    .hud-svg {
+      width: 100%; height: 100%; display: block;
+      transition: stroke 0.2s, transform 0.2s;
+    }
+
     .dock-btn {
-      border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(18, 28, 48, 0.85);
-      color: var(--text); border-radius: 14px; padding: 10px 12px;
-      font-size: 12px; font-weight: 700; cursor: pointer;
-      display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
-      transition: transform 0.12s, background 0.2s, border-color 0.2s;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-top: 1.5px solid rgba(255, 255, 255, 0.42);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.5);
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.02) 60%, rgba(10, 20, 40, 0.65) 100%);
+      color: var(--text);
+      backdrop-filter: var(--lg-blur-hud);
+      -webkit-backdrop-filter: var(--lg-blur-hud);
+      box-shadow: var(--lg-shadow-btn);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.18s var(--ease-tactile), background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      will-change: transform, box-shadow;
+      text-decoration: none;
     }
-    .dock-btn:active { transform: scale(0.96); }
+
+    .dock-btn::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; width: 60%; height: 100%;
+      background: var(--lg-bg-sheen);
+      transform: translateX(-160%) skewX(-22deg);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .dock-btn:hover::before,
+    .dock-btn.primary::before {
+      animation: liquidSheenGlide 4.2s infinite ease-in-out;
+    }
+
+    .dock-btn:active {
+      transform: scale(0.93) translateY(1px);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6), inset 0 2px 4px rgba(0, 0, 0, 0.4);
+    }
+
     .dock-btn.primary {
-      background: linear-gradient(135deg, var(--green), #00c4a7); color: #02140d;
-      border-color: transparent; padding: 10px 16px;
-      box-shadow: 0 0 18px rgba(0, 255, 136, 0.35);
+      background: linear-gradient(135deg, rgba(0, 255, 136, 0.85), rgba(0, 196, 167, 0.85));
+      color: #02140d;
+      border-color: rgba(0, 255, 136, 0.6);
+      box-shadow: 0 0 16px rgba(0, 255, 136, 0.4), 0 1px 0 rgba(255, 255, 255, 0.6) inset;
     }
     .dock-btn.primary.streaming {
-      background: linear-gradient(135deg, #00e5ff, #0096c7); color: #021019;
-      box-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.85), rgba(0, 150, 220, 0.85));
+      color: #021019;
+      border-color: rgba(0, 240, 255, 0.6);
+      animation: liquidPulseCyan 3s infinite ease-in-out;
     }
     .dock-btn.primary.paused {
-      background: linear-gradient(135deg, #ffd60a, #ff9f1c); color: #191000;
+      background: linear-gradient(135deg, rgba(255, 214, 10, 0.85), rgba(255, 159, 28, 0.85));
+      color: #191000;
+      border-color: rgba(255, 214, 10, 0.6);
     }
-    .dock-btn.accent { border-color: rgba(0, 229, 255, 0.45); color: var(--cyan); }
+    .dock-btn.active,
+    .dock-btn.active-cyan {
+      background: var(--lg-bg-surface-active);
+      color: var(--cyan);
+      border-color: var(--cyan);
+      box-shadow: var(--lg-shadow-active);
+    }
+    .dock-btn.accent {
+      border-color: rgba(0, 240, 255, 0.45);
+      color: var(--cyan);
+    }
+
+    /* ==================== ASSISTIVETOUCH & STEALTH MODE ==================== */
+    .assistive-touch-pill {
+      position: fixed;
+      top: 42%;
+      right: max(12px, env(safe-area-inset-right));
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(8, 18, 36, 0.82) 100%);
+      border: 1.5px solid rgba(255, 255, 255, 0.45);
+      backdrop-filter: blur(24px) saturate(210%);
+      -webkit-backdrop-filter: blur(24px) saturate(210%);
+      box-shadow: 
+        0 10px 30px rgba(0, 0, 0, 0.75),
+        0 0 16px rgba(0, 240, 255, 0.45),
+        inset 0 1.5px 2px rgba(255, 255, 255, 0.75),
+        inset 0 -1.5px 2px rgba(0, 0, 0, 0.6);
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      outline: none;
+      opacity: 0.72;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      transform: scale(0.96);
+      transition: opacity 0.35s ease, transform 0.22s var(--ease-tactile), box-shadow 0.25s ease;
+    }
+    .assistive-touch-pill:hover,
+    .assistive-touch-pill:focus-visible {
+      opacity: 1 !important;
+      transform: scale(1.08);
+      border-color: rgba(0, 240, 255, 0.9);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 24px rgba(0, 240, 255, 0.65), inset 0 2px 3px rgba(255, 255, 255, 0.9);
+    }
+    .assistive-touch-pill.active-drag {
+      cursor: grabbing;
+      opacity: 1 !important;
+      transform: scale(1.12) !important;
+      transition: none !important;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 30px rgba(0, 240, 255, 0.75), inset 0 2px 3px rgba(255, 255, 255, 0.95);
+    }
+    .assistive-touch-pill:active {
+      transform: scale(0.92);
+    }
+    .assistive-touch-ring {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(0, 240, 255, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.35);
+    }
+    .assistive-touch-core {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #ffffff 15%, #00f0ff 65%, rgba(0, 240, 255, 0.3) 100%);
+      box-shadow: 0 0 12px #00f0ff;
+      animation: pulseCore 2.4s infinite ease-in-out;
+    }
+    @keyframes pulseCore {
+      0%, 100% { transform: scale(0.85); opacity: 0.75; }
+      50% { transform: scale(1.15); opacity: 1; }
+    }
+
+    /* CHẾ ĐỘ ẨN HUD (STEALTH MODE / 100% THOÁNG MẮT CHO LÁI XE) */
+    body.hud-hidden .top-hud,
+    body.hud-hidden .stage-toast,
+    body.hud-hidden .bottom-dock {
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transform: translate(-50%, 28px) scale(0.95) !important;
+      transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    body.hud-hidden .assistive-touch-pill {
+      opacity: 0.42;
+      border-color: rgba(0, 240, 255, 0.25);
+    }
+    body.hud-hidden .assistive-touch-pill:hover {
+      opacity: 1;
+      border-color: rgba(0, 240, 255, 0.85);
+    }
+
+    /* ==================== RESPONSIVE DOCK & DYNAMIC ISLAND ==================== */
+    .bottom-dock {
+      position: fixed;
+      bottom: max(10px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 12;
+      border-radius: 20px;
+      background: var(--lg-bg-base);
+      border: 1px solid var(--lg-border-subtle);
+      backdrop-filter: var(--lg-blur-hud);
+      -webkit-backdrop-filter: var(--lg-blur-hud);
+      box-shadow: var(--lg-shadow-dock);
+      box-sizing: border-box;
+      transition: all 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Thanh Mini Capsule (Dynamic Island khi thu gọn) */
+    .island-mini-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 14px;
+      height: 34px;
+      cursor: pointer;
+      user-select: none;
+      border-radius: 999px;
+    }
+    .island-pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #00ff88;
+      box-shadow: 0 0 8px #00ff88;
+      animation: pulseCore 1.8s infinite;
+    }
+    .island-hud-text {
+      font-size: 11px;
+      font-weight: 700;
+      color: #dbeafe;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+    .island-gear-pill {
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(0, 240, 255, 0.18);
+      border: 1px solid rgba(0, 240, 255, 0.5);
+      color: #00f0ff;
+    }
+    .island-gear-pill.gear-r {
+      background: rgba(255, 59, 48, 0.22);
+      border-color: rgba(255, 59, 48, 0.6);
+      color: #ff453a;
+    }
+    .island-expand-badge {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #00e5ff;
+      background: rgba(0, 229, 255, 0.12);
+      border: 1px solid rgba(0, 229, 255, 0.3);
+      padding: 2px 8px;
+      border-radius: 999px;
+      margin-left: 4px;
+    }
+    .island-badge-svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    /* Quản lý hiển thị khi thu gọn / mở rộng */
+    .bottom-dock.island-collapsed {
+      padding: 0 !important;
+      border-radius: 999px !important;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.65), 0 0 14px rgba(0,240,255,0.25) !important;
+    }
+    .bottom-dock.island-collapsed .island-mini-bar {
+      display: flex;
+    }
+    .bottom-dock.island-collapsed .island-full-deck {
+      display: none !important;
+    }
+
+    .bottom-dock.island-expanded .island-mini-bar {
+      display: none;
+    }
+    .bottom-dock.island-expanded .island-full-deck {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .island-deck-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 4px 4px 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      margin-bottom: 2px;
+    }
+    .island-deck-title {
+      font-size: 10.5px;
+      font-weight: 800;
+      color: #00f0ff;
+      letter-spacing: 0.5px;
+    }
+    .island-collapse-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #94a3b8;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 9.5px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .island-collapse-btn:hover {
+      background: rgba(0, 240, 255, 0.16);
+      border-color: rgba(0, 240, 255, 0.45);
+      color: #00f0ff;
+    }
+    .island-collapse-svg {
+      width: 11px;
+      height: 11px;
+    }
+
+    /* CHẾ ĐỘ DỌC (PORTRAIT): 2 TẦNG FLOATING ISLAND CHỐNG NGHẼN */
+    @media (orientation: portrait), (max-width: 540px) {
+      .bottom-dock {
+        width: calc(100vw - 16px);
+        max-width: 440px;
+        padding: 7px 8px;
+      }
+      .bottom-dock.island-collapsed {
+        width: auto;
+      }
+
+      .dock-tier-primary {
+        display: grid;
+        grid-template-columns: 1.25fr 1fr 1fr;
+        gap: 6px;
+        width: 100%;
+      }
+
+      .dock-tier-secondary {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 5px;
+        width: 100%;
+      }
+
+      .dock-btn {
+        height: 42px;
+        border-radius: 12px;
+        padding: 3px 4px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .dock-btn-icon {
+        width: 19px;
+        height: 19px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .dock-btn-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        max-width: 100%;
+        line-height: 1.1;
+      }
+
+      .dock-tier-secondary .dock-btn {
+        height: 38px;
+        padding: 2px 3px;
+      }
+      .dock-tier-secondary .dock-btn-icon {
+        width: 16px;
+        height: 16px;
+      }
+      .dock-tier-secondary .dock-btn-label {
+        font-size: 9.5px;
+      }
+    }
+
+    /* CHẾ ĐỘ NGANG 16:9 (LANDSCAPE): DẢI RIBBON SLIM HOẶC DYNAMIC ISLAND GỌN */
+    @media (orientation: landscape) and (min-width: 541px) {
+      .bottom-dock {
+        width: auto;
+        max-width: calc(100vw - 32px);
+        padding: 5px 8px;
+        border-radius: 20px;
+        bottom: max(6px, env(safe-area-inset-bottom));
+      }
+      .bottom-dock.island-collapsed {
+        bottom: max(8px, env(safe-area-inset-bottom));
+      }
+      .bottom-dock.island-expanded .island-full-deck {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+      }
+      .island-deck-header {
+        display: none;
+      }
+
+      .dock-tier-primary,
+      .dock-tier-secondary {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 5px;
+      }
+
+      /* Vạch ngăn cách quang học giữa cụm lái và cụm công cụ */
+      .dock-tier-primary::after {
+        content: '';
+        display: block;
+        width: 1px;
+        height: 22px;
+        background: rgba(0, 240, 255, 0.28);
+        margin: 0 3px;
+      }
+
+      .dock-btn {
+        height: 36px;
+        min-width: 66px;
+        border-radius: 999px;
+        padding: 4px 10px;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+      }
+
+      .dock-btn-icon {
+        width: 17px;
+        height: 17px;
+        flex-shrink: 0;
+      }
+
+      .dock-btn-label {
+        font-size: 10px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+    }
 
     /* Pop-up Chức Năng Tinh Gọn */
     .popup-backdrop {
@@ -128,7 +600,8 @@
 
     .popup-card {
       width: 100%; max-width: 430px; max-height: 72dvh; overflow-y: auto;
-      background: var(--glass-strong); border: 1px solid rgba(0, 229, 255, 0.36);
+      background: var(--lg-bg-base); border: 1px solid var(--lg-border-subtle);
+      backdrop-filter: var(--lg-blur-popup); -webkit-backdrop-filter: var(--lg-blur-popup);
       border-radius: 20px; padding: 14px;
       box-shadow: 0 18px 48px rgba(0, 0, 0, 0.72);
       transform: translateY(14px); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -155,34 +628,80 @@
     .seg-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 
     .chip-btn {
-      padding: 8px 6px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(16, 26, 46, 0.9); color: var(--muted);
+      padding: 9px 8px; border-radius: 12px;
+      border: 1px solid rgba(0, 240, 255, 0.22);
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%), rgba(10, 20, 38, 0.65);
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      color: #b0d4f1;
       font-size: 11px; font-weight: 700; cursor: pointer; text-align: center; line-height: 1.25;
-      transition: all 0.15s;
+      position: relative; overflow: hidden;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.2), inset 0 -1px 1px rgba(0, 0, 0, 0.4);
+      transition: all 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
     }
+    .chip-btn::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(105deg, transparent 20%, rgba(255, 255, 255, 0.18) 50%, transparent 80%);
+      opacity: 0; transition: opacity 0.25s ease; pointer-events: none;
+    }
+    .chip-btn:hover::after, .chip-btn:active::after { opacity: 1; }
+    .chip-btn:active { transform: scale(0.96); }
     .chip-btn small { font-weight: 500; opacity: 0.85; font-size: 10px; }
+    .chip-title {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      line-height: 1.2;
+    }
+    .chip-sub {
+      display: block;
+      font-size: 9.5px;
+      font-weight: 500;
+      opacity: 0.75;
+      margin-top: 2px;
+    }
     .chip-btn.active {
-      background: rgba(0, 255, 136, 0.18); border-color: var(--green); color: var(--green);
-      box-shadow: 0 0 12px rgba(0, 255, 136, 0.18);
+      background: linear-gradient(135deg, rgba(0, 255, 136, 0.22) 0%, rgba(0, 255, 136, 0.06) 100%), rgba(4, 28, 20, 0.75);
+      border-color: rgba(0, 255, 136, 0.7);
+      color: #00ff88;
+      box-shadow: 0 0 18px rgba(0, 255, 136, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.35);
     }
     .chip-btn.active-cyan {
-      background: rgba(0, 229, 255, 0.18); border-color: var(--cyan); color: var(--cyan);
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.22) 0%, rgba(0, 240, 255, 0.06) 100%), rgba(4, 20, 36, 0.75);
+      border-color: rgba(0, 240, 255, 0.75);
+      color: #00f0ff;
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.35);
     }
     .chip-btn.active-amber {
-      background: rgba(255, 214, 10, 0.18); border-color: var(--amber); color: var(--amber);
+      background: linear-gradient(135deg, rgba(255, 214, 10, 0.22) 0%, rgba(255, 214, 10, 0.06) 100%), rgba(36, 28, 4, 0.75);
+      border-color: rgba(255, 214, 10, 0.75);
+      color: #ffd60a;
+      box-shadow: 0 0 18px rgba(255, 214, 10, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.35);
     }
 
     .select-input {
-      width: 100%; margin-top: 6px; padding: 9px 10px; border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.16); background: rgba(12, 20, 36, 0.95);
-      color: var(--text); font-size: 11.5px; outline: none;
+      width: 100%; margin-top: 6px; padding: 10px 12px; border-radius: 12px;
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%), rgba(8, 16, 32, 0.85);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      color: #e0f2fe; font-size: 11.5px; outline: none;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .select-input:focus {
+      border-color: rgba(0, 240, 255, 0.75);
+      box-shadow: 0 0 14px rgba(0, 240, 255, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.25);
     }
 
     .telemetry-strip {
-      margin-top: 10px; padding: 8px 10px; border-radius: 10px;
-      background: rgba(4, 9, 18, 0.85); border: 1px dashed rgba(0, 229, 255, 0.25);
+      margin-top: 10px; padding: 10px 12px; border-radius: 12px;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.04) 0%, rgba(0, 240, 255, 0.01) 100%), rgba(4, 9, 20, 0.85);
+      border: 1px solid rgba(0, 240, 255, 0.28);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 10.5px; color: #9ad1ff; line-height: 1.45;
+      font-size: 10.5px; color: #a5d8ff; line-height: 1.5;
+      box-shadow: inset 0 0 12px rgba(0, 240, 255, 0.08);
     }
 
     /* FPV Engineering Monitor (Development Diagnostics Panel) */
@@ -208,6 +727,21 @@
     }
     .debug-card b { color: var(--green); float: right; font-weight: 700; }
     .debug-title { font-weight: 700; color: var(--amber); margin-bottom: 4px; font-size: 11px; }
+
+    /* Lớp phủ Standby trước khi bật Camera */
+    .standby-overlay {
+      position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; background: rgba(5, 9, 18, 0.88);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); padding: 24px; text-align: center;
+    }
+    .standby-title { color: var(--cyan); font-weight: 800; font-size: 16px; margin-bottom: 8px; }
+    .standby-desc { color: var(--muted); font-size: 12px; max-width: 320px; line-height: 1.5; margin-bottom: 18px; }
+    .standby-btn {
+      background: var(--green); color: #021019; border: none; font-size: 15px; font-weight: 800;
+      padding: 14px 28px; border-radius: 14px; box-shadow: 0 4px 20px rgba(0, 255, 136, 0.4);
+      cursor: pointer; transition: transform 0.15s ease;
+    }
+    .standby-btn:active { transform: scale(0.97); }
   </style>
 
   <script type="importmap">
@@ -221,27 +755,150 @@
 </head>
 <body>
   <!-- Video nguồn giữ trong viewport cho iOS Safari ISP decode -->
-  <video id="raw-video" autoplay playsinline muted></video>
+  <video id="raw-video" autoplay playsinline webkit-playsinline muted></video>
   <!-- Canvas sạch để đóng gói binary RCF JPEG gửi qua WS -->
   <canvas id="crop-preview" width="854" height="480"></canvas>
   <!-- Sân khấu WebGL Three.js 3D -->
   <div id="webgl-stage"></div>
 
+  <!-- Màn hình Standby trực quan khi chưa bật Camera -->
+  <div id="standby-overlay" class="standby-overlay">
+    <div class="standby-title">📹 CAMERA FPV (TRUYỀN TRỰC TIẾP VR)</div>
+    <div class="standby-desc">Chạm nút bên dưới để mở Camera trên điện thoại và phát trực tiếp lên kính Meta Quest 3</div>
+    <button id="btn-standby-start" class="standby-btn">🚀 BẬT CAMERA NGAY</button>
+  </div>
+
   <!-- Thanh trạng thái trên cùng -->
   <div class="top-hud">
-    <span id="ws-dot" class="status-dot"></span>
-    <span id="hud-info" class="hud-stats">Chờ kích hoạt FPV 3D...</span>
+    <div class="hud-left">
+      <span id="ws-dot" class="status-dot"></span>
+      <span id="hud-info" class="hud-stats">Chờ Bật FPV...</span>
+    </div>
     <span id="gear-indicator" class="gear-pill">D • MŨI</span>
   </div>
-  <div id="log" class="stage-toast">Chạm BẬT FPV để phát Web 3D &amp; truyền trực tiếp tới Quest 3</div>
+  <div id="log" class="stage-toast">Chạm 🚀 BẬT để phát camera trực tiếp lên kính Meta Quest 3</div>
 
-  <!-- Thanh Dock tinh gọn ở đáy -->
-  <div class="bottom-dock">
-    <button id="btn-start" class="dock-btn primary">🚀 BẬT FPV</button>
-    <button id="btn-quick-swap" class="dock-btn" title="Đổi nhanh Cam Mũi / Lùi">🔄 Cam</button>
-    <button id="btn-reset-3d" class="dock-btn" title="Căn lại góc nhìn 3D">🎯 3D</button>
-    <button id="btn-toggle-monitor" class="dock-btn" title="FPV Engineering Monitor">📊 Diag</button>
-    <button id="btn-open-popup" class="dock-btn accent">⚙️ Chức Năng</button>
+  <!-- Nút AssistiveTouch Nổi (Ẩn/Hiện toàn bộ giao diện điều khiển để lái xe thoáng mắt) -->
+  <button id="btn-assistive-touch" class="assistive-touch-pill" aria-label="Ẩn / Hiện thanh điều khiển" title="Chạm để ẩn/hiện bảng điều khiển FPV">
+    <div class="assistive-touch-ring">
+      <div class="assistive-touch-core"></div>
+    </div>
+  </button>
+
+  <!-- Thanh Dock Khí Tài Liquid Glass kiêm Dynamic Island -->
+  <div id="bottom-dock" class="bottom-dock island-collapsed">
+    <!-- Thanh Mini Capsule (Dynamic Island khi thu gọn) -->
+    <div id="island-mini-bar" class="island-mini-bar" title="Chạm để mở bảng điều khiển">
+      <span class="island-pulse-dot"></span>
+      <span id="island-hud-text" class="island-hud-text">480p • 0 FPS • Sẵn sàng</span>
+      <span id="island-gear-pill" class="island-gear-pill">D • MŨI</span>
+      <span class="island-expand-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" class="island-badge-svg">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>
+        <span>Mở Deck</span>
+      </span>
+    </div>
+
+    <!-- Cụm Deck Đầy Đủ (Khi mở rộng) -->
+    <div id="island-full-deck" class="island-full-deck">
+      <div class="island-deck-header">
+        <span class="island-deck-title">🎛️ FPV COCKPIT DECK</span>
+        <button id="btn-collapse-island" class="island-collapse-btn" title="Thu nhỏ Dynamic Island">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="island-collapse-svg">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+          <span>Thu nhỏ</span>
+        </button>
+      </div>
+
+      <!-- Tầng 1: Cụm điều khiển lái chính -->
+      <div class="dock-tier-primary">
+        <button id="btn-start" class="dock-btn primary" title="Bật / Dừng luồng camera">
+          <span class="dock-btn-icon">
+            <svg id="svg-start-icon" class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="6 4 19 12 6 20 6 4" fill="currentColor" fill-opacity="0.25"/>
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.4" stroke-dasharray="2 3"/>
+              <line x1="12" y1="2" x2="12" y2="4"/>
+              <line x1="12" y1="20" x2="12" y2="22"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">BẬT</span>
+        </button>
+
+        <button id="btn-quick-swap" class="dock-btn" title="Đổi nhanh Cam Mũi / Lùi">
+          <span class="dock-btn-icon">
+            <svg class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 16l-3 3-3-3"/>
+              <path d="M17 19V9a4 4 0 0 0-4-4H4"/>
+              <path d="M4 8l3-3 3 3"/>
+              <path d="M7 5v10a4 4 0 0 0 4 4h9"/>
+              <circle cx="12" cy="12" r="2" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">Đổi Cam</span>
+        </button>
+
+        <button id="btn-dock-ultra" class="dock-btn" title="Bật/Tắt Cam 0.5x Siêu Rộng">
+          <span class="dock-btn-icon">
+            <svg class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8"/>
+              <path d="M12 4a12 12 0 0 1 0 16M12 4a12 12 0 0 0 0 16"/>
+              <path d="M4 12a12 12 0 0 1 16 0M4 12a12 12 0 0 0 16 0"/>
+              <circle cx="12" cy="12" r="2.5" fill="currentColor" fill-opacity="0.4"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">Góc 0.5x</span>
+        </button>
+      </div>
+
+      <!-- Tầng 2: Cụm công cụ khí tài và cấu hình -->
+      <div class="dock-tier-secondary">
+        <button id="btn-reset-3d" class="dock-btn" title="Chuyển chế độ Kính Cong 3D / Màn Phẳng 2D">
+          <span class="dock-btn-icon">
+            <svg class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+              <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">Màn Phẳng 2D</span>
+        </button>
+
+        <button id="btn-toggle-monitor" class="dock-btn" title="FPV Engineering Monitor">
+          <span class="dock-btn-icon">
+            <svg class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="3" stroke-opacity="0.8"/>
+              <path d="M4 13h4l2.5-5 3.5 10 2.5-6 1.5 2 2-.5"/>
+              <circle cx="18" cy="7" r="1" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">Giám Sát</span>
+        </button>
+
+        <button id="btn-open-popup" class="dock-btn accent" title="Mở bảng cài đặt">
+          <span class="dock-btn-icon">
+            <svg class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">Cài Đặt</span>
+        </button>
+
+        <button id="btn-toggle-fullscreen" class="dock-btn" title="Toàn màn hình 16:9">
+          <span class="dock-btn-icon">
+            <svg id="svg-fs-enter" class="hud-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+              <rect x="8" y="9" width="8" height="6" rx="1" stroke-opacity="0.4" stroke-dasharray="2 2"/>
+            </svg>
+            <svg id="svg-fs-exit" class="hud-svg" style="display:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>
+            </svg>
+          </span>
+          <span class="dock-btn-label">Toàn màn</span>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- FPV Engineering Monitor (Development Diagnostics Overlay) -->
@@ -260,6 +917,8 @@
         <div>WS Send FPS: <b id="dbg-send-fps">0</b></div>
         <div>Bandwidth: <b id="dbg-kb-sec">0 KB/s</b></div>
         <div>Lifecycle: <b id="dbg-lifecycle">ACTIVE</b></div>
+        <div>Video Track: <b id="dbg-video-track">NONE</b></div>
+        <div>Video Clock: <b id="dbg-video-clock">0.0s</b></div>
       </div>
       <div class="debug-card">
         <div class="debug-title">🌐 NETWORK &amp; WSS</div>
@@ -268,7 +927,9 @@
         <div>Reconnects: <b id="dbg-reconnects">0</b></div>
         <div>Target Role: <b id="dbg-target-role">FRONT</b></div>
         <div>Server ACK: <b id="dbg-ack-state">WAITING</b></div>
-        <div>WakeLock: <b id="dbg-wakelock">OFF</b></div>
+        <div>WakeLock: <b id="dbg-wakelock">UNSUPPORTED</b></div>
+        <div>SecureContext: <b id="dbg-secure-context">CHECKING</b></div>
+        <div>MediaDevices: <b id="dbg-media-devices">CHECKING</b></div>
         <div>SW Scope: <b id="dbg-sw-scope">/fpv-cam.html</b></div>
       </div>
     </div>
@@ -278,44 +939,62 @@
   <div id="popup-backdrop" class="popup-backdrop" aria-hidden="true">
     <div class="popup-card" role="dialog" aria-label="Bảng chức năng FPV">
       <div class="popup-header">
-        <div class="popup-title">⚙️ BẢNG ĐIỀU KHIỂN FPV 3D</div>
+        <div class="popup-title">BẢNG ĐIỀU KHIỂN FPV</div>
         <button id="btn-close-popup" class="popup-close" aria-label="Đóng">✕</button>
       </div>
 
       <div class="section-label">1. Chất lượng &amp; Tốc độ khung hình</div>
       <div class="seg-grid-3">
-        <button id="mode-fast" class="chip-btn active">⚡ Siêu Tốc<br><small>480p • 40 FPS</small></button>
-        <button id="mode-hd" class="chip-btn">💎 Cực Nét<br><small>720p • 30 FPS</small></button>
-        <button id="mode-zerolag" class="chip-btn">🏎️ 60 FPS Thử Nghiệm<br><small>360p • Exp 60 FPS</small></button>
+        <button id="mode-fast" class="chip-btn active">
+          <span class="chip-title">480p • Siêu Tốc</span>
+          <span class="chip-sub">40 FPS mượt</span>
+        </button>
+        <button id="mode-hd" class="chip-btn">
+          <span class="chip-title">720p • Cực Nét</span>
+          <span class="chip-sub">30 FPS HD</span>
+        </button>
+        <button id="mode-zerolag" class="chip-btn">
+          <span class="chip-title">60 FPS Thử Nghiệm</span>
+          <span class="chip-sub">360p • Tốc độ cao</span>
+        </button>
       </div>
 
       <div class="section-label">2. Vai trò thiết bị trên xe RC</div>
       <div class="seg-grid-3">
-        <button id="btn-role-auto" class="chip-btn active">🚘 1 Máy<br><small>Auto D/R</small></button>
-        <button id="btn-role-front" class="chip-btn">🎥 Kính Lái<br><small>Khóa Mũi</small></button>
-        <button id="btn-role-rear" class="chip-btn">🔙 Gương Hậu<br><small>Khóa Lùi</small></button>
+        <button id="btn-role-auto" class="chip-btn active">
+          <span class="chip-title">Tự Động (D/R)</span>
+          <span class="chip-sub">1 Máy đổi góc</span>
+        </button>
+        <button id="btn-role-front" class="chip-btn">
+          <span class="chip-title">Kính Lái</span>
+          <span class="chip-sub">Khóa góc mũi</span>
+        </button>
+        <button id="btn-role-rear" class="chip-btn">
+          <span class="chip-title">Gương Hậu</span>
+          <span class="chip-sub">Khóa góc lùi</span>
+        </button>
       </div>
 
       <div class="section-label">3. Khung hình &amp; Ống kính</div>
       <div class="seg-grid-2">
-        <button id="btn-toggle-fov" class="chip-btn active-cyan">📐 FOV: Full 16:9</button>
-        <button id="btn-toggle-ultra" class="chip-btn">📸 Cam 0.5x Rộng</button>
+        <button id="btn-toggle-fov" class="chip-btn active-cyan">Khung 16:9 Full</button>
+        <button id="btn-toggle-ultra" class="chip-btn">Góc Rộng 0.5x</button>
       </div>
       <select id="lens-select" class="select-input">
-        <option value="">🔍 Ống kính mặc định theo hướng (Trước/Sau)</option>
+        <option value="">Ống kính mặc định theo hướng (Trước/Sau)</option>
       </select>
 
       <div class="section-label">4. Không gian 3D &amp; Tối ưu pin</div>
       <div class="seg-grid-3">
-        <button id="btn-toggle-reticle" class="chip-btn active-cyan">🎯 Tâm Ngắm 3D</button>
-        <button id="btn-toggle-mirror" class="chip-btn">🪞 Lật Gương: Auto</button>
-        <button id="btn-toggle-eco" class="chip-btn">🔋 3D Đầy Đủ</button>
+        <button id="btn-toggle-reticle" class="chip-btn active-cyan">Vạch Căn: Bật</button>
+        <button id="btn-toggle-mirror" class="chip-btn">Lật Gương: Tự động</button>
+        <button id="btn-toggle-eco" class="chip-btn">Đồ Họa: Đầy Đủ</button>
       </div>
 
       <div class="section-label">5. Cài App lên Màn hình chính (PWA)</div>
       <div class="seg-grid-2">
-        <button id="btn-install-pwa" class="chip-btn active-cyan">📲 Cài App Ngay</button>
-        <button id="btn-toggle-autostart" class="chip-btn active">⚡ Tự Bật Cam: Bật</button>
+        <button id="btn-install-pwa" class="chip-btn active-cyan">Cài App Ngay</button>
+        <button id="btn-toggle-autostart" class="chip-btn active">Tự Bật Cam: Bật</button>
       </div>
 
       <div id="telemetry-strip" class="telemetry-strip">
@@ -342,12 +1021,333 @@
     const logEl = document.getElementById('log');
     const telemetryEl = document.getElementById('telemetry-strip');
 
+    try {
+      console.table({
+        secureContext: window.isSecureContext,
+        mediaDevices: !!navigator.mediaDevices,
+        getUserMedia: !!navigator.mediaDevices?.getUserMedia,
+        webSocket: typeof WebSocket !== 'undefined',
+        wakeLock: !!navigator.wakeLock
+      });
+    } catch (e) {}
+
     const btnStart = document.getElementById('btn-start');
     const btnQuickSwap = document.getElementById('btn-quick-swap');
+    const btnDockUltra = document.getElementById('btn-dock-ultra');
     const btnReset3d = document.getElementById('btn-reset-3d');
     const btnToggleMonitor = document.getElementById('btn-toggle-monitor');
+    const btnFullscreen = document.getElementById('btn-toggle-fullscreen');
+    const svgFsEnter = document.getElementById('svg-fs-enter');
+    const svgFsExit = document.getElementById('svg-fs-exit');
+    const svgStartIcon = document.getElementById('svg-start-icon');
     const fpvDebugPanel = document.getElementById('fpv-debug-panel');
     const btnCloseDebug = document.getElementById('btn-close-debug');
+
+    // Dynamic Island & AssistiveTouch DOM Refs
+    const bottomDock = document.getElementById('bottom-dock');
+    const btnAssistiveTouch = document.getElementById('btn-assistive-touch');
+    const islandMiniBar = document.getElementById('island-mini-bar');
+    const islandFullDeck = document.getElementById('island-full-deck');
+    const btnCollapseIsland = document.getElementById('btn-collapse-island');
+    const islandHudText = document.getElementById('island-hud-text');
+    const islandGearPill = document.getElementById('island-gear-pill');
+
+    // Quản lý thu gọn / mở rộng Dynamic Island
+    function setIslandExpanded(expanded) {
+      if (!bottomDock) return;
+      if (expanded) {
+        bottomDock.classList.remove('island-collapsed');
+        bottomDock.classList.add('island-expanded');
+      } else {
+        bottomDock.classList.add('island-collapsed');
+        bottomDock.classList.remove('island-expanded');
+      }
+    }
+
+    // AssistiveTouch Dragging, Orientation Clamping & Inactivity Dimming
+    let atDragActive = false;
+    let atMoved = false;
+    let atStartX = 0, atStartY = 0;
+    let atInitialLeft = 0, atInitialTop = 0;
+    let atDimTimer = null;
+
+    function resetAssistiveTouchDim() {
+      if (!btnAssistiveTouch) return;
+      if (atDimTimer) clearTimeout(atDimTimer);
+      if (!atDragActive) {
+        btnAssistiveTouch.style.opacity = '1';
+        atDimTimer = setTimeout(() => {
+          if (!atDragActive && btnAssistiveTouch) {
+            btnAssistiveTouch.style.opacity = document.body.classList.contains('hud-hidden') ? '0.78' : '0.68';
+          }
+        }, 1000); // Mờ tự nhiên sau đúng 1 giây không tương tác (không làm biến mất nút)
+      }
+    }
+
+    function clampAssistiveTouchToViewport() {
+      if (!btnAssistiveTouch) return;
+      const winW = window.innerWidth;
+      const winH = window.innerHeight;
+      const btnSize = 48;
+      const hasCustomPos = btnAssistiveTouch.dataset.customPos === 'true';
+
+      if (!hasCustomPos) {
+        btnAssistiveTouch.style.top = `${Math.round(winH * 0.42)}px`;
+        btnAssistiveTouch.style.left = `${winW - btnSize - 14}px`;
+        btnAssistiveTouch.style.right = 'auto';
+        btnAssistiveTouch.style.bottom = 'auto';
+        return;
+      }
+
+      const rect = btnAssistiveTouch.getBoundingClientRect();
+      const isLeft = (rect.left + btnSize * 0.5) < (winW * 0.5);
+      const targetLeft = isLeft ? 14 : (winW - btnSize - 14);
+      const minTop = 45;
+      const maxTop = Math.max(minTop, winH - btnSize - 55);
+      const targetTop = Math.max(minTop, Math.min(maxTop, rect.top || (winH * 0.42)));
+
+      btnAssistiveTouch.style.transition = 'left 0.28s cubic-bezier(0.16, 1, 0.3, 1), top 0.28s ease, opacity 0.35s ease';
+      btnAssistiveTouch.style.left = `${targetLeft}px`;
+      btnAssistiveTouch.style.top = `${targetTop}px`;
+      btnAssistiveTouch.style.right = 'auto';
+      btnAssistiveTouch.style.bottom = 'auto';
+      setTimeout(() => {
+        if (btnAssistiveTouch) btnAssistiveTouch.style.transition = '';
+      }, 300);
+    }
+
+    if (btnAssistiveTouch) {
+      resetAssistiveTouchDim();
+      clampAssistiveTouchToViewport();
+
+      const onTouchOrMouseDown = (e) => {
+        atDragActive = true;
+        atMoved = false;
+        const pt = e.touches ? e.touches[0] : e;
+        atStartX = pt.clientX;
+        atStartY = pt.clientY;
+        const rect = btnAssistiveTouch.getBoundingClientRect();
+        atInitialLeft = rect.left;
+        atInitialTop = rect.top;
+        btnAssistiveTouch.dataset.customPos = 'true';
+        btnAssistiveTouch.classList.add('active-drag');
+        btnAssistiveTouch.style.opacity = '1';
+        btnAssistiveTouch.style.left = `${atInitialLeft}px`;
+        btnAssistiveTouch.style.top = `${atInitialTop}px`;
+        btnAssistiveTouch.style.right = 'auto';
+        btnAssistiveTouch.style.bottom = 'auto';
+        if (atDimTimer) clearTimeout(atDimTimer);
+      };
+
+      const onTouchOrMouseMove = (e) => {
+        if (!atDragActive) return;
+        const pt = e.touches ? e.touches[0] : e;
+        const dx = pt.clientX - atStartX;
+        const dy = pt.clientY - atStartY;
+        if (Math.hypot(dx, dy) > 5) atMoved = true;
+        const winW = window.innerWidth;
+        const winH = window.innerHeight;
+        const newLeft = Math.max(10, Math.min(winW - 58, atInitialLeft + dx));
+        const newTop = Math.max(10, Math.min(winH - 58, atInitialTop + dy));
+        btnAssistiveTouch.style.left = `${newLeft}px`;
+        btnAssistiveTouch.style.top = `${newTop}px`;
+      };
+
+      const onTouchOrMouseUp = () => {
+        if (!atDragActive) return;
+        atDragActive = false;
+        btnAssistiveTouch.classList.remove('active-drag');
+        clampAssistiveTouchToViewport();
+        resetAssistiveTouchDim();
+      };
+
+      btnAssistiveTouch.addEventListener('touchstart', onTouchOrMouseDown, { passive: true });
+      window.addEventListener('touchmove', onTouchOrMouseMove, { passive: true });
+      window.addEventListener('touchend', onTouchOrMouseUp, { passive: true });
+
+      btnAssistiveTouch.addEventListener('mousedown', onTouchOrMouseDown);
+      window.addEventListener('mousemove', onTouchOrMouseMove);
+      window.addEventListener('mouseup', onTouchOrMouseUp);
+
+      btnAssistiveTouch.onclick = (e) => {
+        e.stopPropagation();
+        if (atMoved) return; // Nếu là kéo thả di chuyển thì không toggle HUD
+        const isHidden = document.body.classList.toggle('hud-hidden');
+        if (logEl) {
+          logEl.textContent = isHidden
+            ? '👁️ Chế độ lái xe thoáng mắt (Chạm nút tròn để hiện lại bảng điều khiển)'
+            : '🎛️ Đã hiện lại bảng điều khiển FPV';
+        }
+        resetAssistiveTouchDim();
+      };
+    }
+
+    window.addEventListener('resize', clampAssistiveTouchToViewport);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(clampAssistiveTouchToViewport, 150);
+      setTimeout(clampAssistiveTouchToViewport, 450);
+    });
+
+    if (islandMiniBar) {
+      islandMiniBar.onclick = (e) => {
+        e.stopPropagation();
+        setIslandExpanded(true);
+      };
+    }
+
+    if (btnCollapseIsland) {
+      btnCollapseIsland.onclick = (e) => {
+        e.stopPropagation();
+        setIslandExpanded(false);
+      };
+    }
+
+    function checkOrientationLayout() {
+      const isLandscape = window.innerWidth > window.innerHeight;
+      if (isLandscape && bottomDock) {
+        setIslandExpanded(false);
+      }
+    }
+    window.addEventListener('resize', checkOrientationLayout);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(checkOrientationLayout, 150);
+    });
+
+    // Helper cập nhật nhãn nút bấm bảo toàn SVG icon nguyên vẹn
+    function updateDockButton(btn, text, isActive = null) {
+      if (!btn) return;
+      const labelEl = btn.querySelector('.dock-btn-label');
+      if (labelEl) {
+        labelEl.textContent = text;
+      } else {
+        btn.textContent = text;
+      }
+      if (isActive !== null) {
+        btn.classList.toggle('active', isActive);
+      }
+    }
+
+    function setStartIcon(isStreaming) {
+      if (!svgStartIcon) return;
+      if (isStreaming) {
+        svgStartIcon.innerHTML = `
+          <rect x="6" y="5" width="4" height="14" rx="1.5" fill="currentColor" fill-opacity="0.3"/>
+          <rect x="14" y="5" width="4" height="14" rx="1.5" fill="currentColor" fill-opacity="0.3"/>
+          <path d="M2 12h2M20 12h2" stroke-opacity="0.5"/>
+        `;
+      } else {
+        svgStartIcon.innerHTML = `
+          <polygon points="6 4 19 12 6 20 6 4" fill="currentColor" fill-opacity="0.25"/>
+          <circle cx="12" cy="12" r="10" stroke-opacity="0.4" stroke-dasharray="2 3"/>
+          <line x1="12" y1="2" x2="12" y2="4"/>
+          <line x1="12" y1="20" x2="12" y2="22"/>
+        `;
+      }
+    }
+
+    // ==================== UNIVERSAL 16:9 FULLSCREEN ENGINE ====================
+    class CockpitFullscreenEngine {
+      constructor(btnElement, enterIcon, exitIcon) {
+        this.btn = btnElement;
+        this.enterIcon = enterIcon;
+        this.exitIcon = exitIcon;
+        this.isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+        this.init();
+      }
+
+      init() {
+        if (!this.btn) return;
+        this.btn.onclick = () => this.toggle();
+
+        const onFsChange = () => this.syncState();
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
+        document.addEventListener('mozfullscreenchange', onFsChange);
+        document.addEventListener('MSFullscreenChange', onFsChange);
+      }
+
+      get isFullscreen() {
+        return !!(
+          document.fullscreenElement ||
+          document.webkitFullscreenElement ||
+          document.mozFullScreenElement ||
+          document.msFullscreenElement ||
+          document.body.classList.contains('ios-simulated-fs')
+        );
+      }
+
+      async toggle() {
+        if (this.isFullscreen) {
+          await this.exit();
+        } else {
+          await this.enter();
+        }
+      }
+
+      async enter() {
+        const docEl = document.documentElement;
+        try {
+          if (docEl.requestFullscreen) {
+            await docEl.requestFullscreen({ navigationUI: 'hide' });
+          } else if (docEl.webkitRequestFullscreen) {
+            await docEl.webkitRequestFullscreen();
+          } else if (docEl.msRequestFullscreen) {
+            await docEl.msRequestFullscreen();
+          } else {
+            this.simulateIosFullscreen(true);
+          }
+        } catch (err) {
+          console.warn('⚠️ Request Fullscreen:', err);
+          this.simulateIosFullscreen(true);
+        }
+        this.syncState();
+      }
+
+      async exit() {
+        try {
+          if (document.exitFullscreen) {
+            await document.exitFullscreen();
+          } else if (document.webkitExitFullscreen) {
+            await document.webkitExitFullscreen();
+          } else if (document.msExitFullscreen) {
+            await document.msExitFullscreen();
+          }
+        } catch (err) {
+          console.warn('⚠️ Exit Fullscreen warning:', err);
+        }
+        this.simulateIosFullscreen(false);
+        this.syncState();
+      }
+
+      simulateIosFullscreen(enable) {
+        if (enable) {
+          document.body.classList.add('ios-simulated-fs');
+          window.scrollTo(0, 1);
+          setIslandExpanded(false);
+          const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+          if (!isStandalone && this.isIos) {
+            if (logEl) {
+              logEl.textContent = '📱 Safari cấm ẩn thanh Tab. Hãy chạm nút Chia sẻ [↑] ➜ "Thêm vào MH chính" để mở 100% tràn viền Native!';
+            }
+          }
+        } else {
+          document.body.classList.remove('ios-simulated-fs');
+        }
+      }
+
+      syncState() {
+        const active = this.isFullscreen;
+        if (this.enterIcon) this.enterIcon.style.display = active ? 'none' : 'block';
+        if (this.exitIcon) this.exitIcon.style.display = active ? 'block' : 'none';
+        if (this.btn) {
+          this.btn.classList.toggle('active-cyan', active);
+          updateDockButton(this.btn, active ? 'Thu nhỏ' : 'Toàn màn');
+        }
+        window.dispatchEvent(new Event('resize'));
+      }
+    }
+
+    const cockpitFs = new CockpitFullscreenEngine(btnFullscreen, svgFsEnter, svgFsExit);
 
     const dbgCamState = document.getElementById('dbg-cam-state');
     const dbgCamRes = document.getElementById('dbg-cam-res');
@@ -364,6 +1364,10 @@
     const dbgAckState = document.getElementById('dbg-ack-state');
     const dbgWakeLock = document.getElementById('dbg-wakelock');
     const dbgSwScope = document.getElementById('dbg-sw-scope');
+    const dbgVideoTrack = document.getElementById('dbg-video-track');
+    const dbgVideoClock = document.getElementById('dbg-video-clock');
+    const dbgSecureContext = document.getElementById('dbg-secure-context');
+    const dbgMediaDevices = document.getElementById('dbg-media-devices');
 
     const btnOpenPopup = document.getElementById('btn-open-popup');
     const btnClosePopup = document.getElementById('btn-close-popup');
@@ -405,7 +1409,7 @@
     let isBusyEncoding = false;
     let wsStatusText = 'Chờ WS';
     let ackInfoText = 'LAN/Tunnel: Chờ ACK';
-    let wakeLockActive = false;
+    let wakeLockState = ('wakeLock' in navigator) ? 'RELEASED' : 'UNSUPPORTED'; // 'ACTIVE' | 'UNSUPPORTED' | 'DENIED' | 'RELEASED'
     let wakeLockSentinel = null;
     let isShuttingDown = false;
     let reconnectTimerId = null;
@@ -441,21 +1445,19 @@
     let liveEscPulseUs = 1500;
     let wheelSpinRad = 0;
     let lastDrawnSteerBucket = 0;
-    let isVisorCloseView = false;
 
     // ==================== THREE.JS WEB 3D SCENE (MOBILE TIER) ====================
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x050912);
-    scene.fog = new THREE.FogExp2(0x050912, 0.045);
+    scene.background = null; // Trong suốt để nhìn xuyên thấu xuống camera thực tế (#raw-video)
+    scene.fog = null;
 
     const camera = new THREE.PerspectiveCamera(50, window.innerWidth / Math.max(1, window.innerHeight), 0.1, 60);
-    const DEFAULT_CAM_POS = new THREE.Vector3(0, 1.45, 3.85);
-    const DEFAULT_CAM_TARGET = new THREE.Vector3(0, 0.88, 0);
-    const VISOR_CAM_POS = new THREE.Vector3(0, 1.12, 2.05);
-    const VISOR_CAM_TARGET = new THREE.Vector3(0, 1.12, -0.35);
+    const DEFAULT_CAM_POS = new THREE.Vector3(0, 1.15, 2.35);
+    const DEFAULT_CAM_TARGET = new THREE.Vector3(0, 0.42, 0);
     camera.position.copy(DEFAULT_CAM_POS);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setClearColor(0x000000, 0); // 100% trong suốt
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -466,13 +1468,78 @@
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(DEFAULT_CAM_TARGET);
+    controls.enablePan = false; // Khóa Pan tuyệt đối: Giữ vững tâm buồng lái khi zoom 2 ngón hoặc xoay 360 độ
     controls.enableDamping = true;
-    controls.dampingFactor = 0.07;
-    controls.minDistance = 2.0;
-    controls.maxDistance = 8.5;
-    controls.maxPolarAngle = Math.PI * 0.56;
-    controls.minPolarAngle = Math.PI * 0.15;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 1.6;
+    controls.maxDistance = 6.0;
+    controls.maxPolarAngle = Math.PI * 0.52;
+    controls.minPolarAngle = Math.PI * 0.18;
     controls.update();
+
+    // Edge Touch Guard & Ngăn cử chỉ thu phóng 2 ngón (Pinch-Zoom) làm giật / reset buồng lái
+    const webglCanvasEl = renderer.domElement;
+    let stageTouchCount = 0;
+    let stageTapStartX = 0, stageTapStartY = 0;
+    let stageGestureMoved = false;
+    let lastValidTapTime = 0;
+    let lastValidTapX = 0, lastValidTapY = 0;
+
+    webglCanvasEl.addEventListener('touchstart', (e) => {
+      stageTouchCount = e.touches ? e.touches.length : 1;
+      if (stageTouchCount === 1) {
+        stageGestureMoved = false;
+        stageTapStartX = e.touches[0].clientX;
+        stageTapStartY = e.touches[0].clientY;
+      } else {
+        // Có từ 2 ngón trở lên (Thu phóng 2 ngón - Pinch Zoom): CẤM tuyệt đối tính là tap
+        stageGestureMoved = true;
+      }
+
+      if (e.touches && e.touches.length > 0) {
+        const touchX = e.touches[0].clientX;
+        const winW = window.innerWidth;
+        if (touchX < 28 || touchX > winW - 28) {
+          e.stopPropagation();
+        }
+      }
+    }, { passive: false });
+
+    webglCanvasEl.addEventListener('touchmove', (e) => {
+      if (!e.touches || e.touches.length !== 1) {
+        stageGestureMoved = true;
+        return;
+      }
+      const dx = e.touches[0].clientX - stageTapStartX;
+      const dy = e.touches[0].clientY - stageTapStartY;
+      if (Math.hypot(dx, dy) > 8) {
+        stageGestureMoved = true; // Đang xoay góc nhìn -> Không tính là tap
+      }
+    }, { passive: true });
+
+    webglCanvasEl.addEventListener('touchend', (e) => {
+      // Chỉ khi chạm nhẹ đúng 1 ngón tại chỗ 2 lần liên tiếp (< 320ms) mới kích hoạt cân bằng tâm
+      if (stageTouchCount === 1 && !stageGestureMoved && e.changedTouches && e.changedTouches.length === 1) {
+        const now = performance.now();
+        const pt = e.changedTouches[0];
+        const distFromLastTap = Math.hypot(pt.clientX - lastValidTapX, pt.clientY - lastValidTapY);
+
+        if (now - lastValidTapTime < 320 && distFromLastTap < 35) {
+          camera.position.copy(DEFAULT_CAM_POS);
+          controls.target.copy(DEFAULT_CAM_TARGET);
+          controls.update();
+          if (logEl) logEl.textContent = '🎯 Đã cân bằng lại tâm buồng lái 3D (0, 0, 0)';
+          lastValidTapTime = 0;
+        } else {
+          lastValidTapTime = now;
+          lastValidTapX = pt.clientX;
+          lastValidTapY = pt.clientY;
+        }
+      } else {
+        lastValidTapTime = 0; // Hủy chuỗi tap ngay khi vừa pinch zoom hoặc xoay
+      }
+      stageTouchCount = e.touches ? e.touches.length : 0;
+    }, { passive: true });
 
     // Lighting (Mobile Tier: Ambient + 1 Directional, <= 2 lights)
     const ambientLight = new THREE.AmbientLight(0xdbeafe, 0.75);
@@ -498,10 +1565,15 @@
     horizonRing.position.y = -0.34;
     stageRigGroup.add(horizonRing);
 
-    // Curved 3D FPV Monitor (binds live video canvasTexture)
+    // Curved 3D FPV Monitor (Studio Mode: màn hình cong giả lập trong không gian 3D)
     const monitorGroup = new THREE.Group();
     monitorGroup.position.set(0, 1.12, -0.35);
     scene.add(monitorGroup);
+
+    // 3D HUD Group (Tâm ngắm & vạch hỗ trợ lùi hiển thị xuyên suốt trên nền video)
+    const hudGroup = new THREE.Group();
+    hudGroup.position.set(0, 1.12, -0.35);
+    scene.add(hudGroup);
 
     const videoTexture = new THREE.CanvasTexture(canvas);
     videoTexture.colorSpace = THREE.SRGBColorSpace;
@@ -575,18 +1647,102 @@
       const shiftFar = steerNormVal * 95;
       oCtx.clearRect(0, 0, w, h);
 
-      // Center crosshair
-      oCtx.strokeStyle = isReverse ? 'rgba(255, 214, 10, 0.75)' : 'rgba(0, 229, 255, 0.65)';
-      oCtx.lineWidth = 2;
-      oCtx.beginPath();
-      oCtx.moveTo(w * 0.5 - 16, h * 0.5); oCtx.lineTo(w * 0.5 - 5, h * 0.5);
-      oCtx.moveTo(w * 0.5 + 5, h * 0.5); oCtx.lineTo(w * 0.5 + 16, h * 0.5);
-      oCtx.moveTo(w * 0.5, h * 0.5 - 16); oCtx.lineTo(w * 0.5, h * 0.5 - 5);
-      oCtx.moveTo(w * 0.5, h * 0.5 + 5); oCtx.lineTo(w * 0.5, h * 0.5 + 16);
-      oCtx.stroke();
+      if (!showReticle) {
+        overlayTexture.needsUpdate = true;
+        return;
+      }
 
-      // Corner brackets
-      const m = 20, b = 22;
+      // Automotive Camera Guidelines (Thiết kế chuẩn xe hơi thế hệ mới)
+      if (isReverse) {
+        // === REAR PARKING ASSIST (CAM LÙI: 3-TIER DYNAMIC GUIDELINES) ===
+        const leftStart = w * 0.22, rightStart = w * 0.78;
+        const leftMid = w * 0.35 + shiftMid, rightMid = w * 0.65 + shiftMid;
+        const leftFar = w * 0.42 + shiftFar, rightFar = w * 0.58 + shiftFar;
+
+        // Vạch Dừng Nguy Hiểm (RED ZONE: 1.0m / STOP)
+        oCtx.lineWidth = 3.5;
+        oCtx.strokeStyle = 'rgba(255, 59, 48, 0.95)';
+        oCtx.beginPath();
+        oCtx.moveTo(leftStart, h * 0.94);
+        oCtx.quadraticCurveTo(leftStart + (leftMid - leftStart) * 0.5, h * 0.89, leftMid, h * 0.84);
+        oCtx.moveTo(rightStart, h * 0.94);
+        oCtx.quadraticCurveTo(rightStart + (rightMid - rightStart) * 0.5, h * 0.89, rightMid, h * 0.84);
+        oCtx.moveTo(leftMid, h * 0.84);
+        oCtx.lineTo(rightMid, h * 0.84);
+        oCtx.stroke();
+
+        // Vạch Chú Ý (YELLOW ZONE: 2.0m / CAUTION)
+        oCtx.lineWidth = 2.8;
+        oCtx.strokeStyle = 'rgba(255, 214, 10, 0.90)';
+        oCtx.beginPath();
+        oCtx.moveTo(leftMid, h * 0.84);
+        oCtx.quadraticCurveTo(leftMid + (leftFar - leftMid) * 0.5, h * 0.78, leftFar, h * 0.72);
+        oCtx.moveTo(rightMid, h * 0.84);
+        oCtx.quadraticCurveTo(rightMid + (rightFar - rightMid) * 0.5, h * 0.78, rightFar, h * 0.72);
+        oCtx.moveTo(leftFar, h * 0.72);
+        oCtx.lineTo(rightFar, h * 0.72);
+        oCtx.stroke();
+
+        // Vạch An Toàn (GREEN ZONE: 3.0m / SAFE)
+        oCtx.lineWidth = 2.2;
+        oCtx.strokeStyle = 'rgba(0, 255, 136, 0.85)';
+        oCtx.beginPath();
+        const leftEnd = w * 0.45 + shiftFar * 1.15, rightEnd = w * 0.55 + shiftFar * 1.15;
+        oCtx.moveTo(leftFar, h * 0.72);
+        oCtx.lineTo(leftEnd, h * 0.60);
+        oCtx.moveTo(rightFar, h * 0.72);
+        oCtx.lineTo(rightEnd, h * 0.60);
+        oCtx.moveTo(leftEnd, h * 0.60);
+        oCtx.lineTo(rightEnd, h * 0.60);
+        oCtx.stroke();
+
+        // Nhãn khoảng cách chuẩn ô tô
+        oCtx.font = 'bold 10px ui-monospace, monospace';
+        oCtx.textAlign = 'center';
+        oCtx.fillStyle = 'rgba(255, 59, 48, 0.95)';
+        oCtx.fillText('1.0m [STOP]', (leftMid + rightMid) * 0.5, h * 0.82);
+        oCtx.fillStyle = 'rgba(255, 214, 10, 0.90)';
+        oCtx.fillText('2.0m', (leftFar + rightFar) * 0.5, h * 0.70);
+        oCtx.fillStyle = 'rgba(0, 255, 136, 0.85)';
+        oCtx.fillText('3.0m', (leftEnd + rightEnd) * 0.5, h * 0.58);
+      } else {
+        // === FRONT EV COCKPIT HUD (CAM MŨI: VỆT BÁNH XE & ĐƯỜNG CHÂN TRỜI) ===
+        // Hai vệt bánh xe định hướng (Dashed tracks)
+        oCtx.lineWidth = 2.0;
+        oCtx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
+        oCtx.setLineDash([8, 8]);
+        oCtx.beginPath();
+        oCtx.moveTo(w * 0.28, h * 0.94);
+        oCtx.lineTo(w * 0.40, h * 0.62);
+        oCtx.moveTo(w * 0.72, h * 0.94);
+        oCtx.lineTo(w * 0.60, h * 0.62);
+        oCtx.stroke();
+        oCtx.setLineDash([]); // Reset line dash
+
+        // Đường chân trời cân bằng (Subtle horizon indicator)
+        oCtx.lineWidth = 1.4;
+        oCtx.strokeStyle = 'rgba(0, 240, 255, 0.50)';
+        oCtx.beginPath();
+        oCtx.moveTo(w * 0.36, h * 0.50);
+        oCtx.lineTo(w * 0.64, h * 0.50);
+        oCtx.moveTo(w * 0.42, h * 0.48); oCtx.lineTo(w * 0.42, h * 0.52);
+        oCtx.moveTo(w * 0.50, h * 0.47); oCtx.lineTo(w * 0.50, h * 0.53);
+        oCtx.moveTo(w * 0.58, h * 0.48); oCtx.lineTo(w * 0.58, h * 0.52);
+        oCtx.stroke();
+
+        // Mũi tâm chỉ hướng xe tại chân camera
+        oCtx.strokeStyle = 'rgba(0, 240, 255, 0.75)';
+        oCtx.lineWidth = 2;
+        oCtx.beginPath();
+        oCtx.moveTo(w * 0.50, h * 0.95);
+        oCtx.lineTo(w * 0.50, h * 0.90);
+        oCtx.stroke();
+      }
+
+      // Khung góc tinh tế (Framing corners)
+      const m = 18, b = 18;
+      oCtx.strokeStyle = isReverse ? 'rgba(255, 214, 10, 0.45)' : 'rgba(0, 240, 255, 0.35)';
+      oCtx.lineWidth = 1.6;
       oCtx.beginPath();
       oCtx.moveTo(m, m + b); oCtx.lineTo(m, m); oCtx.lineTo(m + b, m);
       oCtx.moveTo(w - m - b, m); oCtx.lineTo(w - m, m); oCtx.lineTo(w - m, m + b);
@@ -594,25 +1750,6 @@
       oCtx.moveTo(w - m - b, h - m); oCtx.lineTo(w - m, h - m); oCtx.lineTo(w - m, h - m - b);
       oCtx.stroke();
 
-      // Dynamic reverse parking trajectory guidelines (curve with steering)
-      if (isReverse) {
-        oCtx.lineWidth = 3;
-        oCtx.strokeStyle = 'rgba(255, 59, 48, 0.88)';
-        oCtx.beginPath();
-        oCtx.moveTo(w * 0.28, h * 0.92);
-        oCtx.quadraticCurveTo(w * 0.31 + shiftMid * 0.4, h * 0.84, w * 0.34 + shiftMid, h * 0.76);
-        oCtx.moveTo(w * 0.72, h * 0.92);
-        oCtx.quadraticCurveTo(w * 0.69 + shiftMid * 0.4, h * 0.84, w * 0.66 + shiftMid, h * 0.76);
-        oCtx.stroke();
-
-        oCtx.strokeStyle = 'rgba(255, 214, 10, 0.82)';
-        oCtx.beginPath();
-        oCtx.moveTo(w * 0.34 + shiftMid, h * 0.76);
-        oCtx.quadraticCurveTo(w * 0.37 + shiftFar * 0.65, h * 0.68, w * 0.40 + shiftFar, h * 0.60);
-        oCtx.moveTo(w * 0.66 + shiftMid, h * 0.76);
-        oCtx.quadraticCurveTo(w * 0.63 + shiftFar * 0.65, h * 0.68, w * 0.60 + shiftFar, h * 0.60);
-        oCtx.stroke();
-      }
       overlayTexture.needsUpdate = true;
     }
     redrawReticleOverlay(false, 0);
@@ -628,7 +1765,13 @@
     });
     const reticleMesh = new THREE.Mesh(reticleGeo, reticleMat);
     reticleMesh.position.z = screenRadius;
-    monitorGroup.add(reticleMesh);
+    hudGroup.add(reticleMesh);
+
+    // Mặc định: Chế độ HUD Live (Video full màn hình 100% sạch, ẩn màn hình cong 3D và xe 3D để không che khuất tầm nhìn)
+    let isStudioMode = false;
+    monitorGroup.visible = false;
+    stageRigGroup.visible = false;
+    hudGroup.visible = true;
 
     // 3D Miniature RC Car Rig (below curved monitor, instanced wheels = minimal draw calls)
     const carRig = new THREE.Group();
@@ -712,12 +1855,30 @@
       if (e.target === popupBackdrop) setPopupOpen(false);
     };
 
+    function apply3DStudioMode(enabled) {
+      isStudioMode = enabled;
+      monitorGroup.visible = isStudioMode;
+      stageRigGroup.visible = isStudioMode;
+      // Ẩn hoàn toàn video 2D nền khi ở chế độ 3D để triệt tiêu nhân đôi hình ảnh
+      if (video) {
+        video.style.opacity = isStudioMode ? '0' : '1';
+        video.style.pointerEvents = isStudioMode ? 'none' : 'auto';
+      }
+      if (isStudioMode) {
+        camera.position.copy(DEFAULT_CAM_POS);
+        controls.target.copy(DEFAULT_CAM_TARGET);
+        controls.update();
+      }
+      updateDockButton(btnReset3d, isStudioMode ? 'Kính Cong 3D' : 'Màn Phẳng 2D', isStudioMode);
+      if (logEl) {
+        logEl.textContent = isStudioMode
+          ? '🥽 Chế độ Kính Cong 3D (Màn hình vòm FPV buồng lái cân bằng tâm)'
+          : '📱 Chế độ Màn Phẳng 2D (Toàn màn hình trực diện không méo góc)';
+      }
+    }
+
     btnReset3d.onclick = () => {
-      isVisorCloseView = !isVisorCloseView;
-      camera.position.copy(isVisorCloseView ? VISOR_CAM_POS : DEFAULT_CAM_POS);
-      controls.target.copy(isVisorCloseView ? VISOR_CAM_TARGET : DEFAULT_CAM_TARGET);
-      controls.update();
-      btnReset3d.textContent = isVisorCloseView ? '🎯 Visor' : '🎯 3D';
+      apply3DStudioMode(!isStudioMode);
     };
 
     function updateTelemetryStrip() {
@@ -725,7 +1886,7 @@
       const kbPerSec = (bytesSentSec / 1024).toFixed(1);
       telemetryEl.innerHTML =
         `WS: ${wsStatusText} | ${ackInfoText} | Servo: ${liveSteerDeg}° • ESC: ${liveEscPulseUs}µs<br>` +
-        `Mode: ${modeStr} | ${kbPerSec} KB/s | Encode: ${lastEncodeMs.toFixed(1)} ms | WakeLock: ${wakeLockActive ? 'ON' : 'OFF'}`;
+        `Mode: ${modeStr} | ${kbPerSec} KB/s | Encode: ${lastEncodeMs.toFixed(1)} ms | WakeLock: ${wakeLockState}`;
 
       if (dbgCamState) {
         dbgCamState.textContent = isStreamingActive ? (isStreamingPaused ? 'PAUSED' : 'ACTIVE') : 'INACTIVE';
@@ -741,60 +1902,113 @@
         dbgReconnects.textContent = String(reconnectCount);
         dbgTargetRole.textContent = `${targetSurface.toUpperCase()} (${phoneRole})`;
         dbgAckState.textContent = ackInfoText;
-        dbgWakeLock.textContent = wakeLockActive ? 'ON' : 'OFF';
+        dbgWakeLock.textContent = wakeLockState;
         dbgSwScope.textContent = '/fpv-cam.html';
+
+        if (dbgSecureContext) dbgSecureContext.textContent = window.isSecureContext ? 'YES' : 'NO (Insecure)';
+        if (dbgMediaDevices) dbgMediaDevices.textContent = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? 'OK' : 'BLOCKED';
+        const vTrack = (currentStream && currentStream.getVideoTracks) ? currentStream.getVideoTracks()[0] : null;
+        if (dbgVideoTrack) dbgVideoTrack.textContent = vTrack ? `${vTrack.readyState}` : 'NONE';
+        if (dbgVideoClock) dbgVideoClock.textContent = (video && video.readyState >= 2) ? `${video.currentTime.toFixed(1)}s (r=${video.readyState})` : '0.0s';
       }
     }
 
     // ==================== CAMERA & WEBSOCKET PIPELINE ====================
     async function keepScreenAwake() {
+      if (!('wakeLock' in navigator)) {
+        wakeLockState = 'UNSUPPORTED';
+        return;
+      }
+      if (wakeLockSentinel) return;
       try {
-        if ('wakeLock' in navigator && !wakeLockSentinel) {
-          wakeLockSentinel = await navigator.wakeLock.request('screen');
-          wakeLockActive = true;
-          wakeLockSentinel.addEventListener('release', () => {
-            wakeLockActive = false;
-            wakeLockSentinel = null;
-          });
-        }
-      } catch (e) {}
+        wakeLockSentinel = await navigator.wakeLock.request('screen');
+        wakeLockState = 'ACTIVE';
+        wakeLockSentinel.addEventListener('release', () => {
+          wakeLockState = 'RELEASED';
+          wakeLockSentinel = null;
+        });
+      } catch (e) {
+        wakeLockState = 'DENIED';
+      }
+    }
+
+    let availableBackCameras = [];
+    let availableFrontCameras = [];
+    let isUltraWideActive = false;
+
+    function updateUltraButtons(active, label = '0.5x') {
+      isUltraWideActive = active;
+      if (btnDockUltra) {
+        updateDockButton(btnDockUltra, `Góc ${label}`, active);
+      }
+      if (btnToggleUltra) {
+        btnToggleUltra.textContent = active ? `Đang dùng ${label}` : `Góc Rộng 0.5x`;
+        btnToggleUltra.classList.toggle('active-cyan', active);
+      }
     }
 
     async function loadCameraLenses() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(d => d.kind === 'videoinput');
+        availableBackCameras = [];
+        availableFrontCameras = [];
+        cachedUltraWideCameraId = '';
+        cachedFrontCameraId = '';
+        cachedRearCameraId = '';
+
         lensSelect.innerHTML = `<option value="">🔍 Cảm biến tìm thấy (${videoInputs.length})</option>`;
         videoInputs.forEach((dev, idx) => {
           const label = (dev.label || '').toLowerCase();
-          if (label.includes('front') || label.includes('user') || label.includes('selfie') || label.includes('trước')) {
+          const isFront = label.includes('front') || label.includes('user') || label.includes('selfie') || label.includes('trước');
+          if (isFront) {
+            availableFrontCameras.push(dev);
             if (!cachedFrontCameraId) cachedFrontCameraId = dev.deviceId;
-          } else if (label.includes('ultra') || label.includes('0.5') || label.includes('super wide')) {
-            cachedUltraWideCameraId = dev.deviceId;
-          } else if (label.includes('back') || label.includes('environment') || label.includes('rear') || label.includes('sau') || label.includes('wide')) {
-            if (!cachedRearCameraId) cachedRearCameraId = dev.deviceId;
+          } else {
+            availableBackCameras.push(dev);
+            if (label.includes('ultra') || label.includes('0.5') || label.includes('super wide')) {
+              cachedUltraWideCameraId = dev.deviceId;
+            } else if (!cachedRearCameraId) {
+              cachedRearCameraId = dev.deviceId;
+            }
           }
           const opt = document.createElement('option');
           opt.value = dev.deviceId;
-          opt.textContent = dev.label || `Camera #${idx + 1}`;
+          opt.textContent = dev.label || (isFront ? `Camera Trước #${availableFrontCameras.length}` : `Camera Sau #${availableBackCameras.length}`);
           lensSelect.appendChild(opt);
         });
 
-        if (cachedUltraWideCameraId) {
-          btnToggleUltra.textContent = '📸 Cam 0.5x Sẵn Sàng';
-          btnToggleUltra.classList.add('active');
+        // Check Hardware Zoom capability on active track
+        if (currentStream) {
+          const track = currentStream.getVideoTracks()[0];
+          if (track && typeof track.getCapabilities === 'function') {
+            const caps = track.getCapabilities();
+            if (caps.zoom && typeof caps.zoom.min === 'number' && caps.zoom.min < 1.0) {
+              updateUltraButtons(isUltraWideActive, `${caps.zoom.min}x`);
+              return;
+            }
+          }
         }
-      } catch (e) {}
+        if (cachedUltraWideCameraId || availableBackCameras.length >= 2) {
+          updateUltraButtons(isUltraWideActive, '0.5x');
+        }
+      } catch (e) {
+        console.warn('loadCameraLenses error:', e);
+      }
     }
 
     async function activateCamera(surface, specificDeviceId = '') {
-      if (isSwitchingCamera) return;
+      if (isSwitchingCamera) return false;
       isSwitchingCamera = true;
       targetSurface = surface;
 
       const isReverse = surface === 'rear';
       gearEl.textContent = isReverse ? 'R • LÙI' : 'D • MŨI';
       gearEl.classList.toggle('reverse', isReverse);
+      if (islandGearPill) {
+        islandGearPill.textContent = isReverse ? 'R • LÙI' : 'D • MŨI';
+        islandGearPill.classList.toggle('gear-r', isReverse);
+      }
       update3DSurfaceTheme(isReverse);
 
       if (currentStream) {
@@ -802,54 +2016,79 @@
         currentStream = null;
       }
       video.srcObject = null;
-      await new Promise(r => setTimeout(r, 120));
+      await new Promise(r => setTimeout(r, 60));
 
       const desiredFacing = isReverse ? 'user' : 'environment';
-      const knownId = specificDeviceId || (isReverse ? cachedFrontCameraId : (cachedUltraWideCameraId || cachedRearCameraId));
-      const constraints = knownId
-        ? { audio: false, video: { deviceId: { exact: knownId }, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60 } } }
-        : { audio: false, video: { facingMode: desiredFacing, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height }, frameRate: { ideal: 60 } } };
+      let camOpened = false;
 
       const attachAndPlayStream = async (stream) => {
         currentStream = stream;
+        video.defaultMuted = true;
         video.muted = true;
         video.playsInline = true;
         video.setAttribute('playsinline', '');
         video.setAttribute('webkit-playsinline', '');
+        video.setAttribute('muted', '');
+        video.setAttribute('autoplay', '');
         video.srcObject = stream;
-        await video.play().catch(() => {});
+
+        try {
+          await video.play();
+        } catch (playErr) {
+          console.warn('⚠️ video.play() warning:', playErr);
+        }
+
         if (!video.videoWidth || video.readyState < 2) {
           await new Promise((resolve) => {
             let done = false;
             const finish = () => { if (!done) { done = true; resolve(); } };
             video.onloadedmetadata = finish;
             video.oncanplay = finish;
-            setTimeout(finish, 600);
+            video.onplaying = finish;
+            setTimeout(finish, 1000);
           });
-          await video.play().catch(() => {});
+          try { await video.play(); } catch (e) {}
         }
       };
 
-      let camOpened = false;
+      // 3-Tier Robust Camera Acquisition (Zero OverconstrainedError on Safari)
+      let stream = null;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        await attachAndPlayStream(stream);
-        camOpened = true;
-        logEl.textContent = isReverse
-          ? '🔙 Đang phát CAM LÙI (Gương Hậu) lên sân khấu 3D & Quest 3'
-          : '🚘 Đang phát CAM MŨI (Kính Lái) lên sân khấu 3D & Quest 3';
-      } catch (e) {
+        const videoConstraint = specificDeviceId
+          ? { deviceId: { exact: specificDeviceId } }
+          : { facingMode: { ideal: desiredFacing }, width: { ideal: currentPreset.width }, height: { ideal: currentPreset.height } };
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraint });
+      } catch (err1) {
+        console.warn('⚠️ Tier 1 getUserMedia failed, trying Tier 2 (facingMode only):', err1);
         try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: desiredFacing } });
-          await attachAndPlayStream(fallbackStream);
-          camOpened = true;
-          logEl.textContent = isReverse ? '🔙 CAM LÙI (Fallback)' : '🚘 CAM MŨI (Fallback)';
-        } catch (err) {
-          logEl.textContent = '❌ Lỗi mở Camera: ' + err.message;
+          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: desiredFacing } });
+        } catch (err2) {
+          console.warn('⚠️ Tier 2 getUserMedia failed, trying Tier 3 (any camera):', err2);
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+          } catch (err3) {
+            console.error('❌ Tất cả các cấp getUserMedia đều thất bại:', err3);
+            logEl.textContent = '❌ Lỗi mở Camera: ' + (err3.message || err3.name || 'Bị từ chối');
+          }
         }
-      } finally {
-        isSwitchingCamera = false;
       }
+
+      if (stream) {
+        try {
+          await attachAndPlayStream(stream);
+          camOpened = true;
+          logEl.textContent = isReverse
+            ? '🔙 Đang phát CAM LÙI (Gương Hậu) lên sân khấu 3D & Quest 3'
+            : '🚘 Đang phát CAM MŨI (Kính Lái) lên sân khấu 3D & Quest 3';
+          const standbyEl = document.getElementById('standby-overlay');
+          if (standbyEl) standbyEl.style.display = 'none';
+        } catch (attachErr) {
+          console.error('❌ Lỗi attachAndPlayStream:', attachErr);
+          logEl.textContent = '❌ Lỗi phát video: ' + attachErr.message;
+        }
+      }
+
+      isSwitchingCamera = false;
 
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
@@ -860,6 +2099,8 @@
           }));
         } catch (e) {}
       }
+
+      updateTelemetryStrip();
       return camOpened;
     }
 
@@ -985,7 +2226,7 @@
 
     function onRenderFrame(now) {
       // 1. Update 3D scene smoothly (Zero per-frame allocation)
-      if (!ecoMode) {
+      if (isStudioMode && !ecoMode) {
         carRig.rotation.x += (targetPitch - carRig.rotation.x) * 0.1;
         carRig.rotation.z += (targetRoll - carRig.rotation.z) * 0.1;
         carRig.position.y = -0.14 + Math.sin(now * 0.0022) * 0.015;
@@ -1015,13 +2256,14 @@
         encodeFps = encodeFrameCount; encodeFrameCount = 0;
         sendFps = sendFrameCount; sendFrameCount = 0;
         hudInfo.textContent = `${currentPreset.name} • ${sendFps} FPS • ${wsStatusText}`;
+        if (islandHudText) islandHudText.textContent = `${currentPreset.name} • ${sendFps} FPS • ${wsStatusText}`;
         updateTelemetryStrip();
         fpsCounter = 0;
         bytesSentSec = 0;
         lastFpsTime = now;
       }
 
-      if (isSwitchingCamera || isPausedForBackground || !video || video.readyState < 2 || !video.videoWidth) return;
+      if (isSwitchingCamera || isPausedForBackground || !video || !video.videoWidth || video.videoWidth === 0) return;
 
       renderVideoToCanvas();
       captureFrameCount++;
@@ -1093,61 +2335,110 @@
     btnToggleFov.onclick = () => {
       if (fovMode === 'fill') {
         fovMode = 'rotate';
-        btnToggleFov.textContent = '🔄 FOV: Xoay 90°';
+        btnToggleFov.textContent = 'Khung: Xoay 90°';
       } else if (fovMode === 'rotate') {
         fovMode = 'fit';
-        btnToggleFov.textContent = '🔲 FOV: Fit Viền';
+        btnToggleFov.textContent = 'Khung: Fit Viền';
       } else {
         fovMode = 'fill';
-        btnToggleFov.textContent = '📐 FOV: Full 16:9';
+        btnToggleFov.textContent = 'Khung: 16:9 Full';
       }
     };
 
-    btnToggleUltra.onclick = async () => {
-      if (cachedUltraWideCameraId) {
-        lensSelect.value = cachedUltraWideCameraId;
-        await activateCamera('front', cachedUltraWideCameraId);
-        btnToggleUltra.textContent = '✅ Đang dùng 0.5x';
-      } else {
-        await loadCameraLenses();
-        if (cachedUltraWideCameraId) {
-          lensSelect.value = cachedUltraWideCameraId;
-          await activateCamera('front', cachedUltraWideCameraId);
-          btnToggleUltra.textContent = '✅ Đang dùng 0.5x';
-        } else {
-          logEl.textContent = 'ℹ️ Thiết bị không lộ cam 0.5x riêng — hãy dùng Full 16:9 ngang.';
+    async function toggleUltraWideCamera() {
+      // Step 1: Hardware Zoom API (Safari 17+ on iPhone 11..16 Pro & Android Chrome)
+      if (currentStream) {
+        const track = currentStream.getVideoTracks()[0];
+        if (track && typeof track.getCapabilities === 'function') {
+          const caps = track.getCapabilities();
+          if (caps.zoom && typeof caps.zoom.min === 'number' && caps.zoom.min < 1.0) {
+            const minZoom = caps.zoom.min;
+            const currentZoom = (typeof track.getSettings === 'function' && track.getSettings().zoom) || 1.0;
+            const targetZoom = (currentZoom <= minZoom + 0.08) ? 1.0 : minZoom;
+            try {
+              await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+              const isNowUltra = targetZoom < 1.0;
+              updateUltraButtons(isNowUltra, `${targetZoom}x`);
+              logEl.textContent = isNowUltra
+                ? `📐 Đã bật góc siêu rộng ${targetZoom}x (Hardware Zoom ISP)`
+                : `📐 Đã chuyển về góc thường 1.0x (Hardware Zoom)`;
+              return true;
+            } catch (zoomErr) {
+              console.warn('Hardware zoom constraint failed:', zoomErr);
+            }
+          }
         }
       }
-    };
+
+      // Step 2: Multi-camera device fallback
+      if (availableBackCameras.length === 0) {
+        await loadCameraLenses();
+      }
+
+      let targetCamera = null;
+      if (cachedUltraWideCameraId) {
+        targetCamera = availableBackCameras.find(d => d.deviceId === cachedUltraWideCameraId);
+      }
+      if (!targetCamera && availableBackCameras.length >= 2) {
+        const curTrack = currentStream?.getVideoTracks()[0];
+        const curId = curTrack?.getSettings?.().deviceId;
+        if (curId === availableBackCameras[1].deviceId) {
+          targetCamera = availableBackCameras[0]; // quay lại camera chính
+        } else {
+          targetCamera = availableBackCameras[1]; // chọn camera phụ (siêu rộng)
+        }
+      }
+
+      if (targetCamera) {
+        lensSelect.value = targetCamera.deviceId;
+        await activateCamera('front', targetCamera.deviceId);
+        const isNowUltra = targetCamera.deviceId !== (availableBackCameras[0]?.deviceId || '');
+        updateUltraButtons(isNowUltra, targetCamera.label ? '0.5x' : 'Cam #2');
+        logEl.textContent = `📐 Đã chuyển sang ống kính: ${targetCamera.label || 'Camera Sau #2 (Góc Rộng)'}`;
+        return true;
+      }
+
+      // Step 3: Informative feedback for devices without 0.5x hardware
+      const track = currentStream?.getVideoTracks()[0];
+      const caps = track?.getCapabilities?.() || {};
+      const zoomText = caps.zoom ? `(Zoom: ${caps.zoom.min}x - ${caps.zoom.max}x)` : '(Không hỗ trợ Zoom API)';
+      logEl.textContent = `ℹ️ Thiết bị báo 1 camera ${zoomText} — Đang dùng FOV Full 16:9 mở rộng.`;
+      fovMode = 'fill';
+      return false;
+    }
+
+    if (btnDockUltra) btnDockUltra.onclick = toggleUltraWideCamera;
+    btnToggleUltra.onclick = toggleUltraWideCamera;
 
     btnToggleReticle.onclick = () => {
       showReticle = !showReticle;
-      reticleMesh.visible = showReticle;
+      hudGroup.visible = showReticle;
+      redrawReticleOverlay(targetSurface === 'rear', liveSteerNorm);
       btnToggleReticle.classList.toggle('active-cyan', showReticle);
-      btnToggleReticle.textContent = showReticle ? '🎯 Tâm Ngắm 3D' : '🎯 Tâm Ngắm: Tắt';
+      btnToggleReticle.textContent = showReticle ? 'Vạch Căn: Bật' : 'Vạch Căn: Tắt';
     };
 
     btnToggleMirror.onclick = () => {
       if (mirrorMode === 'auto') {
         mirrorMode = 'on';
-        btnToggleMirror.textContent = '🪞 Lật Gương: Bật';
+        btnToggleMirror.textContent = 'Lật Gương: Bật';
         btnToggleMirror.classList.add('active-cyan');
       } else if (mirrorMode === 'on') {
         mirrorMode = 'off';
-        btnToggleMirror.textContent = '🪞 Lật Gương: Tắt';
+        btnToggleMirror.textContent = 'Lật Gương: Tắt';
         btnToggleMirror.classList.remove('active-cyan');
       } else {
         mirrorMode = 'auto';
-        btnToggleMirror.textContent = '🪞 Lật Gương: Auto';
+        btnToggleMirror.textContent = 'Lật Gương: Tự động';
         btnToggleMirror.classList.remove('active-cyan');
       }
     };
 
     btnToggleEco.onclick = () => {
       ecoMode = !ecoMode;
-      stageRigGroup.visible = !ecoMode;
+      if (isStudioMode) stageRigGroup.visible = !ecoMode;
       btnToggleEco.classList.toggle('active', ecoMode);
-      btnToggleEco.textContent = ecoMode ? '🔋 Tiết Kiệm 3D' : '🔋 3D Đầy Đủ';
+      btnToggleEco.textContent = ecoMode ? 'Đồ Họa: Tiết Kiệm' : 'Đồ Họa: Đầy Đủ';
     };
 
     btnQuickSwap.onclick = () => {
@@ -1165,29 +2456,35 @@
         isStreamingPaused = false;
         await keepScreenAwake();
         connectToServer();
-        logEl.textContent = '🔄 Đang khởi tạo Camera & WebGL 3D...';
+        logEl.textContent = '🔄 Đang mở Camera...';
         const ok = await activateCamera(targetSurface, lensSelect.value);
         if (!ok) {
           isStreamingActive = false;
           if (isAuto) {
-            logEl.textContent = '👆 Chạm [🚀 BẬT FPV] để cấp quyền Camera lần đầu';
+            logEl.textContent = '👆 Chạm [🚀 BẬT] để cấp quyền Camera lần đầu';
           }
           return false;
         }
         await loadCameraLenses();
-        btnStart.textContent = '⏸ TẠM DỪNG';
+        updateDockButton(btnStart, 'DỪNG', true);
         btnStart.classList.add('streaming');
+        setStartIcon(true);
         return true;
       }
       isStreamingPaused = !isStreamingPaused;
-      btnStart.textContent = isStreamingPaused ? '▶ TIẾP TỤC' : '⏸ TẠM DỪNG';
+      updateDockButton(btnStart, isStreamingPaused ? 'TIẾP' : 'DỪNG');
       btnStart.classList.toggle('paused', isStreamingPaused);
       btnStart.classList.toggle('streaming', !isStreamingPaused);
-      logEl.textContent = isStreamingPaused ? '⏸ Đã tạm dừng gửi frame (WS vẫn giữ)' : '🟢 Tiếp tục phát FPV 3D';
+      setStartIcon(!isStreamingPaused);
+      logEl.textContent = isStreamingPaused ? '⏸ Đã tạm dừng gửi frame (WS vẫn giữ)' : '🟢 Tiếp tục phát FPV';
       return true;
     }
 
     btnStart.onclick = () => startFpvPipeline(false);
+    const btnStandbyStart = document.getElementById('btn-standby-start');
+    if (btnStandbyStart) {
+      btnStandbyStart.onclick = () => startFpvPipeline(false);
+    }
 
     // ==================== PWA INSTALL & AUTO-START ====================
     let deferredInstallPrompt = null;
@@ -1196,7 +2493,7 @@
 
     function syncAutoStartButton() {
       btnToggleAutostart.classList.toggle('active', autoStartPref);
-      btnToggleAutostart.textContent = autoStartPref ? '⚡ Tự Bật Cam: Bật' : '⚡ Tự Bật Cam: Tắt';
+      btnToggleAutostart.textContent = autoStartPref ? 'Tự Bật Cam: Bật' : 'Tự Bật Cam: Tắt';
     }
     syncAutoStartButton();
 
@@ -1207,22 +2504,22 @@
     };
 
     if (isStandalonePwa) {
-      btnInstallPwa.textContent = '✅ Đang chạy App PWA';
+      btnInstallPwa.textContent = 'Đang chạy App PWA';
       btnInstallPwa.classList.add('active');
     }
 
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       deferredInstallPrompt = e;
-      btnInstallPwa.textContent = '📲 Cài App Ngay (1 Chạm)';
+      btnInstallPwa.textContent = 'Cài App Ngay';
       btnInstallPwa.classList.add('active');
     });
 
     window.addEventListener('appinstalled', () => {
       deferredInstallPrompt = null;
-      btnInstallPwa.textContent = '✅ Đã Cài Thành Công';
+      btnInstallPwa.textContent = 'Đã Cài Thành Công';
       btnInstallPwa.classList.add('active');
-      logEl.textContent = '✅ Đã cài FPV Cam 3D lên Màn hình chính!';
+      logEl.textContent = 'Đã cài FPV Cam 3D lên Màn hình chính!';
     });
 
     btnInstallPwa.onclick = async () => {
@@ -1312,8 +2609,8 @@
     // ==================== ORIENTATION & RESIZE & CLEANUP ====================
     window.addEventListener('deviceorientation', (e) => {
       if (typeof e.beta === 'number' && typeof e.gamma === 'number') {
-        targetPitch = THREE.MathUtils.clamp((e.beta - 45) * 0.004, -0.22, 0.22);
-        targetRoll = THREE.MathUtils.clamp(-e.gamma * 0.005, -0.28, 0.28);
+        targetPitch = THREE.MathUtils.clamp((e.beta - 45) * 0.001, -0.04, 0.04);
+        targetRoll = THREE.MathUtils.clamp(-e.gamma * 0.001, -0.04, 0.04);
       }
     }, { passive: true });
 
@@ -1361,7 +2658,9 @@
       if (wakeLockSentinel && typeof wakeLockSentinel.release === 'function') {
         try { wakeLockSentinel.release(); } catch (e) {}
         wakeLockSentinel = null;
-        wakeLockActive = false;
+      }
+      if (wakeLockState !== 'UNSUPPORTED') {
+        wakeLockState = 'RELEASED';
       }
 
       // 5. Pause WebGL animation loop
