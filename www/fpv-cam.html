@@ -59,9 +59,15 @@
 
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
     html, body {
-      margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
-      background: var(--bg); color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0; padding: 0;
+      width: 100vw; height: 100dvh;
+      min-height: -webkit-fill-available;
+      overflow: hidden;
+      background: #000000; color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      position: fixed; inset: 0;
+      touch-action: none;
+      -webkit-font-smoothing: antialiased;
     }
 
     /* Lớp mô phỏng toàn màn hình trên iOS Safari */
@@ -71,7 +77,8 @@
 
     /* QUAN TRỌNG: Thẻ video luôn hiển thị 100% để iOS Safari ISP giải mã liên tục, không bao giờ bị dừng do opacity/occlusion */
     #raw-video {
-      position: fixed; inset: 0; width: 100%; height: 100%;
+      position: fixed; inset: 0; width: 100vw; height: 100dvh;
+      min-width: 100%; min-height: 100%;
       object-fit: cover; opacity: 1; pointer-events: none; z-index: 0;
       background: #000;
     }
@@ -79,10 +86,15 @@
     /* Canvas offscreen dùng để crop/encode RCF JPEG sạch sẽ (không dính HUD 3D) */
     #crop-preview { display: none; }
 
-    /* Viewport Three.js Web 3D phủ trong suốt trên nền camera */
+    /* Viewport Three.js Web 3D phủ trong suốt trên nền camera (Zero Letterbox) */
     #webgl-stage {
-      position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; touch-action: none;
-      pointer-events: auto;
+      position: fixed; inset: 0; width: 100vw; height: 100dvh; z-index: 1; touch-action: none;
+      pointer-events: auto; overflow: hidden;
+    }
+    #webgl-stage canvas {
+      position: absolute; inset: 0;
+      width: 100% !important; height: 100% !important;
+      display: block; vertical-align: top;
     }
 
     /* Thanh trạng thái tinh gọn phía trên */
@@ -149,15 +161,22 @@
     }
     .gear-pill.reverse { background: var(--red); color: #fff; }
 
-    /* Nhãn trạng thái nhỏ gọn trên sân khấu */
+    /* Nhãn trạng thái nhỏ gọn trên sân khấu - ẨN HOÀN TOÀN THEO YÊU CẦU ZERO-ICON & ZERO CLUTTER */
+    #log.stage-toast,
     .stage-toast {
-      position: fixed; top: calc(max(8px, env(safe-area-inset-top)) + 36px); left: 50%;
-      transform: translateX(-50%); z-index: 9;
-      padding: 4px 12px; border-radius: 999px;
-      background: rgba(5, 9, 18, 0.88); border: 1px solid rgba(0, 240, 255, 0.25);
-      color: #9ad1ff; font-size: 11px; pointer-events: none;
-      max-width: calc(100vw - 20px); width: max-content; text-align: center; line-height: 1.35;
-      white-space: normal; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      display: none !important;
+    }
+
+    /* PWA Standalone Mode: Tự động ẩn nút Toàn Màn khi mở từ Màn hình chính */
+    body.pwa-standalone #btn-toggle-fullscreen,
+    .is-standalone #btn-toggle-fullscreen {
+      display: none !important;
+    }
+    @media (orientation: portrait), (max-width: 540px) {
+      body.pwa-standalone .dock-tier-secondary,
+      .is-standalone .dock-tier-secondary {
+        grid-template-columns: repeat(3, 1fr) !important;
+      }
     }
 
     /* ==================== KEYFRAME ANIMATIONS ==================== */
@@ -620,25 +639,33 @@
       }
     }
 
-    /* Pop-up Chức Năng Tinh Gọn */
+    /* Pop-up Chức Năng Photonic Liquid Glass (VisionOS Style) */
     .popup-backdrop {
-      position: fixed; inset: 0; z-index: 20;
-      background: rgba(2, 6, 14, 0.52); backdrop-filter: blur(4px);
-      display: flex; align-items: flex-end; justify-content: center;
-      padding: 12px 12px calc(max(12px, env(safe-area-inset-bottom)) + 68px);
-      opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+      position: fixed; inset: 0; z-index: 130;
+      background: rgba(2, 6, 14, 0.65); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+      opacity: 0; pointer-events: none; transition: opacity 0.22s ease;
     }
     .popup-backdrop.open { opacity: 1; pointer-events: auto; }
 
     .popup-card {
-      width: 100%; max-width: 430px; max-height: 72dvh; overflow-y: auto;
-      background: var(--lg-bg-base); border: 1px solid var(--lg-border-subtle);
-      backdrop-filter: var(--lg-blur-popup); -webkit-backdrop-filter: var(--lg-blur-popup);
-      border-radius: 20px; padding: 14px;
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.72);
-      transform: translateY(14px); transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+      width: 100%; max-width: 440px; max-height: 85dvh; overflow-y: auto;
+      background: rgba(6, 14, 28, 0.82);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-top: 1.5px solid rgba(255, 255, 255, 0.45);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(36px) saturate(220%) contrast(110%);
+      -webkit-backdrop-filter: blur(36px) saturate(220%) contrast(110%);
+      border-radius: 24px; padding: 18px 20px;
+      box-shadow:
+        0 24px 60px rgba(0, 0, 0, 0.85),
+        0 0 30px rgba(0, 240, 255, 0.2),
+        inset 0 1px 1.5px rgba(255, 255, 255, 0.5);
+      transform: scale(0.95) translateY(12px);
+      transition: transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
     }
-    .popup-backdrop.open .popup-card { transform: translateY(0); }
+    .popup-backdrop.open .popup-card { transform: scale(1) translateY(0); }
 
     .popup-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -795,9 +822,9 @@
 
   <!-- Màn hình Standby trực quan khi chưa bật Camera -->
   <div id="standby-overlay" class="standby-overlay">
-    <div class="standby-title">📹 CAMERA FPV (TRUYỀN TRỰC TIẾP VR)</div>
+    <div class="standby-title">CAMERA FPV (TRUYỀN TRỰC TIẾP VR)</div>
     <div class="standby-desc">Chạm nút bên dưới để mở Camera trên điện thoại và phát trực tiếp lên kính Meta Quest 3</div>
-    <button id="btn-standby-start" class="standby-btn">🚀 BẬT CAMERA NGAY</button>
+    <button id="btn-standby-start" class="standby-btn">BẬT CAMERA NGAY</button>
   </div>
 
   <!-- Thanh trạng thái trên cùng -->
@@ -813,7 +840,7 @@
     </div>
     <span id="gear-indicator" class="gear-pill">D • MŨI</span>
   </div>
-  <div id="log" class="stage-toast">Chạm 🚀 BẬT để phát camera trực tiếp lên kính Meta Quest 3</div>
+  <div id="log" class="stage-toast" style="display:none !important;"></div>
 
   <!-- Nút AssistiveTouch Nổi (Ẩn/Hiện toàn bộ giao diện điều khiển để lái xe thoáng mắt) -->
   <button id="btn-assistive-touch" class="assistive-touch-pill" aria-label="Ẩn / Hiện thanh điều khiển" title="Chạm để ẩn/hiện bảng điều khiển FPV">
@@ -840,7 +867,7 @@
     <!-- Cụm Deck Đầy Đủ (Khi mở rộng) -->
     <div id="island-full-deck" class="island-full-deck">
       <div class="island-deck-header">
-        <span class="island-deck-title">🎛️ FPV COCKPIT DECK</span>
+        <span class="island-deck-title">FPV COCKPIT DECK</span>
         <button id="btn-collapse-island" class="island-collapse-btn" title="Thu nhỏ Dynamic Island">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="island-collapse-svg">
             <polyline points="6 9 12 15 18 9"></polyline>
@@ -941,12 +968,12 @@
   <!-- FPV Engineering Monitor (Development Diagnostics Overlay) -->
   <div id="fpv-debug-panel" class="debug-panel" style="display: none;" role="dialog" aria-label="FPV Engineering Monitor">
     <div class="debug-header">
-      <span>🛡️ FPV ENGINEERING MONITOR (DEV)</span>
+      <span>FPV ENGINEERING MONITOR (DEV)</span>
       <button id="btn-close-debug" class="debug-close" aria-label="Đóng">✕</button>
     </div>
     <div class="debug-grid">
       <div class="debug-card">
-        <div class="debug-title">📱 IPHONE PUBLISHER</div>
+        <div class="debug-title">PHONE PUBLISHER</div>
         <div>Camera: <b id="dbg-cam-state">Inactive</b></div>
         <div>Stream: <b id="dbg-cam-res">0x0</b></div>
         <div>Capture FPS: <b id="dbg-capture-fps">0</b></div>
@@ -958,7 +985,7 @@
         <div>Video Clock: <b id="dbg-video-clock">0.0s</b></div>
       </div>
       <div class="debug-card">
-        <div class="debug-title">🌐 NETWORK &amp; WSS</div>
+        <div class="debug-title">NETWORK &amp; WSS</div>
         <div>State: <b id="dbg-ws-state">DISCONNECTED</b></div>
         <div>Buffered: <b id="dbg-ws-buffer">0 B</b></div>
         <div>Reconnects: <b id="dbg-reconnects">0</b></div>
@@ -1134,6 +1161,19 @@
     const svgStartIcon = document.getElementById('svg-start-icon');
     const fpvDebugPanel = document.getElementById('fpv-debug-panel');
     const btnCloseDebug = document.getElementById('btn-close-debug');
+
+    // Tự động nhận diện PWA Standalone (iOS Safari Add-to-Home-Screen hoặc Android PWA)
+    const isPwaStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                            window.navigator.standalone === true ||
+                            document.referrer.includes('homescreen');
+
+    if (isPwaStandalone) {
+      document.documentElement.classList.add('is-standalone');
+      document.body.classList.add('pwa-standalone');
+      if (btnFullscreen) {
+        btnFullscreen.style.display = 'none';
+      }
+    }
 
     // Dynamic Island & AssistiveTouch DOM Refs
     const bottomDock = document.getElementById('bottom-dock');
@@ -1551,7 +1591,7 @@
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setClearColor(0x000000, 0); // 100% trong suốt
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(window.innerWidth, window.innerHeight, false); // false để CSS 100vw/100dvh quản lý layout tràn viền không bị letterbox
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.1;
@@ -2738,7 +2778,14 @@
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / Math.max(1, window.innerHeight);
       camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+    });
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        camera.aspect = window.innerWidth / Math.max(1, window.innerHeight);
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight, false);
+      }, 150);
     });
 
     // ==================== P1: BROWSER PAGE LIFECYCLE (BFCACHE & SUSPENSION) ====================
