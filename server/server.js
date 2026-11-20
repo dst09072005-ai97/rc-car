@@ -35,6 +35,7 @@ async function tryResolveYtDlpStream(videoId) {
 
 
 const app = express();
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 // ============================================================================
 // BẢO VỆ MÃ NGUỒN, CHỨNG CHỈ TLS & FILE CẤU HÌNH NHẠY CẢM (SECURITY GUARD)
 // ============================================================================
@@ -82,6 +83,19 @@ const candidateStaticDirs = [
   path.resolve(__dirname, 'public'),
   __dirname
 ];
+// Profile data is served through the battery API only, including on the server-directory static fallback.
+app.use((req, res, next) => {
+  let requestedPath;
+  try {
+    requestedPath = path.win32.normalize(decodeURIComponent(req.path));
+  } catch {
+    return next();
+  }
+  const file = path.win32.basename(requestedPath).split(':')[0].replace(/[ .]+$/, '').toLowerCase();
+  if (file === 'battery-profiles.json' || file === 'battery-profiles.json.tmp') return res.sendStatus(404);
+  next();
+});
+
 for (const dir of candidateStaticDirs) {
   if (fs.existsSync(dir)) {
     app.use(express.static(dir));
@@ -355,6 +369,29 @@ app.get('/api/network-info', (req, res) => {
     questVrUrl: `https://${lanIp}:8443/?vr=immersive`,
     questHttpFallbackUrl: `http://${lanIp}:${HTTP_PORT}/?vr=immersive`
   });
+});
+
+// Render the phone camera QR locally so LAN addresses stay on this server.
+app.get('/api/phone-fpv-qr', (req, res) => {
+  const value = req.query.url;
+  let url;
+  if (typeof value === 'string' && value.length <= 255) {
+    try { url = new URL(value); } catch {}
+  }
+  if (!url || url.protocol !== 'https:' || url.port !== '8443' ||
+      url.pathname !== '/fpv-cam.html' || url.username || url.password || url.search || url.hash) {
+    return res.sendStatus(400);
+  }
+  const QRCode = require('qrcode-terminal/vendor/QRCode');
+  const { L } = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel');
+  const code = new QRCode(-1, L);
+  code.addData(url.href);
+  code.make();
+  const size = code.getModuleCount() + 8;
+  const modules = code.modules.map((row, y) => row.map((dark, x) =>
+    dark ? `M${x + 4} ${y + 4}h1v1h-1z` : '').join('')).join('');
+  const image = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="white"/><path d="${modules}"/></svg>`;
+  res.set('Cache-Control', 'no-store').type('image/svg+xml').send(image);
 });
 
 // Nén nhẹ dữ liệu tọa độ (làm tròn 2 chữ số thập phân) giúp kết nối Public 4G/Tailscale trên iPhone/Android mượt gấp 5 lần
@@ -946,6 +983,76 @@ cars.delete('car_guest_1');
 
 
 const activeMultiplayerSockets = new Set();
+const { RcBatteryEstimator, dispatchBatteryAction } = require('./rc-battery-estimator');
+const rcBatteryEstimator = new RcBatteryEstimator();
+
+let lastBroadcastBatteryJson;
+const lastBatteryPacketBySocket = new WeakMap();
+
+function sendBatteryPacket(ws, packet) {
+  if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 128 * 1024) {
+    ws.send(packet);
+    return true;
+  }
+  return false;
+}
+
+function publishBatteryState(ws, onlyIfChanged = false) {
+  const packet = JSON.stringify({ type: 'BATTERY_STATE', battery: rcBatteryEstimator.getPublicState() });
+  if (ws) {
+    if (sendBatteryPacket(ws, packet)) lastBatteryPacketBySocket.set(ws, packet);
+    if (lastBatteryPacketBySocket.get(ws) !== lastBroadcastBatteryJson) lastBroadcastBatteryJson = undefined;
+    return;
+  }
+  if (onlyIfChanged && packet === lastBroadcastBatteryJson) return;
+  let allSent = true;
+  for (const client of activeMultiplayerSockets) {
+    if (onlyIfChanged && lastBatteryPacketBySocket.get(client) === packet) continue;
+    if (sendBatteryPacket(client, packet)) lastBatteryPacketBySocket.set(client, packet);
+    else allSent = false;
+  }
+  lastBroadcastBatteryJson = allSent ? packet : undefined;
+}
+
+function canChangeBattery(req) {
+  if (req.headers['cf-connecting-ip'] || req.headers['cf-ray']) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    const url = new URL(origin);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+function handleBatterySocketAction(ws, req, data) {
+  if (typeof data?.type !== 'string' || !data.type.startsWith('BATTERY_')) return false;
+  const readOnly = data.type === 'BATTERY_GET';
+  const result = readOnly || canChangeBattery(req)
+    ? dispatchBatteryAction(rcBatteryEstimator, data)
+    : { ok: false, error: 'Kết nối này chỉ có quyền xem pin.' };
+  if (result.ok && readOnly) {
+    publishBatteryState(ws);
+    return true;
+  }
+  if (result.ok) publishBatteryState();
+  sendBatteryPacket(ws, JSON.stringify({ type: 'BATTERY_ACTION_RESULT', action: data.type, ...result }));
+  return true;
+}
+
+let lastBatteryTick = Date.now();
+let lastBatteryBroadcast = lastBatteryTick;
+setInterval(() => {
+  const now = Date.now();
+  const online = Boolean(esp32CarConfig.lastSeen && now - esp32CarConfig.lastSeen < 6000);
+  rcBatteryEstimator.tick((now - lastBatteryTick) / 1000, now, online);
+  lastBatteryTick = now;
+  if (now - lastBatteryBroadcast >= 1000) {
+    lastBatteryBroadcast = now;
+    if (activeMultiplayerSockets.size) publishBatteryState(null, true);
+  }
+}, 250).unref();
 let activeDriverClient = null;
 let activeDriverLastActiveTime = 0;
 
@@ -1114,6 +1221,7 @@ function attachMultiplayerServer(serverInstance) {
     const rawSocketIp = (req && req.socket && req.socket.remoteAddress) || '';
     const clientIp = (forwardedIp || rawSocketIp).replace(/^::ffff:/, '');
     ws._clientIp = clientIp;
+    publishBatteryState(ws);
 
     const hostCar = cars.get('car_host');
     let seat0OccupantId = hostCar ? hostCar.occupants[0] : null;
@@ -1284,6 +1392,7 @@ function attachMultiplayerServer(serverInstance) {
 
       try {
         const data = JSON.parse(msg.toString());
+        if (handleBatterySocketAction(ws, req, data)) return;
         if (data.type === 'FPV_PHONE_PUBLISHER_INIT') {
           const phoneIp = (ws._clientIp || '').replace(/^::ffff:/, '');
           ws._isFpvPhone = true;
@@ -1753,6 +1862,25 @@ function loadEnvConfig() {
 }
 
 let cloudflareTunnelProcess = null;
+
+const shutdownServer = (code = 0) => {
+  if (rcBatteryEstimator.saveTimer) rcBatteryEstimator.save();
+  console.log('\n🛑 [SHUTDOWN] Đang đóng Server và giải phóng đường hầm Cloudflare...');
+  if (cloudflareTunnelProcess) {
+    try {
+      const pid = cloudflareTunnelProcess.pid;
+      if (process.platform === 'win32') {
+        require('child_process').execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
+      } else {
+        cloudflareTunnelProcess.kill('SIGKILL');
+      }
+    } catch (e) {}
+    cloudflareTunnelProcess = null;
+  }
+  process.exit(code);
+};
+process.on('SIGINT', () => shutdownServer(0));
+process.on('SIGTERM', () => shutdownServer(0));
 let cloudflareTunnelUrl = null;
 
 function startCloudflareTunnelManager(httpPort = 8080) {
@@ -1799,23 +1927,6 @@ function startCloudflareTunnelManager(httpPort = 8080) {
       }
     });
 
-    const shutdownServer = (code = 0) => {
-      console.log('\n🛑 [SHUTDOWN] Đang đóng Server và giải phóng đường hầm Cloudflare...');
-      if (cloudflareTunnelProcess) {
-        try {
-          const pid = cloudflareTunnelProcess.pid;
-          if (process.platform === 'win32') {
-            require('child_process').execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
-          } else {
-            cloudflareTunnelProcess.kill('SIGKILL');
-          }
-        } catch (e) {}
-        cloudflareTunnelProcess = null;
-      }
-      process.exit(code);
-    };
-    process.on('SIGINT', () => shutdownServer(0));
-    process.on('SIGTERM', () => shutdownServer(0));
     process.on('exit', () => {
       if (cloudflareTunnelProcess) {
         try { cloudflareTunnelProcess.kill(); } catch (e) {}
@@ -1991,6 +2102,20 @@ let sharedYoutubeRoomState = {
 
 // API lấy & cập nhật trạng thái đồng bộ màn hình YouTube giữa Táp-lô trước và 2 màn hình Ghế phụ sau
 app.use(express.json());
+
+app.get('/api/battery', (req, res) => {
+  res.set('Cache-Control', 'no-store').json({ battery: rcBatteryEstimator.getPublicState() });
+});
+
+app.post('/api/battery/action', (req, res) => {
+  if (!canChangeBattery(req) && req.body?.type !== 'BATTERY_GET') {
+    return res.status(403).json({ ok: false, error: 'Kết nối này chỉ có quyền xem pin.' });
+  }
+  const result = dispatchBatteryAction(rcBatteryEstimator, req.body);
+  if (!result.ok) return res.status(400).json(result);
+  if (req.body.type !== 'BATTERY_GET') publishBatteryState();
+  res.json({ ...result, battery: rcBatteryEstimator.getPublicState() });
+});
 
 app.get('/api/yt-sync-state', (req, res) => {
   const elapsedSec = sharedYoutubeRoomState.isPlaying ? (Date.now() - sharedYoutubeRoomState.updatedAt) / 1000 : 0;
@@ -2855,6 +2980,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     const pkt = Buffer.alloc(4);
     pkt.writeInt16LE(steerDeg, 0);
+    rcBatteryEstimator.recordControlInput({ escPulseUs, steerDeg, gear: effectiveGear, source, nowMs: now });
     pkt.writeInt16LE(escPulseUs, 2);
     const activeUdpSocket = (typeof udpOutSocket !== 'undefined' && udpOutSocket) ? udpOutSocket : udpServer;
     try {

@@ -12,6 +12,181 @@ import * as THREE from 'three';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
+let batteryControls;
+
+function getBatteryControls() {
+  if (batteryControls) return batteryControls;
+  const root = document.getElementById('rc-battery-panel');
+  if (!root) return null;
+  const find = id => document.getElementById(id);
+  const form = find('battery-setup-form');
+  const tracking = find('battery-tracking');
+  const load = find('battery-load');
+  batteryControls = {
+    buttons: root.querySelectorAll('[data-battery-profile]'),
+    badge: find('top-battery-badge'), charge: find('battery-charge'), live: find('battery-live'),
+    start: find('battery-start'), session: find('battery-session'), runLive: find('battery-run-live'),
+    pause: find('battery-pause'), runs: find('battery-runs'), runsTitle: find('battery-runs-title'),
+    feedback: find('battery-feedback'), form, tracking, load,
+    runKey: '', setupProfileId: null, dirty: new Set()
+  };
+
+  root.addEventListener('keydown', event => event.stopPropagation());
+  root.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button || !state.rcBattery) return;
+    const profileId = state.rcBattery.activeProfileId;
+    if (button.dataset.batteryProfile) {
+      sendBatteryAction('SELECT', { profileId: Number(button.dataset.batteryProfile) });
+      return;
+    }
+    const action = button.dataset.batteryAction;
+    if (!action) return;
+    if (action === 'DELETE_RUN' && !window.confirm('Xóa mẫu đo này?')) return;
+    if (action === 'RESET_PROFILE' && !window.confirm('Xóa toàn bộ mẫu đo và đặt lại pin này?')) return;
+    const fields = { profileId };
+    if (action === 'START_CALIBRATION') fields.loadMode = load.value;
+    if (action === 'DELETE_RUN') fields.runId = button.dataset.batteryRun;
+    if (action === 'TOGGLE_PAUSE' || action === 'FINISH_CALIBRATION' || action === 'CANCEL_CALIBRATION') {
+      fields.startedAt = state.rcBattery.calibrationSession.startedAt;
+    }
+    sendBatteryAction(action, fields);
+  });
+  tracking.addEventListener('change', () => sendBatteryAction('SET_TRACKING', { mode: tracking.value }));
+  form.addEventListener('input', event => batteryControls.dirty.add(event.target.name));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!state.rcBattery || !batteryControls.dirty.size) return;
+    const patch = {};
+    for (const key of batteryControls.dirty) {
+      const field = form.elements.namedItem(key);
+      if (!field) continue;
+      if (key === 'idleAmps' || key === 'maxMotorAmps') {
+        (patch.drainConfig ??= {})[key] = field.valueAsNumber;
+      } else if (key === 'healthPercent') {
+        patch[key] = field.value === '' ? null : field.valueAsNumber;
+      } else {
+        patch[key] = field.type === 'number' ? field.valueAsNumber : field.value;
+      }
+    }
+    sendBatteryAction('SETUP_PROFILE', { profileId: batteryControls.setupProfileId, patch });
+  });
+  return batteryControls;
+}
+
+async function sendBatteryAction(action, fields) {
+  const data = { type: 'BATTERY_' + action, ...fields };
+  if (mpSocket?.readyState === WebSocket.OPEN) {
+    mpSocket.send(JSON.stringify(data));
+    return;
+  }
+  try {
+    const response = await fetch('/api/battery/action', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+    });
+    const result = await response.json();
+    if (result.battery) updateRcBattery(result.battery);
+    showBatteryResult({ ...result, action: data.type });
+  } catch {
+    showBatteryResult({ ok: false, error: 'Không kết nối được máy chủ pin.' });
+  }
+}
+
+function showBatteryResult(result) {
+  const ui = getBatteryControls();
+  if (!ui) return;
+  if (result.ok && (result.action === 'BATTERY_SETUP_PROFILE' || result.action === 'BATTERY_RESET_PROFILE')) {
+    ui.dirty.clear();
+    if (state.rcBattery) updateRcBattery(state.rcBattery);
+  }
+  ui.feedback.textContent = result.ok
+    ? (result.persisted === false ? 'Đã cập nhật. Máy chủ đang thử lưu lại.' : 'Đã cập nhật pin.')
+    : result.error;
+}
+
+function updateRcBattery(battery) {
+  const profile = battery?.profiles?.[battery.activeProfileId - 1];
+  if (!profile) return;
+  state.rcBattery = battery;
+  const session = battery.calibrationSession;
+  const percent = Math.floor(profile.currentPercent);
+  const critical = profile.currentPercent < battery.criticalBatteryPct;
+  const low = profile.currentPercent < battery.lowBatteryWarnPct;
+  const color = session.active ? '#d09aff' : critical ? '#ff5252' : low ? '#ffda55' : '#62d98b';
+  const voltage = battery.estimatedVoltage.toFixed(2) + ' V';
+  const minutes = battery.estimatedMinutesRemaining === null
+    ? '—' : battery.estimatedMinutesRemaining.toFixed(1);
+  state.rcBatteryHud = {
+    color, critical, barWidth: 9 * profile.currentPercent,
+    line: `🔋 ${profile.name}  |  ${percent}%  |  ${voltage}  |  ~${minutes} phút${session.active ? (session.paused ? '  |  Đo tạm dừng' : '  |  Đang đo pin') : ''}`,
+    warning: critical ? 'PIN CẠN' : low ? 'PIN YẾU' : ''
+  };
+
+  const ui = getBatteryControls();
+  if (!ui) return;
+  ui.badge.textContent = `🔋 ${profile.name.split(' (')[0]} · ${percent}% · ${voltage}`;
+  ui.badge.style.color = color;
+  ui.charge.value = profile.currentPercent;
+  ui.charge.style.accentColor = color;
+  const confidence = { UNMEASURED: 'Chưa đo', LOW: 'Thấp', MEDIUM: 'Trung bình', HIGH: 'Cao' };
+  ui.live.textContent = `${percent}% · ${voltage} ảo · ~${minutes} phút · ${battery.instantAmps.toFixed(2)} A · Sức khỏe ${profile.healthPercent}% · Chai ${profile.degradationPercent}% · Tin cậy ${confidence[profile.confidence]} (${profile.calibrationRuns.length} lượt)`;
+  ui.tracking.value = battery.trackingMode;
+  ui.start.hidden = session.active;
+  ui.session.hidden = !session.active;
+  ui.load.disabled = session.active;
+  if (session.active) {
+    ui.load.value = session.loadMode;
+    const elapsed = Math.floor(session.elapsedSec);
+    const throttle = 100 * session.throttleSum / Math.max(1, session.throttleSamples);
+    ui.runLive.textContent = `${Math.floor(elapsed / 60)} phút ${elapsed % 60} giây · ${session.energyMah.toFixed(1)} mAh · Ga TB ${throttle.toFixed(0)}%${battery.trackingMode === 'PAUSED' ? ' · Tính pin đang tạm dừng' : ''}`;
+    ui.pause.textContent = session.paused ? '▶ Tiếp Tục' : '⏸ Tạm Dừng';
+  }
+  for (const button of ui.buttons) {
+    const item = battery.profiles[Number(button.dataset.batteryProfile) - 1];
+    const active = item.id === profile.id;
+    button.textContent = `Pin ${item.id} · ${Math.floor(item.currentPercent)}% · Chai ${item.degradationPercent}%`;
+    button.style.color = item.color;
+    button.style.outline = active ? '2px solid ' + item.color : '';
+    button.setAttribute('aria-pressed', String(active));
+  }
+  const profileChanged = ui.setupProfileId !== profile.id;
+  if (profileChanged) {
+    ui.setupProfileId = profile.id;
+    ui.dirty.clear();
+  }
+  const fields = {
+    name: profile.name, color: profile.color, chemistry: profile.chemistry,
+    ratedCapacityMah: profile.ratedCapacityMah, healthPercent: profile.manualHealthPercent ?? '',
+    currentPercent: Math.round(profile.currentPercent * 10) / 10,
+    idleAmps: profile.drainConfig.idleAmps, maxMotorAmps: profile.drainConfig.maxMotorAmps
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    const field = ui.form.elements.namedItem(key);
+    if (field && (profileChanged || field !== document.activeElement) && !ui.dirty.has(key)) field.value = value;
+  }
+
+  const runKey = profile.id + ':' + profile.calibrationRuns.map(run => run.id).join(',');
+  if (ui.runKey === runKey) return;
+  ui.runKey = runKey;
+  ui.runsTitle.textContent = `Mẫu test đã lưu (${profile.calibrationRuns.length})`;
+  ui.runs.replaceChildren();
+  for (let i = profile.calibrationRuns.length - 1; i >= 0; i--) {
+    const run = profile.calibrationRuns[i];
+    const li = document.createElement('li');
+    const date = new Date(run.timestamp).toLocaleDateString('vi-VN');
+    const mode = run.loadMode === 'REAL_GROUND' ? 'Có tải' : 'Không tải';
+    li.textContent = `${date} · ${mode} · ${(run.durationSec / 60).toFixed(1)} phút · ${run.measuredMah.toFixed(0)} mAh · ${run.estimatedHealthPct}% ${run.note ? '· ' + run.note + ' ' : ''}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'bar-btn';
+    remove.dataset.batteryAction = 'DELETE_RUN';
+    remove.dataset.batteryRun = run.id;
+    remove.textContent = '🗑 Xóa';
+    li.appendChild(remove);
+    ui.runs.appendChild(li);
+  }
+}
+
 // ============================================================================
 // 1. KHỞI TẠO KHÔNG GIAN 3D, BẦU TRỜI SAO ĐÊM & ĐỔ BÓNG THỜI GIAN THỰC
 // ============================================================================
@@ -118,14 +293,33 @@ let isPanorama360Fallback = false;
 let panoramaYawOffset = 0;
 let panoramaPitchOffset = 0;
 
+function getServedHostname() {
+  if (typeof window === 'undefined') return '';
+  const { protocol, hostname } = window.location;
+  return protocol === 'http:' || protocol === 'https:' ? hostname : '';
+}
+
+function getHostedServerHostname() {
+  const hostname = getServedHostname();
+  if (!hostname || window.QuestVRBridge || window.Capacitor) return '';
+  return hostname;
+}
+
+function getEsp32ProxySocketUrl(path, pcIp) {
+  const hosted = getHostedServerHostname();
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = hosted ? window.location.host : pcIp + (protocol === 'wss:' ? ':8443' : ':8080');
+  return protocol + '//' + host + path;
+}
+
 async function setupSeamless3D2DSwitcher() {
   if (!smartVrBtn) return;
 
   // Khởi tạo sẵn cấu hình IP Server Máy tính trong localStorage (Mặc định 192.168.1.32 để người dùng không phải nhập tay)
   if (typeof localStorage !== 'undefined' && !localStorage.getItem('pc_server_ip')) {
-    const fallbackDefaultIp = (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function')
+    const fallbackDefaultIp = getHostedServerHostname() || ((typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function')
       ? window.QuestVRBridge.getDefaultHostIp()
-      : '192.168.1.76';
+      : '192.168.1.76');
     localStorage.setItem('pc_server_ip', fallbackDefaultIp);
   }
 
@@ -133,7 +327,7 @@ async function setupSeamless3D2DSwitcher() {
   const pcIpInput = document.getElementById('pc-server-ip-input');
   const btnSavePcIp = document.getElementById('btn-save-pc-ip');
   if (pcIpInput) {
-    const curIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.76';
+    const curIp = getHostedServerHostname() || (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '192.168.1.76';
     pcIpInput.value = curIp;
     const saveIp = () => {
       const val = pcIpInput.value.trim();
@@ -177,7 +371,7 @@ async function setupSeamless3D2DSwitcher() {
     ));
 
     if (isApkEnvironment) {
-      let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
+      let pcIp = getHostedServerHostname() || (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
       if (!pcIp && typeof window.QuestVRBridge !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDefaultHostIp === 'function') {
         try { pcIp = window.QuestVRBridge.getDefaultHostIp(); } catch (e) {}
       }
@@ -362,7 +556,19 @@ function playYouTubeEmbedByIdOrQuery(inputStr, titleText) {
   state.lastActionLog = `📺 Đang phát YouTube: ${activeYoutubeTitle}`;
 }
 
+let pulseInfoEl;
+let lastPulseInfoText;
+
+function updateEsp32PulseInfo(nextText) {
+  pulseInfoEl ??= document.getElementById('esp32-car-pulse-info');
+  if (pulseInfoEl && nextText !== lastPulseInfoText) {
+    pulseInfoEl.textContent = nextText;
+    lastPulseInfoText = nextText;
+  }
+}
+
 function openRealYouTubeApp() {
+  void window.ensureOptionalSupabaseMultiScreen?.();
   initAudio();
   resetYouTubeWindowToDefaultPosition();
   ytModal?.classList.remove('panel-hidden');
@@ -485,7 +691,40 @@ const SEAT_POSITIONS = [
   { name: 'Ghế VIP Sau Phải (Meta/QR Guest #3)', pos: new THREE.Vector3(0.42, 0.04, 1.02) }
 ];
 
+const VIRTUAL_APP_SPEED_SCALE = 2.5;
+const VIRTUAL_FORWARD_SPEED_MS = 13.5;
+const VIRTUAL_REVERSE_SPEED_MS = 6.5;
+const DEFAULT_GARAGE_SPEED_RATIO = 2.8;
+
+function readSettingsPreference(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+function saveSettingsPreference(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+
+function clampInGameSpeedScale(value) {
+  const scale = parseFloat(value);
+  return Number.isFinite(scale) ? Math.min(1.5, Math.max(0.4, scale)) : 1.0;
+}
+
+function formatInGameSpeedScale(scale) {
+  return scale.toFixed(2).replace(/0$/, '') + 'x';
+}
+
+function getVirtualDrivingScale() {
+  return state.inGameSpeedScale * (state.rcSpeedRatio / DEFAULT_GARAGE_SPEED_RATIO);
+}
+
 const state = {
+  inGameSpeedScale: clampInGameSpeedScale(readSettingsPreference('rc_ingame_speed_scale')),
+  phoneFpvFrontLive: false,
+  phoneFpvRearLive: false,
+  phoneFpvSurface: null,
+  windshieldViewSelected: false,
+  rcBattery: null,
+  rcBatteryHud: null,
   inputMode: 'both',
   playerMode: 'ON_FOOT',
   isBlinking: false,
@@ -499,7 +738,7 @@ const state = {
   distanceToCarDoor: 1.1,
 
   rcConnected: true,
-  rcSpeedRatio: 1.0,
+  rcSpeedRatio: DEFAULT_GARAGE_SPEED_RATIO,
   rcSteerSensitivity: 1.0,
   rcMaxForwardPulse: 1660,
   rcMaxReversePulse: 1320,
@@ -1449,19 +1688,25 @@ function decodePendingFrontFrame() {
   isFrontDecoding = true;
 
   createImageBitmap(blob).then((bmp) => {
+    const isPhoneFrame = phoneFpvBlobs.has(blob);
+    if (!isPhoneFrame && state.phoneFpvFrontLive) {
+      bmp.close();
+      return;
+    }
     if (esp32Bitmap && typeof esp32Bitmap.close === 'function') {
       try { esp32Bitmap.close(); } catch (e) {}
     }
     esp32Bitmap = bmp;
     state.esp32Connected = true;
-    if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
+    if (isPhoneFrame) notePhoneFpvFrame('front');
+    if (!isPhoneFrame && !state.windshieldViewSelected && state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
       state.windshieldMode = 'ESP32_LIVE';
     }
     // DIRECT ZERO-LATENCY DRAW: Vẽ trực tiếp lên kính lái ngay khi giải mã xong bitmap, không viền, không lag
     if (state.windshieldMode === 'ESP32_LIVE') {
       wsCtx.drawImage(bmp, 0, 0, 1024, 512);
       wsTex.needsUpdate = true;
-    } else if (state.windshieldMode === 'ESP32_PIP') {
+    } else if (state.windshieldMode === 'ESP32_PIP' && !(state.phoneFpvRearLive && getPhoneFpvSurface() === 'rear')) {
       const pipW = 340, pipH = 190, pipX = 1024 - pipW - 16, pipY = 56;
       wsCtx.drawImage(bmp, pipX, pipY, pipW, pipH);
       wsTex.needsUpdate = true;
@@ -1519,37 +1764,40 @@ function decodeLatestRawFrame() {
   }
 }
 
+function normalizeEsp32CameraSocketUrl(rawUrl, proxyPath) {
+  const isWebSocket = rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://');
+  if (isWebSocket && getHostedServerHostname() && (rawUrl.includes(proxyPath) ||
+      (window.location.protocol === 'https:' && rawUrl.startsWith('ws://')))) {
+    return getEsp32ProxySocketUrl(proxyPath);
+  }
+  return rawUrl;
+}
+
 function connectEsp32Windshield(rawUrl) {
   if (!rawUrl) return;
+  const targetWs = normalizeEsp32CameraSocketUrl(rawUrl, '/esp32-front-ws');
   // [ANTI-THRASH] Nếu socket đang kết nối hoặc đã mở với đúng URL này, không đóng kết nối!
   if (esp32Socket && (esp32Socket.readyState === WebSocket.CONNECTING || esp32Socket.readyState === WebSocket.OPEN)) {
-    if (state.esp32StreamUrl === rawUrl) return;
+    if (state.esp32StreamUrl === targetWs) return;
   }
-  state.esp32StreamUrl = rawUrl;
+  state.esp32StreamUrl = targetWs;
   if (esp32Socket) {
     try { esp32Socket.close(); } catch (e) {}
     esp32Socket = null;
   }
   if (rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')) {
     try {
-      let targetWs = rawUrl;
-      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
-      const isServedHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
-      if (isServedHost && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
-        const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const host = (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:8443`;
-        targetWs = `wss://${host}/esp32-front-ws`;
-      }
       esp32Socket = new WebSocket(targetWs);
       esp32Socket.binaryType = 'arraybuffer';
       esp32Socket.onopen = () => {
         state.esp32Connected = true;
-        if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
+        if (!state.windshieldViewSelected && state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
           state.windshieldMode = 'ESP32_LIVE';
         }
         state.lastActionLog = '🟢 Da ket noi WebSocket ESP32-CAM!';
       };
       esp32Socket.onmessage = (msg) => {
+        if (state.phoneFpvFrontLive) return;
         const now = performance.now();
         if (typeof esp32TwinMetrics !== 'undefined') {
           esp32TwinMetrics.frontFrameIntervalMs = now - (esp32TwinMetrics.frontLastFrameTime || now);
@@ -1579,13 +1827,9 @@ function connectEsp32Windshield(rawUrl) {
       };
       esp32Socket.onerror = () => {
         state.lastActionLog = '⚠️ Lỗi kết nối direct ESP32 Cam, chuyển sang Proxy Server...';
-        const isApkErr = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
-        const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const isHttps = !isApkErr && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
-        const proxyProto = isHttps ? 'wss:' : 'ws:';
-        const proxyPort = isHttps ? '8443' : '8080';
-        const host = (!isApkErr && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:${proxyPort}`;
-        const proxyWs = `${proxyProto}//${host}/esp32-front-ws`;
+        const pcIp = getHostedServerHostname() || localStorage.getItem('pc_server_ip') ||
+          localStorage.getItem('V500_LAPTOP_IP') || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+        const proxyWs = getEsp32ProxySocketUrl('/esp32-front-ws', pcIp);
         if (targetWs !== proxyWs) {
           console.log('🔄 [ESP32-FRONT] Chuyển hướng kết nối qua Proxy Server:', proxyWs);
           setTimeout(() => {
@@ -1594,7 +1838,7 @@ function connectEsp32Windshield(rawUrl) {
         }
       };
       esp32Socket.onclose = () => {
-        state.esp32Connected = false;
+        state.esp32Connected = state.phoneFpvFrontLive;
         state.lastActionLog = '🔌 Da ngat ket noi WebSocket ESP32';
       };
     } catch (e) {}
@@ -1603,15 +1847,15 @@ function connectEsp32Windshield(rawUrl) {
       ? `/api/esp32-proxy?url=${encodeURIComponent(rawUrl)}`
       : rawUrl;
     esp32MjpegImg.src = finalUrl;
-    if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
+    if (!state.windshieldViewSelected && state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
       state.windshieldMode = 'ESP32_LIVE';
     }
   }
 }
 
 document.getElementById('btn-connect-esp32')?.addEventListener('click', () => {
-  const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-  const fallbackUrl = `ws://${pcIp}:8080/esp32-front-ws`;
+  const pcIp = getHostedServerHostname() || (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+  const fallbackUrl = getEsp32ProxySocketUrl('/esp32-front-ws', pcIp);
   const raw = document.getElementById('esp32-front-ip')?.value.trim();
   const url = (raw && !raw.includes('192.168.1.88') && !raw.includes('192.168.1.184')) ? raw : fallbackUrl;
   if (document.getElementById('esp32-front-ip')) document.getElementById('esp32-front-ip').value = url;
@@ -1623,7 +1867,7 @@ document.getElementById('btn-connect-esp32')?.addEventListener('click', () => {
 setTimeout(() => {
   const isApkAuto = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
   const isServedAuto = !isApkAuto && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
-  const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+  const pcIp = getHostedServerHostname() || (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
   const autoProto = (isServedAuto && window.location.protocol === 'https:') ? 'wss:' : 'ws:';
   const fallbackUrl = isServedAuto
     ? `${autoProto}//${window.location.host}/esp32-front-ws`
@@ -2396,6 +2640,7 @@ window.addEventListener('keydown', (e) => {
       window.toggleWindshieldCamOrRoad();
     }
   }
+  if (k === 'y' && !e.repeat && !/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) toggleRearCamPiPModal();
   if (k === 'p') state.suspensionShakeIntensity = 1.35;
   if (k === 'e') state.gearIndex = Math.min(3, state.gearIndex + 1);
   if (k === 'q') state.gearIndex = Math.max(0, state.gearIndex - 1);
@@ -2474,7 +2719,9 @@ function renderAllCockpitDisplays(elapsed) {
     wsCtx.strokeStyle = '#00ff88';
     wsCtx.lineWidth = 2;
     wsCtx.strokeRect(pipX - 3, pipY - 3, pipW + 6, pipH + 6);
-    if (esp32Bitmap) wsCtx.drawImage(esp32Bitmap, pipX, pipY, pipW, pipH);
+    if (state.phoneFpvRearLive && getPhoneFpvSurface() === 'rear') {
+      wsCtx.drawImage(rearCamCanvas, pipX, pipY, pipW, pipH);
+    } else if (esp32Bitmap) wsCtx.drawImage(esp32Bitmap, pipX, pipY, pipW, pipH);
     else if (esp32MjpegImg.complete && esp32MjpegImg.naturalWidth > 0) wsCtx.drawImage(esp32MjpegImg, pipX, pipY, pipW, pipH);
     else {
       wsCtx.fillStyle = '#0a1525';
@@ -2670,25 +2917,38 @@ function renderAllCockpitDisplays(elapsed) {
   );
 
   // Hiển thị trạng thái 2 Camera ESP32 (Trước Kính Chắn Gió & Hậu Lùi)
-  const frontCamStatus = state.esp32Connected
+  const frontCamStatus = state.phoneFpvFrontLive ? '🟢 ĐANG PHÁT' : state.esp32Connected
     ? '🟢 ĐÃ KẾT NỐI LIVE (Cho phép chạy xuyên địa hình)'
     : (state.windshieldMode === 'ESP32_SIM' ? '🟡 MÔ PHỎNG (Chặn xuyên địa hình)' : '🔴 CHƯA KẾT NỐI (Chặn xuyên địa hình, chỉ tông NPC)');
-  const rearCamStatus = state.esp32RearConnected
+  const rearCamStatus = state.phoneFpvRearLive ? '🟢 ĐANG PHÁT' : state.esp32RearConnected
     ? '🟢 ĐÃ KẾT NỐI CAM LÙI ESP32 THỰC TẾ'
     : '🔵 CHƯA KẾT NỐI ESP32 (Đang hiện Góc Nhìn 3D Đuôi Xe)';
 
   hudCtx.fillStyle = state.esp32Connected ? '#00ff88' : '#ff9500';
   hudCtx.font = 'bold 18px Segoe UI, sans-serif';
-  hudCtx.fillText(`📷 CAM TRƯỚC (KÍNH CHẮN GIÓ): ${frontCamStatus}`, 20, 224);
+  hudCtx.fillText(`${state.phoneFpvFrontLive ? '📱 CAM FPV TRƯỚC (ĐIỆN THOẠI)' : '📷 CAM TRƯỚC (KÍNH CHẮN GIÓ)'}: ${frontCamStatus}`, 20, 224);
 
   hudCtx.fillStyle = state.esp32RearConnected ? '#00ff88' : '#00e5ff';
-  hudCtx.fillText(`🎥 CAM HẬU (GƯƠNG LÙI): ${rearCamStatus}`, 20, 260);
+  hudCtx.fillText(`📱 CAM LÙI FPV: ${rearCamStatus}`, 20, 260);
 
   hudCtx.fillStyle = '#4cd964';
   hudCtx.font = 'bold 17px Segoe UI, sans-serif';
   hudCtx.fillText('• Tay cầm Quest: Nút [A] Lên/Xuống xe | [B] Đỗ xe dừng hẳn | [X] Xi-nhan | [Y] Mở YouTube', 20, 305);
   hudCtx.fillText('• Cần xoay (Thumbstick): Tiến/Lùi/Rẽ trái/Phải | Cò (Trigger) / Chụm tay (Pinch): Chọn & Kéo thả HUD/YT', 20, 338);
   hudCtx.fillText('• Phím [L]: Thò đầu ra ngoài cửa xe | Phím [C]/[V]: Đổi chỗ Tài xế <-> Ghế phụ', 20, 370);
+  const batteryHud = state.rcBatteryHud;
+  if (batteryHud) {
+    hudCtx.fillStyle = '#243042';
+    hudCtx.fillRect(20, 428, 900, 12);
+    hudCtx.fillStyle = batteryHud.color;
+    hudCtx.fillRect(20, 428, batteryHud.barWidth, 12);
+    hudCtx.font = 'bold 21px Segoe UI, sans-serif';
+    hudCtx.fillText(batteryHud.line, 20, 415, 900);
+    if (batteryHud.warning && (!batteryHud.critical || Date.now() % 1000 < 650)) {
+      hudCtx.fillStyle = batteryHud.critical ? '#ff5252' : '#ffda55';
+      hudCtx.fillText(batteryHud.warning, 20, 474);
+    }
+  }
   hudTex.needsUpdate = true;
 
   // 4. Màn hình Camera lùi & Gương hậu (Luôn cập nhật liên tục cho cả ESP32 Cam thật lẫn Camera 3D)
@@ -2808,6 +3068,7 @@ function updateWorldSimulation(dt, elapsed) {
   }
 }
 
+const _tmpDoorPos = new THREE.Vector3();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   const fps = Math.round(1 / Math.max(dt, 0.0001));
@@ -2848,7 +3109,7 @@ renderer.setAnimationLoop(() => {
       avatarLeftArm.rotation.x = -sw * 0.7;
     }
 
-    const doorPos = new THREE.Vector3(-0.98, 0, -0.1).applyMatrix4(vehicleRoot.matrixWorld);
+    const doorPos = _tmpDoorPos.set(-0.98, 0, -0.1).applyMatrix4(vehicleRoot.matrixWorld);
     state.distanceToCarDoor = state.avatarPos.distanceTo(doorPos);
     if (state.playerMode === 'ON_FOOT' && state.distanceToCarDoor <= 1.35) {
       state.doorsOpen = true;
@@ -2912,8 +3173,8 @@ renderer.setAnimationLoop(() => {
 
       // ĐỒNG BỘ TỐC ĐỘ 1:1 VỚI XE RC THỰC TẾ (CHẾ ĐỘ LÁI VỪA PHẢI, DỄ ĐIỀU KHIỂN)
       const targetMaxKmh = state.rcTargetSpeedKmh || 12.0;
-      const maxForwardVel = targetMaxKmh / 3.6; // 12 km/h = 3.33 m/s
-      const maxReverseVel = -(targetMaxKmh * 0.55) / 3.6; // Lùi ~6.6 km/h
+      const maxForwardVel = targetMaxKmh * getVirtualDrivingScale() / 3.6;
+      const maxReverseVel = -(targetMaxKmh * 0.55) * getVirtualDrivingScale() / 3.6;
       const accelRate = maxForwardVel / 0.65; // Tăng tốc êm ái trong 0.65s
       const brakeDecel = 24.0;
       const reverseAccelRate = Math.abs(maxReverseVel) / 0.75;
@@ -3291,7 +3552,7 @@ esp32RearImg.onload = () => {
   }
 };
 esp32RearImg.onerror = () => {
-  state.esp32RearConnected = false;
+  state.esp32RearConnected = state.phoneFpvRearLive;
 };
 
 let esp32RearBitmap = null;
@@ -3307,16 +3568,22 @@ function decodePendingRearFrame() {
   isRearDecoding = true;
 
   createImageBitmap(blob).then((bmp) => {
+    const isPhoneFrame = phoneFpvBlobs.has(blob);
+    if (!isPhoneFrame && state.phoneFpvRearLive) {
+      bmp.close();
+      return;
+    }
     if (esp32RearBitmap && typeof esp32RearBitmap.close === 'function') {
       try { esp32RearBitmap.close(); } catch (e) {}
     }
     esp32RearBitmap = bmp;
     state.esp32RearConnected = true;
+    if (isPhoneFrame) notePhoneFpvFrame('rear');
     if (typeof renderRearMirrorAndCameraDisplay === 'function') {
       renderRearMirrorAndCameraDisplay(state.gears[state.gearIndex]);
     }
     // Khi đang cài số lùi (R) hoặc ở chế độ xem cam sau: Vẽ trực tiếp lên kính lái
-    if (state.gear === 'R' || state.windshieldMode === 'ESP32_REAR_LIVE') {
+    if (state.windshieldMode === 'ESP32_REAR_LIVE' || (!isPhoneFrame && state.gear === 'R' && state.windshieldMode === 'ESP32_LIVE')) {
       wsCtx.drawImage(rearCamCanvas, 0, 0, 1024, 512);
       wsTex.needsUpdate = true;
     }
@@ -3324,6 +3591,83 @@ function decodePendingRearFrame() {
     isRearDecoding = false;
     if (pendingRearBlob) decodePendingRearFrame();
   });
+}
+
+const phoneFpvBlobs = new WeakSet();
+const phoneFpvLastFrame = { front: 0, rear: 0 };
+const PHONE_FPV_TIMEOUT_MS = 4000;
+let phoneFpvExpiryTimer = null;
+
+function updatePhoneFpvStatus() {
+  const badge = document.getElementById('phone-fpv-status-badge');
+  if (!badge) return;
+  const rear = state.phoneFpvRearLive && (getPhoneFpvSurface() === 'rear' || !state.phoneFpvFrontLive);
+  const live = rear || state.phoneFpvFrontLive;
+  const label = live ? (rear ? '🟢 Đang phát Cam Lùi' : '🟢 Đang phát Cam Trước') : '🟡 Chờ kết nối từ điện thoại';
+  if (badge.textContent !== label) {
+    badge.textContent = label;
+    badge.setAttribute('data-live', String(live));
+  }
+}
+
+function getPhoneFpvSurface() {
+  return state.phoneFpvSurface || (state.gears[state.gearIndex] === 'R' ? 'rear' : 'front');
+}
+
+function selectPhoneFpvSurface(surface) {
+  if (surface === 'front' || surface === 'rear') state.phoneFpvSurface = surface;
+  updatePhoneFpvStatus();
+  if (!state.phoneFpvFrontLive && !state.phoneFpvRearLive) return;
+  const mode = state.windshieldMode;
+  if (mode === 'ESP32_LIVE' || mode === 'ESP32_REAR_LIVE' ||
+      (mode === 'TRANSPARENT' && !state.windshieldViewSelected)) {
+    const rear = getPhoneFpvSurface() === 'rear';
+    state.windshieldMode = rear ? 'ESP32_REAR_LIVE' : 'ESP32_LIVE';
+    if (rear && state.esp32RearConnected && esp32RearBitmap) {
+      wsCtx.drawImage(esp32RearBitmap, 0, 0, 1024, 512);
+      wsTex.needsUpdate = true;
+    } else if (!rear && state.esp32Connected && esp32Bitmap) {
+      wsCtx.drawImage(esp32Bitmap, 0, 0, 1024, 512);
+      wsTex.needsUpdate = true;
+    }
+  }
+}
+
+function expirePhoneFpvFrames() {
+  phoneFpvExpiryTimer = null;
+  const now = Date.now();
+  if (state.phoneFpvFrontLive && now - phoneFpvLastFrame.front >= PHONE_FPV_TIMEOUT_MS) {
+    state.phoneFpvFrontLive = false;
+    state.esp32Connected = esp32MjpegImg.naturalWidth > 0;
+    esp32Bitmap?.close();
+    esp32Bitmap = null;
+    if (state.windshieldMode === 'ESP32_LIVE' && state.esp32Connected) {
+      wsCtx.drawImage(esp32MjpegImg, 0, 0, 1024, 512);
+      wsTex.needsUpdate = true;
+    }
+  }
+  if (state.phoneFpvRearLive && now - phoneFpvLastFrame.rear >= PHONE_FPV_TIMEOUT_MS) {
+    state.phoneFpvRearLive = false;
+    state.esp32RearConnected = esp32RearImg.naturalWidth > 0;
+    esp32RearBitmap?.close();
+    esp32RearBitmap = null;
+  }
+  updatePhoneFpvStatus();
+  if (state.phoneFpvFrontLive || state.phoneFpvRearLive) {
+    const nextFrame = state.phoneFpvFrontLive && state.phoneFpvRearLive
+      ? Math.min(phoneFpvLastFrame.front, phoneFpvLastFrame.rear)
+      : (state.phoneFpvFrontLive ? phoneFpvLastFrame.front : phoneFpvLastFrame.rear);
+    phoneFpvExpiryTimer = setTimeout(expirePhoneFpvFrames, Math.max(1, nextFrame + PHONE_FPV_TIMEOUT_MS - now));
+  }
+}
+
+function notePhoneFpvFrame(surface) {
+  phoneFpvLastFrame[surface] = Date.now();
+  const wasLive = surface === 'rear' ? state.phoneFpvRearLive : state.phoneFpvFrontLive;
+  if (surface === 'rear') state.phoneFpvRearLive = true;
+  else state.phoneFpvFrontLive = true;
+  if (!wasLive) selectPhoneFpvSurface();
+  if (phoneFpvExpiryTimer === null) phoneFpvExpiryTimer = setTimeout(expirePhoneFpvFrames, PHONE_FPV_TIMEOUT_MS);
 }
 
 function handleIncomingFpvBinary(arrayBuffer) {
@@ -3336,10 +3680,10 @@ function handleIncomingFpvBinary(arrayBuffer) {
     offset = 4;
   }
   if (bytes.length - offset < 4 || bytes[offset] !== 0xFF || bytes[offset + 1] !== 0xD8) return;
-  // [ZERO-LAG DE-DUPLICATION] Bo qua goi tu mpSocket neu kinh da co ket noi direct WebSocket
-  if (target === 'front' && typeof esp32Socket !== 'undefined' && esp32Socket && esp32Socket.readyState === WebSocket.OPEN) return;
-  if (target === 'rear' && typeof esp32RearSocket !== 'undefined' && esp32RearSocket && esp32RearSocket.readyState === WebSocket.OPEN) return;
+  // Chỉ bỏ qua JPEG không có nhãn khi đường ESP32 trực tiếp đang mở.
+  if (!offset && target === 'front' && typeof esp32Socket !== 'undefined' && esp32Socket && esp32Socket.readyState === WebSocket.OPEN) return;
   const jpegBlob = new Blob([bytes.subarray(offset)], { type: 'image/jpeg' });
+  if (offset) phoneFpvBlobs.add(jpegBlob);
   if (target === 'rear') {
     pendingRearBlob = jpegBlob;
     decodePendingRearFrame();
@@ -3352,11 +3696,12 @@ window.handleIncomingFpvBinary = handleIncomingFpvBinary;
 
 function connectRearEsp32Camera(rawUrl) {
   if (!rawUrl) return;
+  const targetWs = normalizeEsp32CameraSocketUrl(rawUrl, '/esp32-rear-ws');
   // [ANTI-THRASH] Nếu socket đang kết nối hoặc đã mở với đúng URL này, không đóng kết nối!
   if (esp32RearSocket && (esp32RearSocket.readyState === WebSocket.CONNECTING || esp32RearSocket.readyState === WebSocket.OPEN)) {
-    if (state.esp32RearStreamUrl === rawUrl) return;
+    if (state.esp32RearStreamUrl === targetWs) return;
   }
-  state.esp32RearStreamUrl = rawUrl;
+  state.esp32RearStreamUrl = targetWs;
   manualRearDisconnect = false;
   if (esp32RearSocket) {
     try { esp32RearSocket.close(); } catch (e) {}
@@ -3365,14 +3710,6 @@ function connectRearEsp32Camera(rawUrl) {
 
   if (rawUrl.startsWith('ws://') || rawUrl.startsWith('wss://')) {
     try {
-      let targetWs = rawUrl;
-      const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
-      const isServedHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
-      if (isServedHost && window.location.protocol === 'https:' && rawUrl.startsWith('ws://')) {
-        const pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const host = (window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:8443`;
-        targetWs = `wss://${host}/esp32-rear-ws`;
-      }
       console.log('[ESP32-REAR] Đang kết nối WebSocket Cam Lùi:', targetWs);
       esp32RearSocket = new WebSocket(targetWs);
       esp32RearSocket.binaryType = 'arraybuffer';
@@ -3383,6 +3720,7 @@ function connectRearEsp32Camera(rawUrl) {
         console.log('[ESP32-REAR] Kết nối thành công tới:', rawUrl);
       };
       esp32RearSocket.onmessage = (msg) => {
+        if (state.phoneFpvRearLive) return;
         const now = performance.now();
         if (typeof esp32TwinMetrics !== 'undefined') {
           esp32TwinMetrics.rearFrameIntervalMs = now - (esp32TwinMetrics.rearLastFrameTime || now);
@@ -3399,13 +3737,9 @@ function connectRearEsp32Camera(rawUrl) {
       };
       esp32RearSocket.onerror = () => {
         state.lastActionLog = '⚠️ Lỗi kết nối direct ESP32 Cam Lùi (' + rawUrl + '), chuyển sang Proxy Server...';
-        const isApkErr = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
-        const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-        const isHttps = !isApkErr && (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
-        const proxyProto = isHttps ? 'wss:' : 'ws:';
-        const proxyPort = isHttps ? '8443' : '8080';
-        const host = (!isApkErr && window.location.hostname && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') ? window.location.host : `${pcIp}:${proxyPort}`;
-        const proxyWs = `${proxyProto}//${host}/esp32-rear-ws`;
+        const pcIp = getHostedServerHostname() || localStorage.getItem('pc_server_ip') ||
+          localStorage.getItem('V500_LAPTOP_IP') || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+        const proxyWs = getEsp32ProxySocketUrl('/esp32-rear-ws', pcIp);
         if (targetWs !== proxyWs) {
           console.log('🔄 [ESP32-REAR] Chuyển hướng kết nối qua Proxy Server:', proxyWs);
           setTimeout(() => {
@@ -3414,7 +3748,7 @@ function connectRearEsp32Camera(rawUrl) {
         }
       };
       esp32RearSocket.onclose = () => {
-        state.esp32RearConnected = false;
+        state.esp32RearConnected = state.phoneFpvRearLive;
         state.lastActionLog = '🔌 Mất kết nối Cam Lùi (' + rawUrl + ') - Sẽ tự động kết nối lại...';
         if (!manualRearDisconnect) {
           clearTimeout(rearReconnectTimer);
@@ -3439,16 +3773,25 @@ function connectRearEsp32Camera(rawUrl) {
 
 document.getElementById('btn-connect-rear-esp32')?.addEventListener('click', () => {
   manualRearDisconnect = false;
-  const pcIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
-  const fallbackUrl = `ws://${pcIp}:8080/esp32-rear-ws`;
+  const pcIp = getHostedServerHostname() || (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP'))) || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+  const fallbackUrl = getEsp32ProxySocketUrl('/esp32-rear-ws', pcIp);
   const raw = document.getElementById('esp32-rear-ip')?.value.trim();
   const url = (raw && !raw.includes('192.168.1.90')) ? raw : fallbackUrl;
   if (document.getElementById('esp32-rear-ip')) document.getElementById('esp32-rear-ip').value = url;
   connectRearEsp32Camera(url);
 });
 document.getElementById('btn-rear-to-windshield')?.addEventListener('click', () => {
-  state.windshieldMode = 'ESP32_REAR_LIVE';
-  state.lastActionLog = '🪟 Đã chiếu hình ảnh Cam Lùi lên Kính Chắn Gió!';
+  state.windshieldViewSelected = true;
+  const showFront = (state.phoneFpvFrontLive || state.phoneFpvRearLive) &&
+    getPhoneFpvSurface() === 'front';
+  state.windshieldMode = showFront ? 'ESP32_LIVE' : 'ESP32_REAR_LIVE';
+  if (showFront && esp32Bitmap) {
+    wsCtx.drawImage(esp32Bitmap, 0, 0, 1024, 512);
+    wsTex.needsUpdate = true;
+  } else if (!showFront) {
+    renderRearMirrorAndCameraDisplay(state.gears[state.gearIndex]);
+  }
+  state.lastActionLog = '🪟 Đã chiếu camera lên Kính Chắn Gió!';
 });
 document.getElementById('btn-disconnect-rear-esp32')?.addEventListener('click', () => {
   manualRearDisconnect = true;
@@ -3528,12 +3871,15 @@ function renderRearMirrorAndCameraDisplay(gear) {
   rearCamCtx.fillStyle = hasLiveRear ? '#00ff88' : (state.esp32RearConnected ? '#ffd60a' : (gear === 'R' ? '#ff3b30' : '#00e5ff'));
   rearCamCtx.font = 'bold 15px monospace';
   const rearTitle = hasLiveRear
-    ? '🎥 ESP32 CAM LÙI LIVE [ĐÃ NHẬN TÍN HIỆU]'
+    ? (state.phoneFpvRearLive ? '📱 CAM LÙI FPV · ĐANG PHÁT' : '🎥 ESP32 CAM LÙI LIVE [ĐÃ NHẬN TÍN HIỆU]')
     : (state.esp32RearConnected
         ? '⏳ ESP32 ĐÃ KẾT NỐI - ĐANG CHỜ KHUNG HÌNH...'
         : (gear === 'R' ? '🔙 CAM LÙI 3D ĐUÔI XE [CHƯA KẾT NỐI ESP32]' : '🔙 GƯƠNG HẬU 3D ĐUÔI XE'));
   rearCamCtx.fillText(rearTitle, 12, 22);
   rearCamTex.needsUpdate = true;
+  if (rearCamModalCtx && !rearCamModal.classList.contains('panel-hidden')) {
+    rearCamModalCtx.drawImage(rearCamCanvas, 0, 0, 512, 256);
+  }
 
   if (state.windshieldMode === 'ESP32_REAR_LIVE') {
     wsCtx.drawImage(rearCamCanvas, 0, 0, 1024, 512);
@@ -4114,28 +4460,26 @@ function swapSeatOrTakeDriverControl() {
 
 document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOrTakeDriverControl);
 
-(function initMultiplayerClient() {
+function isSocketActive(socket) {
+  return socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING);
+}
+
+function initMultiplayerClient(hostOverride = '') {
+  if (isSocketActive(mpSocket)) return;
   try {
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     let hostTarget = window.location.host;
 
     // ĐỊNH TUYẾN KẾT NỐI TỚI LAPTOP SERVER CHO CẢ BẢN WEB VÀ APK META QUEST
-    const isApkEnvironment = (
-      (typeof window !== 'undefined' && window.QuestVRBridge) ||
-      (typeof window !== 'undefined' && window.Capacitor) ||
-      (typeof window !== 'undefined' && window.location.protocol === 'capacitor:') ||
-      (typeof window !== 'undefined' && window.location.protocol === 'file:') ||
-      (typeof window !== 'undefined' && window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')
-    );
-
-    if (isApkEnvironment) {
-      let pcIp = (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
+    if (hostOverride) {
+      hostTarget = hostOverride;
+    } else if (!getHostedServerHostname()) {
+      let pcIp = getHostedServerHostname() || (typeof localStorage !== 'undefined' && localStorage.getItem('pc_server_ip')) || '';
       if (!pcIp || pcIp === 'localhost' || pcIp === '127.0.0.1' || pcIp === 'null' || pcIp === 'undefined') {
         pcIp = '192.168.1.76';
         if (typeof localStorage !== 'undefined') localStorage.setItem('pc_server_ip', pcIp);
       }
       hostTarget = `${pcIp}:8080`;
-      wsProto = 'ws:';
     }
 
     mpSocket = new WebSocket(`${wsProto}//${hostTarget}`);
@@ -4154,10 +4498,11 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
     };
 
     mpSocket.onclose = () => {
+      state.phoneFpvSurface = null;
       console.warn('[Multiplayer] ⚠️ Mất kết nối WebSocket, tự động thử lại sau 2.5s...');
       setTimeout(() => {
-        if (!mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
-          try { initMultiplayerClient(); } catch (e) {}
+        if (!isSocketActive(mpSocket)) {
+          initMultiplayerClient(hostOverride);
         }
       }, 2500);
     };
@@ -4173,6 +4518,18 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
       }
       try {
         const msg = JSON.parse(event.data);
+        if (msg.type === 'SWITCH_FPV_SURFACE' || msg.type === 'FPV_SWITCH_CAMERA' || msg.type?.startsWith?.('FPV_PHONE_')) {
+          selectPhoneFpvSurface(msg.surface || msg.role);
+          return;
+        }
+        if (msg.type === 'BATTERY_STATE') {
+          updateRcBattery(msg.battery);
+          return;
+        }
+        if (msg.type === 'BATTERY_ACTION_RESULT') {
+          showBatteryResult(msg);
+          return;
+        }
         if (msg.type === 'SERVER_LAN_INFO') {
           if (msg.lanIp && typeof localStorage !== 'undefined' && msg.lanIp !== '127.0.0.1') {
             localStorage.setItem('pc_server_ip', msg.lanIp);
@@ -4202,6 +4559,7 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
             });
           }
         } else if (msg.type === 'FPV_HOT_SWAP_ACTIVE') {
+          selectPhoneFpvSurface(msg.surface);
           state.lastActionLog = '📱 Đã thay nóng điện thoại FPV mới!';
         } else if (msg.type === 'WELCOME') {
           state.playerId = msg.playerId;
@@ -4414,7 +4772,8 @@ document.getElementById('btn-swap-driver')?.addEventListener('click', swapSeatOr
       } catch (e) {}
     };
   } catch (err) {}
-})();
+}
+initMultiplayerClient();
 
 // Vòng lặp bổ trợ chạy song song để cập nhật Tay cầm, Xi-nhan, Gạt mưa, Va chạm & Đồng bộ Multiplayer
 let mpSyncTimer = 0;
@@ -4668,6 +5027,16 @@ function closeRearCamFloatingModal() {
   rearCamModal?.classList.add('panel-hidden');
 }
 
+function toggleRearCamPiPModal() {
+  if (!rearCamModal) return;
+  if (rearCamModal.classList.contains('panel-hidden')) openRearCamFloatingModal();
+  else closeRearCamFloatingModal();
+}
+
+document.getElementById('btn-phone-fpv-rear-zoom')?.addEventListener('click', toggleRearCamPiPModal);
+document.getElementById('btn-phone-fpv-cam-road')?.addEventListener('click', () => {
+  window.toggleWindshieldCamOrRoad?.();
+});
 document.getElementById('btn-close-rearcam-modal')?.addEventListener('click', closeRearCamFloatingModal);
 
 // Cho phép kéo thả cửa sổ Cam Lùi nổi
@@ -5616,10 +5985,6 @@ function updateDirectGamepadAndZeroDriftPhysics(dt) {
     return;
   }
 
-  // 7. Đồng bộ hình ảnh Cam Lùi lên cả Cửa sổ Cam Lùi nổi (nếu đang mở)
-  if (rearCamModal && !rearCamModal.classList.contains('panel-hidden') && rearCamModalCtx) {
-    rearCamModalCtx.drawImage(rearCamCanvas, 0, 0, 512, 256);
-  }
 }
 
 // Chạy vòng lặp nâng cấp V102 đồng bộ mỗi khung hình
@@ -6864,7 +7229,7 @@ const HOME_CAR_SPAWN_POS = new THREE.Vector3(-9.2, 0.0, -14.0);
 
   // 4. Đặt tốc độ đi bộ mặc định GẤP 6 LẦN (6.0x) và tốc độ xe khi chưa có ESP32 GẤP 10 LẦN
   state.walkSpeedMultiplier = 6.0;
-  state.nonEsp32CarSpeedMultiplier = 2.8; // Gia tốc & vận tốc tối đa tăng gấp 10 lần cảm giác lái thực tế
+  state.nonEsp32CarSpeedMultiplier = 1.5;
   state.esp32GdRefSpeed = 1.0;
   state.esp32UdpConnected = false;
   state.esp32AutoMode = true;
@@ -7964,8 +8329,9 @@ function renderSimulatedEsp32FpvOnAllScreens(elapsed) {
 
 // Khi tắt Cam Mô Phỏng về Kính Trong, trả lại GPU texture cho gương hậu
 document.getElementById('btn-clear-windshield')?.addEventListener('click', () => {
-  state.windshieldMode = 'TRANSPARENT';
-  state.esp32RearConnected = false;
+  state.windshieldViewSelected = true;
+  window.toggleWindshieldCamOrRoad?.('TRANSPARENT');
+  if (!state.phoneFpvRearLive) state.esp32RearConnected = false;
 });
 document.getElementById('btn-sim-esp32-cam')?.addEventListener('click', () => {
   state.windshieldMode = 'ESP32_SIM';
@@ -8419,7 +8785,6 @@ function update360HeadingNpcsAndCrashRescuePhysics(dt, elapsed) {
 //           - CÒ BÊN HÔNG (GRIP): PHANH CÔN GIẢM TỐC TỪ TỪ
 //           - PHÍM A: MỞ XOAY GÓC NHÌN THEO CỬ ĐỘNG TAY CẦM <-> BẤM LẠI ĐỂ KHÓA NGAY TẠI HƯỚNG ĐÓ!
 //           - TỐC ĐỘ XE NGƯỜI CHƠI MẶC ĐỊNH GẤP 5 LẦN XE NPC (5.0X) ---
-state.rcSpeedRatio = 5.0; // Mặc định nhanh gấp 5 lần xe NPC!
 const speedRatioSlider = document.getElementById('slider-speed-ratio');
 const speedRatioVal = document.getElementById('val-speed-ratio');
 if (speedRatioSlider) speedRatioSlider.value = '5.0';
@@ -8518,6 +8883,129 @@ function updateV112ControllerSteeringBrakingAndLookLock(dt) {
     return;
   }
 }
+
+// Bảng cài đặt, liên kết camera điện thoại và bố cục thanh công cụ desktop.
+(function setupFunctionPanel() {
+  const panel = document.getElementById('function-panel');
+  const tabBar = document.getElementById('func-tab-bar');
+  if (!panel || !tabBar) return;
+  const tabs = Array.from(tabBar.querySelectorAll('[role="tab"]'));
+
+  function selectTab(id, focus = false) {
+    const selected = tabs.find(tab => tab.getAttribute('aria-controls') === id) || tabs[0];
+    if (!selected) return;
+    for (const tab of tabs) {
+      const active = tab === selected;
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+      document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+    }
+    panel.scrollTop = 0;
+    saveSettingsPreference('rc_func_active_tab', selected.getAttribute('aria-controls'));
+    if (focus) selected.focus();
+  }
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => selectTab(tab.getAttribute('aria-controls')));
+    tab.addEventListener('keydown', event => {
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+      selectTab(tabs[next].getAttribute('aria-controls'), true);
+    });
+  });
+  selectTab(readSettingsPreference('rc_func_active_tab'));
+
+  const speedInput = document.getElementById('slider-ingame-speed-scale');
+  const speedOutput = document.getElementById('val-ingame-speed-scale');
+  const presets = panel.querySelectorAll('[data-ingame-speed]');
+
+  function showSpeedScale() {
+    speedInput.value = String(state.inGameSpeedScale);
+    speedOutput.textContent = formatInGameSpeedScale(state.inGameSpeedScale);
+    for (const preset of presets) {
+      preset.setAttribute('aria-pressed', String(Number(preset.dataset.ingameSpeed) === state.inGameSpeedScale));
+    }
+  }
+
+  function setSpeedScale(value) {
+    state.inGameSpeedScale = clampInGameSpeedScale(value);
+    saveSettingsPreference('rc_ingame_speed_scale', String(state.inGameSpeedScale));
+    showSpeedScale();
+  }
+
+  if (speedInput && speedOutput) {
+    showSpeedScale();
+    speedInput.addEventListener('input', () => setSpeedScale(speedInput.value));
+    speedInput.addEventListener('keydown', event => event.stopPropagation());
+    for (const preset of presets) {
+      preset.addEventListener('click', () => setSpeedScale(preset.dataset.ingameSpeed));
+    }
+  }
+
+  const topBar = document.getElementById('top-bar');
+  if (topBar && typeof ResizeObserver === 'function') {
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const syncTopBar = () => {
+      if (!desktop.matches) return;
+      const bottom = Math.ceil(topBar.getBoundingClientRect().bottom);
+      document.documentElement.style.setProperty('--desktop-role-top', `${bottom + 6}px`);
+      document.documentElement.style.setProperty('--desktop-panel-top', `${bottom + 46}px`);
+    };
+    new ResizeObserver(syncTopBar).observe(topBar);
+    desktop.addEventListener('change', syncTopBar);
+    syncTopBar();
+  }
+})();
+
+(function setupPhoneFpvHub() {
+  const urlInput = document.getElementById('phone-fpv-url-input');
+  const copyButton = document.getElementById('btn-copy-phone-fpv-url');
+  const qrDialog = document.getElementById('phone-fpv-qr-dialog');
+  const qrImage = document.getElementById('phone-fpv-qr-img');
+  if (!urlInput || !copyButton || !qrDialog || !qrImage) return;
+
+  function setCameraUrl(host) {
+    if (!host) return;
+    const url = new URL('https://localhost:8443/fpv-cam.html');
+    if (host.includes(':') && !host.startsWith('[')) host = `[${host}]`;
+    url.hostname = host;
+    if (url.hostname !== 'localhost' || host === 'localhost') urlInput.value = url.href;
+  }
+
+  setCameraUrl(window.location.hostname);
+  if (typeof fetch === 'function') {
+    fetch('/api/network-info')
+      .then(response => response.ok ? response.json() : null)
+      .then(info => setCameraUrl(info?.lanIp))
+      .catch(() => {});
+  }
+
+  let copyFeedbackTimer;
+  const copyLabel = copyButton.textContent;
+  copyButton.addEventListener('click', async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(urlInput.value);
+      copyButton.textContent = 'Đã copy!';
+    } catch {
+      urlInput.select();
+      if (document.execCommand?.('copy')) copyButton.textContent = 'Đã copy!';
+      else copyButton.textContent = 'Ctrl+C để copy';
+    }
+    clearTimeout(copyFeedbackTimer);
+    copyFeedbackTimer = setTimeout(() => { copyButton.textContent = copyLabel; }, 2000);
+  });
+  document.getElementById('btn-open-phone-fpv-qr')?.addEventListener('click', () => {
+    qrImage.src = `/api/phone-fpv-qr?url=${encodeURIComponent(urlInput.value)}`;
+    qrDialog.showModal();
+  });
+})();
 
 // --- 17.6. MULTIPLAYER QR GHẾ PHỤ (ĐIỆN THOẠI 9:16 MƯỢT 60FPS & PAIR META QUEST 3 16:9) ---
 (function setupQrMultiplayerAndMobile9x16Optimization() {
@@ -11996,16 +12484,15 @@ const rearRightYtScreenGroup = new THREE.Group();
   });
 
   // Lắng nghe sự kiện đồng bộ MP4 khi bất kỳ ghế nào tìm kiếm hoặc đổi video
-  window.addEventListener('yt-multiscreen-sync', (ev) => {
+  window.addEventListener('yt-multiscreen-sync', async (ev) => {
     const data = ev.detail;
     if (!data) return;
     activeYoutubeTitle = data.title || activeYoutubeTitle;
     if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
       mpSocket.send(JSON.stringify({ type: 'YT_MULTISCREEN_SYNC', payload: data }));
     }
-    if (window.supabaseChannel) {
-      window.supabaseChannel.send({ type: 'broadcast', event: 'YT_MULTISCREEN_SYNC', payload: data });
-    }
+    const channel = await window.ensureOptionalSupabaseMultiScreen?.();
+    if (channel) channel.send({ type: 'broadcast', event: 'YT_MULTISCREEN_SYNC', payload: data });
   });
 })();
 
@@ -19217,7 +19704,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       worldPos: new THREE.Vector3(-21.5, 0.26, -23.3),
       headingRad: -Math.PI / 2, // Mũi xe hướng thẳng ra cổng Gara (+X) sẵn sàng phóng ra đường!
       ringColor: 0xd4af37,
-      speedMultiplier: 5.0,
+      speedMultiplier: DEFAULT_GARAGE_SPEED_RATIO,
       steerSens: 1.0,
       bodyHex: 0x101829,
       nappaHex: 0xdfd1be,
@@ -19229,7 +19716,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       worldPos: new THREE.Vector3(-21.5, 0.26, -26.5),
       headingRad: -Math.PI / 2,
       ringColor: 0xff2a85,
-      speedMultiplier: 7.5, // Nhanh và bốc hơn Rolls-Royce!
+      speedMultiplier: 3.8,
       steerSens: 1.35,
       bodyHex: 0xd90429,
       nappaHex: 0x111827,
@@ -19241,7 +19728,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       worldPos: new THREE.Vector3(-21.5, 0.26, -29.5),
       headingRad: -Math.PI / 2,
       ringColor: 0x00f5d4,
-      speedMultiplier: 8.5, // Gia tốc mô tô phân khối lớn cực nhạy!
+      speedMultiplier: 4.4,
       steerSens: 1.5,
       bodyHex: 0x00bbf9,
       nappaHex: 0x0f172a,
@@ -20443,7 +20930,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   // Tạo thanh điều khiển nhanh trong Bảng Chức Năng cho Cửa cuốn & Nghiêng 360° (ĐT + Quest 3)
   function injectV170ControlsToUI() {
-    const funcPanelEl = document.getElementById('function-panel');
+    const funcPanelEl = document.getElementById('tab-world');
     if (funcPanelEl && !document.getElementById('v170-smart-garage-tilt-row')) {
       const row = document.createElement('div');
       row.id = 'v170-smart-garage-tilt-row';
@@ -20454,7 +20941,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         <button id="btn-v170-tilt-360" class="act-btn" style="background:#00e5ff;color:#000;">🧭 Nghiêng 360° (ĐT & Quest 3): BẬT</button>
         <button id="btn-v170-recenter-360" class="act-btn" style="background:#ffd60a;color:#000;flex:0.5;">🎯 Cân Bằng Tâm</button>
       `;
-      funcPanelEl.prepend(row);
+      funcPanelEl.append(row);
 
       document.getElementById('btn-v170-roller-door')?.addEventListener('click', (e) => {
         rollerDoorState.manualOverride = !rollerDoorState.manualOverride;
@@ -20607,6 +21094,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   // 2. Gán sự kiện cho các nút điều khiển UI trong Bảng Vô Lăng
   window.toggleWindshieldCamOrRoad = function(targetMode) {
+    state.windshieldViewSelected = true;
     if (targetMode) {
       state.windshieldMode = targetMode;
     } else {
@@ -20633,6 +21121,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       wsCtx.clearRect(0, 0, 1024, 512);
       wsTex.needsUpdate = true;
     }
+    selectPhoneFpvSurface();
     updateCamRoadUiButtons();
   };
 
@@ -20860,12 +21349,9 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
 
     // 6. Cập nhật Xung ESP32
-    const pulseInfo = document.getElementById('esp32-car-pulse-info');
-    if (pulseInfo) {
-      const servoDeg = Math.round(90 + sNorm * 45);
-      const escUs = Math.round(1500 + dNorm * 260);
-      pulseInfo.textContent = `Lái: ${servoDeg}° | Ga: ${escUs}µs [Số ${gear}]`;
-    }
+    const servoDeg = Math.round(90 + sNorm * 45);
+    const escUs = Math.round(1500 + dNorm * 260);
+    updateEsp32PulseInfo(`Lái: ${servoDeg}° | Ga: ${escUs}µs [Số ${gear}]`);
 
     // 7. Cập nhật đối tượng racingWheel toàn cục
     if (typeof racingWheel !== 'undefined' && racingWheel) {
@@ -20914,6 +21400,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
     return true;
   }
+  if (typeof window !== 'undefined') window.isRemoteBridgeActive = isRemoteBridgeActive;
+
   function pollGamepadRacingWheel(dt) {
     // [ANTI-CONFLICT] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm vào laptop và đang hoạt động):
     // Không cho Gamepad / Touch Controller trên kính tự ý ghi đè hoặc set racingWheel.connected = false!
@@ -21392,7 +21880,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     // ĐỒNG BỘ TỐC ĐỘ 1:1 VỚI XE RC THẬT & MỨC GA ĐÃ CHỌN
     const targetMaxKmh = state.rcTargetSpeedKmh || 12.0;
-    const maxVelocity = targetMaxKmh / 3.6; // 12 km/h = 3.33 m/s
+    const maxVelocity = targetMaxKmh * getVirtualDrivingScale() / 3.6;
     const speedFactor = 1.0;
 
     // B. BÀN ĐẠP THẮNG (QUY TẮC ƯU TIÊN PHANH & GIẢM TỐC MƯỢT CHỐNG GIẬT)
@@ -21565,6 +22053,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     };
 
     // Báo trạng thái Điện thoại FPV cho Kính Quest 3 (kể cả qua Wi-Fi LAN hoặc Cloudflare Public Tunnel)
+    if (fpvPhone) {
+      if (!state.phoneFpvSurface && fpvPhone.connected) selectPhoneFpvSurface(fpvPhone.surface);
+      else updatePhoneFpvStatus();
+    }
     if (fpvPhone && fpvPhone.connected) {
       const phoneLabel = fpvPhone.ip || (publicTunnelUrl ? 'Cloudflare Tunnel' : 'FPV Phone');
       if (state.fpvPhoneIp !== phoneLabel || !state.fpvPhoneConnected) {
@@ -21600,10 +22092,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         frontInput.value = expectedFrontUrl;
       }
       const isFrontConnectingOrOpen = esp32Socket && (esp32Socket.readyState === WebSocket.CONNECTING || esp32Socket.readyState === WebSocket.OPEN);
-      if (!isFrontConnectingOrOpen || state.esp32StreamUrl !== expectedFrontUrl) {
+      if (!isFrontConnectingOrOpen || state.esp32StreamUrl !== normalizeEsp32CameraSocketUrl(expectedFrontUrl, '/esp32-front-ws')) {
         console.log('📹 [VR CAM FRONT] Đang tự động kết nối Cam Trước:', expectedFrontUrl);
         connectEsp32Windshield(expectedFrontUrl);
-        if (state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
+        if (!state.windshieldViewSelected && state.windshieldMode !== 'ESP32_PIP' && state.windshieldMode !== 'ESP32_REAR_LIVE') {
           state.windshieldMode = 'ESP32_LIVE';
         }
       }
@@ -21618,7 +22110,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         rearInput.value = expectedRearUrl;
       }
       const isRearConnectingOrOpen = esp32RearSocket && (esp32RearSocket.readyState === WebSocket.CONNECTING || esp32RearSocket.readyState === WebSocket.OPEN);
-      if ((!isRearConnectingOrOpen || state.esp32RearStreamUrl !== expectedRearUrl) && !manualRearDisconnect) {
+      if ((!isRearConnectingOrOpen || state.esp32RearStreamUrl !== normalizeEsp32CameraSocketUrl(expectedRearUrl, '/esp32-rear-ws')) && !manualRearDisconnect) {
         console.log('📹 [VR CAM REAR] Đang tự động kết nối Cam Lùi:', expectedRearUrl);
         connectRearEsp32Camera(expectedRearUrl);
       }
@@ -21630,7 +22122,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     try {
       const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
       const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
-      const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+      const pcIp = getHostedServerHostname() || savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
       const isHttps = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol === 'https:';
       const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
       const baseUrl = isCurrentHost ? '' : (isHttps ? `https://${pcIp}:8443` : `http://${pcIp}:8080`);
@@ -21658,7 +22150,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     try {
       const isApkEnv = (typeof window !== 'undefined' && (window.QuestVRBridge || window.Capacitor || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:' || (window.location.hostname === 'localhost' && window.location.port !== '8080' && window.location.port !== '8443')));
       const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
-      const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+      const pcIp = getHostedServerHostname() || savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
       const isHttps = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol === 'https:';
       const isCurrentHost = !isApkEnv && typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http');
       const baseUrl = isCurrentHost ? '' : (isHttps ? `https://${pcIp}:8443` : `http://${pcIp}:8080`);
@@ -21678,7 +22170,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     } catch (err) {
       console.warn('[SCAN AUTO-FALLBACK]', err);
       const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('pc_server_ip') || localStorage.getItem('V500_LAPTOP_IP')));
-      const pcIp = savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
+      const pcIp = getHostedServerHostname() || savedIp || window.__ACTIVE_DISCOVERED_IP__ || '192.168.1.76';
       if (typeof applyEsp32CameraIps === 'function') {
         applyEsp32CameraIps({
           front: { ip: pcIp, port: 8080, path: '/esp32-front-ws', active: true },
@@ -22069,7 +22561,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         // [ANTI-ECHO] Nếu đang nhận Remote Bridge từ Laptop (GOG R808 cắm máy tính và đang phát sóng):
         // Laptop đã là master điều khiển xe RC và phát broadcast.
         // Client (Kính VR) KHÔNG gửi ngược CAR_CONTROL hay WHEEL_BRIDGE_INPUT về server để triệt tiêu vĩnh viễn echo loop nhảy loạn góc lái!
-        if (isRemoteBridgeActive()) {
+        if (typeof window !== 'undefined' && typeof window.isRemoteBridgeActive === 'function' && window.isRemoteBridgeActive()) {
           return;
         }
         const maxFwdDelta = Math.max(20, Math.min(260, (state.rcMaxForwardPulse || 1660) - 1500));
@@ -22231,11 +22723,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         }
 
         // Cập nhật nhãn thông số xung hiển thị trên Web HUD
-        const pulseInfoEl = document.getElementById('esp32-car-pulse-info');
-        if (pulseInfoEl) {
-          const dirLabel = throttle > 1520 ? '🟢 TIẾN' : (throttle < 1480 ? '🔴 LÙI' : '⚪ DỪNG');
-          pulseInfoEl.textContent = `Lái: ${steer}° | Ga: ${throttle}µs [${dirLabel}]`;
-        }
+        const dirLabel = throttle > 1520 ? '🟢 TIẾN' : (throttle < 1480 ? '🔴 LÙI' : '⚪ DỪNG');
+        updateEsp32PulseInfo(`Lái: ${steer}° | Ga: ${throttle}µs [${dirLabel}]`);
       }
     }
   };
@@ -22319,7 +22808,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   if (typeof window !== 'undefined') window.__V260_MASTER_ACTIVE__ = true;
 
   // HỆ SỐ NHÂN TỐC ĐỘ XE ẢO TRÊN APP (Nhanh gấp 5 lần so với xe thật ngoài đời)
-  const VIRTUAL_APP_SPEED_SCALE = 5.0;
 
   // --------------------------------------------------------------------------
   // 25.1. NHẬN DIỆN THIẾT BỊ & PHÂN BỔ VAI TRÒ
@@ -22409,6 +22897,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     const inFront = document.getElementById('v250-ip-front');
     const inRear = document.getElementById('v250-ip-rear');
     const inCtrl = document.getElementById('v250-ip-ctrl');
+    const frontHudIp = (inFront ? inFront.value : localStorage.getItem('rc_front_cam_ip'))?.trim();
+    const rearHudIp = (inRear ? inRear.value : localStorage.getItem('rc_rear_cam_ip'))?.trim();
 
     if (inFront && inFront.value && inFront.value.trim()) hwConfig.frontCamIp = inFront.value.trim();
     if (inRear && inRear.value && inRear.value.trim()) hwConfig.rearCamIp = inRear.value.trim();
@@ -22432,10 +22922,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       }).catch(() => {});
     }
 
+    const hud = document.getElementById('v250-dual-cam-hud');
+    const hudVisible = hud && hud.getClientRects().length > 0 && getComputedStyle(hud).visibility === 'visible';
     const frontImg = document.getElementById('v250-front-cam-img');
     const rearImg = document.getElementById('v250-rear-cam-img');
-    if (frontImg) frontImg.src = `/api/esp32-proxy?ip=${hwConfig.frontCamIp}&port=81&t=${Date.now()}`;
-    if (rearImg) rearImg.src = `/api/esp32-proxy?ip=${hwConfig.rearCamIp}&port=81&t=${Date.now()}`;
+    if (hudVisible && frontImg && frontHudIp) {
+      frontImg.src = '/api/esp32-proxy?url=' + encodeURIComponent('http://' + frontHudIp + ':81/stream');
+    }
+    if (hudVisible && rearImg && rearHudIp) {
+      rearImg.src = '/api/esp32-proxy?url=' + encodeURIComponent('http://' + rearHudIp + ':81/stream');
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -22520,7 +23016,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     }
     if (!wheelPad) return;
     // [ANTI-ECHO V504] Nếu Native Host Bridge đang đọc vô lăng USB ở 50Hz -> Browser không phát đè WHEEL_BRIDGE_INPUT
-    if (typeof isRemoteBridgeActive === 'function' && isRemoteBridgeActive()) return;
+    if (typeof window !== 'undefined' && typeof window.isRemoteBridgeActive === 'function' && window.isRemoteBridgeActive()) return;
 
     // Tự động hiệu chuẩn trạng thái nghỉ của các trục (bỏ qua 10 frame đầu chống frame 0 dummy)
     if (!restAxesCalibrated) {
@@ -22662,8 +23158,11 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
   // Khởi động Web Worker 50Hz trên Laptop để KHÔNG BỊ TRÌNH DUYỆT GIẢM XUỐNG 1HZ KHI CHẠY NGẦM
   function startGog808UnthrottledWorker() {
-    if (typeof window === 'undefined' || !window.Worker) return;
     if (window.__GOG808_WORKER__) return;
+    if (typeof Worker === 'undefined') {
+      setInterval(runDedicatedLaptopWheelAndCameraTransmitter, 20);
+      return;
+    }
     try {
       const workerScript = `
         let timer = null;
@@ -22683,6 +23182,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       };
       worker.postMessage('start');
       window.__GOG808_WORKER__ = worker;
+      worker.onerror = () => {
+        if (window.__GOG808_WORKER__ !== worker) return;
+        worker.terminate();
+        window.__GOG808_WORKER__ = null;
+        setInterval(runDedicatedLaptopWheelAndCameraTransmitter, 20);
+      };
     } catch (err) {
       console.warn('[GOG808] Web Worker fallback to setInterval:', err);
       setInterval(runDedicatedLaptopWheelAndCameraTransmitter, 20);
@@ -22692,9 +23197,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   if (isLaptopAdmin) {
     startGog808UnthrottledWorker();
   }
-
-  // Fallback định kỳ
-  setInterval(runDedicatedLaptopWheelAndCameraTransmitter, 20);
 
   if (typeof window !== 'undefined') {
     window.toggleGog808Pedals = () => {
@@ -22902,10 +23404,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     // VẬT LÝ XE: TÍCH PHÂN VẬN TỐC, RẼ MƯỢT & NHÂN TỐC ĐỘ 5X TRÊN APP
     // ------------------------------------------------------------------------
     if (typeof state !== 'undefined' && state && state.playerMode === 'DRIVING') {
+      const virtualSpeedScale = VIRTUAL_APP_SPEED_SCALE * getVirtualDrivingScale();
       if (hasActiveInput) {
         state.engineRunning = true;
         const curvedSteer = Math.sign(smoothedSteerInput) * Math.pow(Math.abs(smoothedSteerInput), 1.25);
-        const maxSpeedMs = 24.0; // ~86 km/h
 
         if (isBraking) {
           const decelAlpha = THREE.MathUtils.clamp(dt * 8.5, 0, 1.0);
@@ -22914,13 +23416,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
             state.velocityMs = 0;
           }
         } else {
+          const maxSpeedMs = smoothedThrottleInput < 0 ? VIRTUAL_REVERSE_SPEED_MS : VIRTUAL_FORWARD_SPEED_MS;
           const targetVel = smoothedThrottleInput * maxSpeedMs;
-          const accelAlpha = THREE.MathUtils.clamp(dt * 5.2, 0, 1.0);
+          const accelAlpha = THREE.MathUtils.clamp(dt * 3.4, 0, 1.0);
           state.velocityMs = THREE.MathUtils.lerp(state.velocityMs || 0, targetVel, accelAlpha);
         }
 
-        // Tốc độ ảo hiển thị trên màn hình HUD tăng gấp 5 lần
-        state.speedKmh = Math.abs(state.velocityMs || 0) * 3.6 * VIRTUAL_APP_SPEED_SCALE;
+        state.speedKmh = Math.abs(state.velocityMs || 0) * 3.6 * virtualSpeedScale;
 
         // Rẽ lái tự nhiên theo vận tốc
         const turnDirection = state.velocityMs >= -0.05 ? 1 : -1;
@@ -22930,7 +23432,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
         if (typeof vehicleRoot !== 'undefined' && vehicleRoot && !window.__UNIFIED_VEHICLE_CONTROL_ACTIVE__) {
           vehicleRoot.rotation.y = state.headingRad;
-          const step = (state.velocityMs || 0) * VIRTUAL_APP_SPEED_SCALE * dt;
+          const step = (state.velocityMs || 0) * virtualSpeedScale * dt;
           vehicleRoot.position.x -= Math.sin(state.headingRad) * step;
           vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
         }
@@ -22939,14 +23441,14 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           steeringWheelPivot.rotation.z = -curvedSteer * 1.35;
         }
         if (typeof state.wheelRotationRad === 'number') {
-          state.wheelRotationRad += (((state.velocityMs || 0) * VIRTUAL_APP_SPEED_SCALE * dt) / 0.38);
+          state.wheelRotationRad += (((state.velocityMs || 0) * virtualSpeedScale * dt) / 0.38);
         }
       } else {
         // Nhả bàn đạp -> Giảm tốc tự nhiên theo quán tính và DỪNG YÊN TẠI VỊ TRÍ MỚI
         if (Math.abs(state.velocityMs || 0) > 0.03) {
           state.velocityMs *= Math.pow(0.22, dt);
-          state.speedKmh = Math.abs(state.velocityMs || 0) * 3.6 * VIRTUAL_APP_SPEED_SCALE;
-          const step = (state.velocityMs || 0) * VIRTUAL_APP_SPEED_SCALE * dt;
+          state.speedKmh = Math.abs(state.velocityMs || 0) * 3.6 * virtualSpeedScale;
+          const step = (state.velocityMs || 0) * virtualSpeedScale * dt;
           if (typeof vehicleRoot !== 'undefined' && vehicleRoot) {
             vehicleRoot.position.x -= Math.sin(state.headingRad) * step;
             vehicleRoot.position.z -= Math.cos(state.headingRad) * step;
@@ -23222,7 +23724,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       badge.textContent = `${deviceTag} | 🚶 ĐI BỘ TỰ DO`;
       badge.className = 'v260-role-badge role-foot';
     } else if (isDriver) {
-      badge.textContent = `${deviceTag} | 🚗 TÀI XẾ (GHẾ 0) — ĐIỀU KHIỂN CHÍNH [5X SPEED]`;
+      badge.textContent = `${deviceTag} | 🚗 TÀI XẾ (GHẾ 0) — ĐIỀU KHIỂN CHÍNH [${formatInGameSpeedScale(state.inGameSpeedScale)} ÊM]`;
       badge.className = 'v260-role-badge role-driver';
     } else {
       const seatNames = ['Tài Xế', 'Ghế Phụ Trước', 'Ghế Sau Trái', 'Ghế Sau Phải'];
@@ -23510,10 +24012,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     wheelDeadzone: 0.035,
     pedalDeadzone: 0.04,
     xrStickDeadzone: 0.08,
-    maxForwardSpeedMs: 24.0,   // ~86 km/h
-    maxReverseSpeedMs: 11.0,   // ~40 km/h
-    virtualSpeedScale: 5.0,    // Nhân tốc độ hiển thị và quãng đường 5x trên app
-    accelRate: 5.2,
+    maxForwardSpeedMs: VIRTUAL_FORWARD_SPEED_MS,
+    maxReverseSpeedMs: VIRTUAL_REVERSE_SPEED_MS,
+    virtualSpeedScale: VIRTUAL_APP_SPEED_SCALE,
+    accelRate: 3.4,
     brakeDecelRate: 20.0,
     naturalDragRate: 2.5,
     steerMaxVisualDeg: 540,
@@ -23581,12 +24083,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   // --------------------------------------------------------------------------
   // 1. QUẢN LÝ KẾT NỐI WEBSOCKET & CHẶN GÓI ROOM_SYNC GÂY GIẬT XE VỀ CHỖ CŨ
   // --------------------------------------------------------------------------
-  let activeWs = null;
-
   function getActiveSocket() {
-    if (activeWs && activeWs.readyState === 1) return activeWs;
+    if (mpSocket && mpSocket.readyState === WebSocket.OPEN) {
+      bindSocketListeners(mpSocket);
+      return mpSocket;
+    }
     const candidates = [
-      typeof mpSocket !== 'undefined' ? mpSocket : null,
       (typeof window !== 'undefined' ? window.multiplayerWs : null),
       (typeof window !== 'undefined' ? window.rcSocket : null),
       (typeof window !== 'undefined' ? window.ws : null)
@@ -23594,7 +24096,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     for (const sock of candidates) {
       if (sock && sock.readyState === 1) {
         bindSocketListeners(sock);
-        activeWs = sock;
         return sock;
       }
     }
@@ -23707,34 +24208,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         }
       } catch (e) {}
     }, true);
-  }
-
-  // Intercept WebSocket khởi tạo mới để tự động gắn bộ lọc chống giật xe
-  const OrigWebSocket = (typeof window !== 'undefined' && window.WebSocket) ? window.WebSocket : (typeof WebSocket !== 'undefined' ? WebSocket : null);
-  if (OrigWebSocket && !OrigWebSocket.__unifiedIntercepted) {
-    function UnifiedWebSocket(url, protocols) {
-      const wsInst = protocols !== undefined ? new OrigWebSocket(url, protocols) : new OrigWebSocket(url);
-      activeWs = wsInst;
-      bindSocketListeners(wsInst);
-      return wsInst;
-    }
-    UnifiedWebSocket.prototype = OrigWebSocket.prototype;
-    Object.assign(UnifiedWebSocket, OrigWebSocket);
-    UnifiedWebSocket.__unifiedIntercepted = true;
-    if (typeof window !== 'undefined') window.WebSocket = UnifiedWebSocket;
-  }
-
-  // Nếu trên kính VR chạy APK độc lập (localhost của kính), tự động nối WebSocket về IP Laptop
-  if (isQuestHeadset && typeof window !== 'undefined' && (locHost === 'localhost' || locHost === '127.0.0.1')) {
-    const savedIp = (typeof localStorage !== 'undefined' && (localStorage.getItem('V500_LAPTOP_IP') || localStorage.getItem('pc_server_ip'))) ||
-                    (Array.isArray(window.__BAKED_LAPTOP_IPS__) && window.__BAKED_LAPTOP_IPS__[0]) ||
-                    '192.168.1.76';
-    if (savedIp && typeof window.WebSocket === 'function') {
-      try {
-        const questWs = new window.WebSocket('ws://' + savedIp + ':8080');
-        window.multiplayerWs = questWs;
-      } catch (e) {}
-    }
   }
 
   // --------------------------------------------------------------------------
@@ -24017,6 +24490,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         );
         const bridgeWorker = new Worker(URL.createObjectURL(workerBlob));
         bridgeWorker.onmessage = pollAndRelayLocalWheelBridge;
+        bridgeWorker.addEventListener('error', () => {
+          bridgeWorker.terminate();
+          setInterval(pollAndRelayLocalWheelBridge, CFG.bridgeTickMs);
+        }, { once: true });
       } else {
         setInterval(pollAndRelayLocalWheelBridge, CFG.bridgeTickMs);
       }
@@ -24269,7 +24746,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         state.throttlePercent = Math.round(driveMag * 100);
         state.brakePercent = 0;
         state.reversePercent = 0;
-        const targetVel = driveMag * CFG.maxForwardSpeedMs;
+        const targetVel = driveMag * CFG.maxForwardSpeedMs * getVirtualDrivingScale();
         velMs = lerpFn(velMs, targetVel, Math.min(1, dt * CFG.accelRate));
       } else if (effectiveDrive < -0.03 || (cmd.brakeNorm > 0.04 && effectiveDrive < 0)) {
         const revMag = Math.abs(effectiveDrive);
@@ -24286,7 +24763,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           state.reversePercent = Math.round(revMag * 100);
           state.throttlePercent = 0;
           state.brakePercent = 0;
-          const targetRevVel = -revMag * CFG.maxReverseSpeedMs;
+          const targetRevVel = -revMag * CFG.maxReverseSpeedMs * getVirtualDrivingScale();
           velMs = lerpFn(velMs, targetRevVel, Math.min(1, dt * CFG.accelRate));
         }
       } else {
@@ -24305,7 +24782,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         const speedFactor = Math.min(1.25, Math.max(0.35, Math.abs(velMs) / 6.0));
         heading -= steerRatio * CFG.yawTurnFactor * dirSign * speedFactor * dt;
 
-        const step = velMs * (CFG.virtualSpeedScale || 5.0) * dt;
+        const step = velMs * CFG.virtualSpeedScale * dt;
         vehicleRoot.position.x -= Math.sin(heading) * step;
         vehicleRoot.position.z -= Math.cos(heading) * step;
 
@@ -24322,7 +24799,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       vehicleRoot.rotation.y = heading;
       state.headingRad = heading;
       state.velocityMs = velMs;
-      state.speedKmh = Math.abs(velMs) * 3.6 * (CFG.virtualSpeedScale || 5.0);
+      state.speedKmh = Math.abs(velMs) * 3.6 * CFG.virtualSpeedScale;
 
       // 4. Gửi lệnh phần cứng xuống ESP32 (Rate-limited 25Hz)
       if (cmd.source === 'KEYBOARD' || cmd.source === 'VR_CONTROLLER') {
@@ -24423,10 +24900,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   } catch (e) {}
 
   const bakedIps = ['192.168.1.76', '192.168.1.228', '192.168.1.21', '192.168.1.32', '192.168.1.60'];
-  let activeLaptopIp = storage.getItem('pc_server_ip') || storage.getItem('V500_LAPTOP_IP') || bakedIps[0];
-  if (activeLaptopIp === 'localhost' || activeLaptopIp === '127.0.0.1') activeLaptopIp = bakedIps[0];
-
-  let wsConn = null;
+  let activeLaptopIp = getHostedServerHostname() || storage.getItem('pc_server_ip') || storage.getItem('V500_LAPTOP_IP') || bakedIps[0];
   let isConnected = false;
   let isScanningSubnet = false;
   let lastProcessedSeq = -1;
@@ -24478,33 +24952,22 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     return el;
   }
 
-  function updateV500Banner(ok, text) {
+  function showV500DiscoveryBanner(text) {
     getOrCreateV500Banner();
     const banner = document.getElementById('v500-quest-bridge-banner');
     const label = document.getElementById('v500-quest-bridge-label');
     if (!banner || !label) return;
     label.textContent = text;
-    if (ok) {
-      banner.style.borderColor = '#10b981';
-      banner.style.color = '#34d399';
-      banner.style.background = 'rgba(6, 40, 28, 0.90)';
-      clearTimeout(banner.__fadeTimer);
-      banner.__fadeTimer = setTimeout(() => {
-        if (banner && isConnected) {
-          banner.style.opacity = '0.35';
-          banner.style.transform = 'translateX(-50%) scale(0.92)';
-        }
-      }, 4500);
-      banner.onmouseenter = () => { banner.style.opacity = '1'; banner.style.transform = 'translateX(-50%) scale(1)'; };
-      banner.onmouseleave = () => { if (isConnected) { banner.style.opacity = '0.35'; banner.style.transform = 'translateX(-50%) scale(0.92)'; } };
-    } else {
-      banner.style.borderColor = '#f59e0b';
-      banner.style.color = '#fbbf24';
-      clearTimeout(banner.__fadeTimer);
-      banner.style.opacity = '1';
-      banner.style.transform = 'translateX(-50%) scale(1)';
-      banner.style.background = 'rgba(15, 23, 42, 0.95)';
+    banner.style.display = 'flex';
+  }
+
+  function syncMainBridgeConnection() {
+    isConnected = Boolean(isSocketActive(mpSocket));
+    if (isConnected) {
+      const banner = document.getElementById('v500-quest-bridge-banner');
+      if (banner) banner.style.display = 'none';
     }
+    return isConnected;
   }
 
   // 2. ĐỒNG BỘ TÍN HIỆU VÔ LĂNG VÀO TẤT CẢ CÁC BIẾN & UI
@@ -24529,6 +24992,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     liveWheel.connected = true;
     liveWheel.isRemoteBridge = true;
+    liveWheel.isPhysical = !w.deviceId || /808|wheel|racing|steering|logitech|thrustmaster/i.test(w.deviceId);
 
     // Chuẩn hóa sNorm [-1..1]
     const rawS = typeof w.steerNorm === 'number' ? w.steerNorm :
@@ -24605,11 +25069,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       } catch (e) {}
     }
 
-    const isActivelyOperated = Math.abs(liveWheel.steerNorm) > 0.02 || liveWheel.gasNorm > 0.02 || liveWheel.brakeNorm > 0.02;
-    if (isActivelyOperated) {
-      ensureSeatedInDriverChair();
-    }
-
     if (typeof w.seq === 'number' && w.seq !== lastProcessedSeq) {
       lastProcessedSeq = w.seq;
       if (Array.isArray(w.buttonEvents)) {
@@ -24619,8 +25078,8 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   function hookMainMpSocket() {
-    const mainSock = (typeof mpSocket !== 'undefined' && mpSocket) ? mpSocket : window.multiplayerWs;
-    if (mainSock && !mainSock.__v504Hooked) {
+    const mainSock = mpSocket;
+    if (mainSock && typeof mainSock.addEventListener === 'function' && !mainSock.__v504Hooked) {
       mainSock.__v504Hooked = true;
       mainSock.addEventListener('message', (ev) => {
         if (typeof ev.data !== 'string') return;
@@ -24666,7 +25125,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   async function checkHostAlive(ip, timeoutMs = 300) {
-    if (!ip) return null;
+    if (!ip || syncMainBridgeConnection()) return null;
     const isLocal = (ip === 'localhost' || ip === '127.0.0.1');
     const isCurrentHost = (typeof window !== 'undefined' && window.location && (window.location.hostname === ip || (isLocal && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))));
     const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -24678,7 +25137,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       } else {
         const isHttps = (typeof window !== 'undefined' && window.location && window.location.protocol === 'https:');
         const proto = isHttps ? 'https:' : 'http:';
-        const port = isHttps ? 8443 : 8080;
+        const port = loc.port || (isHttps ? '8443' : '8080');
         pingUrl = `${proto}//${ip}:${port}/api/bridge-ping`;
       }
       const res = await fetch(pingUrl, {
@@ -24688,7 +25147,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         signal: controller ? controller.signal : undefined
       });
       if (timer) clearTimeout(timer);
-      if (res.ok) {
+      if (res.ok && !syncMainBridgeConnection()) {
         const data = await res.json();
         if (data && (data.ok || data.service === 'GOG808_LAPTOP_BRIDGE')) {
           if (data.wheel) ingestWheelData(data.wheel);
@@ -24699,8 +25158,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           if (data.cams && typeof window.applyEsp32CameraIps === 'function') {
             window.applyEsp32CameraIps(data.cams);
           }
-          const effectiveIp = (isLocal && data.ips && data.ips[0]) ? data.ips[0] : (isLocal ? '192.168.1.76' : ip);
-          return { ip: effectiveIp, data };
+          return { ip, data };
         }
       }
     } catch (e) {
@@ -24739,12 +25197,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   async function performDeepNetworkDiscovery() {
-    if (isScanningSubnet || isConnected) return;
+    if (syncMainBridgeConnection() || getHostedServerHostname() || isScanningSubnet) return;
     isScanningSubnet = true;
 
     try {
       const candidates = getCandidateIps();
       const results = await Promise.all(candidates.map(ip => checkHostAlive(ip, 350)));
+      if (syncMainBridgeConnection()) {
+        isScanningSubnet = false;
+        return;
+      }
       const hit = results.find(Boolean);
       if (hit) {
         onServerFound(hit.ip, hit.data);
@@ -24752,7 +25214,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         return;
       }
 
-      updateV500Banner(false, '🔍 Đang tự động quét Wi-Fi tìm Laptop & Xe RC...');
+      showV500DiscoveryBanner('🔍 Đang tự động quét Wi-Fi tìm Laptop & Xe RC...');
       let nativeSubnet = null;
       if (typeof window !== 'undefined' && window.QuestVRBridge && typeof window.QuestVRBridge.getDeviceSubnet === 'function') {
         try { nativeSubnet = window.QuestVRBridge.getDeviceSubnet(); } catch (e) {}
@@ -24765,12 +25227,12 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       commonSubnets.forEach((s) => { if (!subnets.includes(s)) subnets.push(s); });
 
       for (const prefix of subnets) {
-        if (isConnected) { isScanningSubnet = false; return; }
+        if (syncMainBridgeConnection()) { isScanningSubnet = false; return; }
         const batch = [];
         for (let i = 1; i <= 254; i++) batch.push(`${prefix}.${i}`);
         const batchSize = 45;
         for (let i = 0; i < batch.length; i += batchSize) {
-          if (isConnected) { isScanningSubnet = false; return; }
+          if (syncMainBridgeConnection()) { isScanningSubnet = false; return; }
           const chunk = batch.slice(i, i + batchSize);
           const chunkResults = await Promise.all(chunk.map(ip => checkHostAlive(ip, 280)));
           const found = chunkResults.find(Boolean);
@@ -24786,121 +25248,32 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
   }
 
   function onServerFound(foundIp, data) {
+    if (syncMainBridgeConnection()) return;
     activeLaptopIp = foundIp;
     storage.setItem('V500_LAPTOP_IP', foundIp);
     storage.setItem('pc_server_ip', foundIp);
     window.__ACTIVE_DISCOVERED_IP__ = foundIp;
-    const carLabel = (data && data.car && data.car.ip) ? data.car.ip : (state.rcCarIp || '4210');
-    updateV500Banner(true, `🟢 ĐÃ KẾT NỐI LAPTOP (${foundIp}:8080) | XE: ${carLabel}`);
     connectWebSocketToIp(foundIp);
 
     if (data && data.cams && typeof window.applyEsp32CameraIps === 'function') {
       window.applyEsp32CameraIps(data.cams);
     }
-
-    if (typeof mpSocket === 'undefined' || !mpSocket || mpSocket.readyState !== WebSocket.OPEN) {
-      if (typeof initMultiplayerClient === 'function') {
-        try { initMultiplayerClient(); } catch (e) {}
-      }
-    }
   }
 
   function connectWebSocketToIp(ip) {
-    if (!ip || ip === 'localhost' || ip === '127.0.0.1') return;
-    if (wsConn && (wsConn.readyState === WebSocket.OPEN || wsConn.readyState === WebSocket.CONNECTING) && activeLaptopIp === ip) return;
-    if (wsConn) {
-      try { wsConn.close(); } catch (e) {}
-    }
-
-    try {
-      const sock = new WebSocket(`ws://${ip}:8080`);
-      sock.binaryType = 'arraybuffer';
-      wsConn = sock;
-      window.__v200Socket = sock;
-      window.multiplayerWs = sock;
-      window.rcSocket = sock;
-
-      sock.onopen = () => {
-        isConnected = true;
-        activeLaptopIp = ip;
-        storage.setItem('V500_LAPTOP_IP', ip);
-        storage.setItem('pc_server_ip', ip);
-        window.__ACTIVE_DISCOVERED_IP__ = ip;
-        const carLabel = state.rcCarIp || '4210';
-        updateV500Banner(
-          true,
-          `🟢 ĐÃ KẾT NỐI LAPTOP (${ip}:8080) | XE: ${carLabel}`
-        );
-        try { sock.send(JSON.stringify({ type: 'PLAYER_HELLO', deviceType: 'META_QUEST', isQuestVR: true })); } catch (e) {}
-      };
-
-      sock.onmessage = (ev) => {
-        if (ev.data instanceof ArrayBuffer) {
-          if (typeof handleIncomingFpvBinary === 'function') {
-            handleIncomingFpvBinary(ev.data);
-          }
-          return;
-        }
-        if (typeof ev.data !== 'string') return;
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg && (msg.type === 'WHEEL_BRIDGE_STATE' || msg.type === 'WHEEL_BRIDGE_INPUT')) {
-            ingestWheelData(msg.payload || msg);
-          } else if (msg && (msg.type === 'CAR_IP_UPDATED' || msg.type === 'SERVER_LAN_INFO')) {
-            if (msg.car && msg.car.ip) {
-              state.rcCarIp = msg.car.ip;
-              storage.setItem('rc_car_ip', msg.car.ip);
-            }
-            if (msg.cams && typeof window.applyEsp32CameraIps === 'function') {
-              window.applyEsp32CameraIps(msg.cams);
-            }
-          } else if (msg && (msg.type === 'CAM_IP_UPDATED' || msg.type === 'ESP32_CAM_UPDATE')) {
-            if (typeof window.applyEsp32CameraIps === 'function') {
-              window.applyEsp32CameraIps(msg.cams || msg);
-            }
-          }
-        } catch (e) {}
-      };
-
-      sock.onclose = () => {
-        isConnected = false;
-        setTimeout(() => { if (!isConnected) performDeepNetworkDiscovery(); }, 1500);
-      };
-      sock.onerror = () => { try { sock.close(); } catch (e) {} };
-    } catch (e) {}
+    if (!ip || syncMainBridgeConnection()) return;
+    const isHttps = window.location.protocol === 'https:';
+    const port = window.location.port || (isHttps ? '8443' : '8080');
+    initMultiplayerClient(ip + ':' + port);
+    hookMainMpSocket();
+    syncMainBridgeConnection();
   }
 
-  // 4. HTTP POLLING DỰ PHÒNG (KHI WEBSOCKET ĐANG NỐI LẠI)
-  let candidatePollIdx = 0;
-  let lastCandidatePollMs = 0;
-  setInterval(async () => {
+  hookMainMpSocket();
+  setInterval(() => {
     hookMainMpSocket();
-    const nowMs = Date.now();
-    // Nếu WebSocket đã kết nối ổn định: Tuyệt đối không nhảy IP khác làm nghẽn mạng!
-    if (isConnected && wsConn && wsConn.readyState === WebSocket.OPEN) return;
-
-    // Giãn khoảng cách thăm dò tối thiểu 1500ms để kết nối TCP/WS kịp hoàn tất handshake
-    if (nowMs - lastCandidatePollMs < 1500) return;
-    lastCandidatePollMs = nowMs;
-
-    const ips = getCandidateIps();
-    if (ips.length === 0) return;
-
-    // Nếu socket đang trong quá trình CONNECTING, cho nó tối đa 2500ms hoàn thành, không vội đóng
-    if (wsConn && wsConn.readyState === WebSocket.CONNECTING) return;
-
-    const testIp = activeLaptopIp || ips[candidatePollIdx % ips.length];
-    candidatePollIdx++;
-    connectWebSocketToIp(testIp);
-
-    try {
-      const hit = await checkHostAlive(testIp, 500);
-      if (hit) {
-        isConnected = true;
-        onServerFound(hit.ip, hit.data);
-      }
-    } catch (e) {}
-  }, 1000);
+    if (!syncMainBridgeConnection()) performDeepNetworkDiscovery();
+  }, 3500);
 
   // 5. ĐIỀU KHIỂN BUỒNG LÁI & CÂN BẰNG TÂM GÓC NHÌN
   function ensureSeatedInDriverChair() {
@@ -24955,24 +25328,18 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
     lastValidPos: new THREE.Vector3(-3.2, 0, -14.0)
   };
 
-  setTimeout(() => {
-    getOrCreateV500Banner();
-    ensureSeatedInDriverChair();
-    const ips = getCandidateIps();
-    if (ips[0]) connectWebSocketToIp(ips[0]);
-    performDeepNetworkDiscovery();
-  }, 400);
-
-  setInterval(() => {
-    if (!isConnected) performDeepNetworkDiscovery();
-  }, 3500);
-
   const prevBeforeRender = scene.onBeforeRender;
   let lastFrameMs = performance.now();
+  let reportedRenderHookError = false;
 
   scene.onBeforeRender = function (rendererInst, sceneInst, cameraInst) {
-    if (typeof prevBeforeRender === 'function') {
+    try {
       prevBeforeRender.call(this, rendererInst, sceneInst, cameraInst);
+    } catch (error) {
+      if (!reportedRenderHookError) {
+        reportedRenderHookError = true;
+        console.error('[WebXR] Scene render hook failed:', error);
+      }
     }
 
     const now = performance.now();
@@ -24981,12 +25348,10 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
 
     if (typeof state === 'undefined' || !state || typeof vehicleRoot === 'undefined' || !vehicleRoot) return;
 
-    const wheelFresh = (now - liveWheel.updatedAt) <= 850;
+    const wheelFresh = liveWheel.connected && liveWheel.isPhysical && (now - liveWheel.updatedAt) <= 850;
     let steer = 0;
     let gas = 0;
     let brake = 0;
-    let hasControlSignal = false;
-
     const effWheelDrive = (typeof liveWheel.driveNorm === 'number' && Math.abs(liveWheel.driveNorm) > 0.02)
       ? liveWheel.driveNorm
       : (liveWheel.gasNorm - liveWheel.brakeNorm);
@@ -25002,17 +25367,16 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
       steer = liveWheel.steerNorm;
       gas = liveWheel.gasNorm;
       brake = liveWheel.brakeNorm;
-      hasControlSignal = true;
-    } else if (wheelFresh) {
-      steer = liveWheel.steerNorm;
-      gas = liveWheel.gasNorm;
-      brake = liveWheel.brakeNorm;
-      hasControlSignal = Math.abs(carStateV504.velMs) > 0.02;
+    } else {
+      carStateV504.x = vehicleRoot.position.x;
+      carStateV504.z = vehicleRoot.position.z;
+      carStateV504.heading = state.headingRad || vehicleRoot.rotation.y || 0;
+      carStateV504.velMs = 0;
+      carStateV504.lastValidPos.copy(vehicleRoot.position);
+      return;
     }
 
-    if (wheelMoved) {
-      ensureSeatedInDriverChair();
-    }
+    ensureSeatedInDriverChair();
 
     if (state.playerMode === 'DRIVING' && state.seatIndex === 0) {
       if (!carStateV504.ready) {
@@ -25022,19 +25386,6 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         carStateV504.velMs = state.velocityMs || 0;
         carStateV504.lastValidPos.copy(vehicleRoot.position);
         carStateV504.ready = true;
-      }
-
-      if (!hasControlSignal && Math.abs(carStateV504.velMs) < 0.03) {
-        if (vehicleRoot.position.distanceToSquared(carStateV504.lastValidPos) > 9.0) {
-          vehicleRoot.position.x = carStateV504.lastValidPos.x;
-          vehicleRoot.position.z = carStateV504.lastValidPos.z;
-        } else {
-          carStateV504.x = vehicleRoot.position.x;
-          carStateV504.z = vehicleRoot.position.z;
-          carStateV504.heading = state.headingRad || vehicleRoot.rotation.y || 0;
-          carStateV504.lastValidPos.copy(vehicleRoot.position);
-        }
-        return;
       }
 
       state.engineRunning = true;
@@ -25057,7 +25408,7 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
         state.throttlePercent = Math.round(driveMag * 100);
         state.brakePercent = 0;
         state.reversePercent = 0;
-        carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, driveMag * 24.0, dt * 4.5);
+        carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, driveMag * VIRTUAL_FORWARD_SPEED_MS * getVirtualDrivingScale(), Math.min(1, dt * 3.2));
       } else if (effWheelDrive < -0.025) {
         const revMag = Math.abs(effWheelDrive);
         if (carStateV504.velMs > 1.0) {
@@ -25070,13 +25421,13 @@ scene.onBeforeRender = function(rendererInst, sceneInst, cameraInst) {
           state.reversePercent = Math.round(revMag * 100);
           state.throttlePercent = Math.round(revMag * 100);
           state.brakePercent = 0;
-          carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, -revMag * 14.0, dt * 6.0);
+          carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, -revMag * VIRTUAL_REVERSE_SPEED_MS * getVirtualDrivingScale(), Math.min(1, dt * 4.2));
         }
       } else if (Math.abs(steer) > 0.04 && Math.abs(carStateV504.velMs) < 1.2) {
         state.gearIndex = 3;
         state.gear = 'D';
         state.throttlePercent = 18;
-        carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, 3.0, dt * 3.5);
+        carStateV504.velMs = THREE.MathUtils.lerp(carStateV504.velMs, 3.0 * getVirtualDrivingScale(), dt * 3.5);
       } else {
         state.throttlePercent = 0;
         state.brakePercent = 0;

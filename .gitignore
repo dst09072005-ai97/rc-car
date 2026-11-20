@@ -1,3 +1,5 @@
+/server/battery-profiles.json
+/server/battery-profiles.json.tmp
 # Dependencies
 node_modules/
 **/node_modules/

@@ -1,20 +1,35 @@
-const fs = require("node:fs");
-const path = require("node:path");
+'use strict';
 
-const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-if (!pkg.dependencies.express || !pkg.dependencies.ws || !pkg.dependencies.qrcode) {
-  throw new Error("Missing relay dependencies");
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const read = file => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+const pkg = JSON.parse(read('package.json'));
+for (const dependency of ['express', 'ws', 'qrcode-terminal']) {
+  assert.ok(pkg.dependencies[dependency], `Missing dependency: ${dependency}`);
 }
-const serverText = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
-for (const token of ["4212", "HELLO", "/stream", "/ws", "latest-frame", "MAX_FRAME_BYTES", "QRCode"]) {
-  if (!serverText.includes(token)) throw new Error(`Missing contract token: ${token}`);
+
+function requireTokens(file, tokens) {
+  const source = read(file);
+  for (const token of tokens) {
+    assert.ok(source.includes(token), `${file} is missing contract token: ${token}`);
+  }
 }
-const html = fs.readFileSync(path.join(__dirname, "..", "public", "index.html"), "utf8");
-for (const token of ["mjpeg", "xrCanvas", "vrButton", "qrButton"]) {
-  if (!html.includes(token)) throw new Error(`Missing HTML token: ${token}`);
-}
-const js = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
-for (const token of ["requestSession", "immersive-vr", "/stream", "/ws", "streamUrl"]) {
-  if (!js.includes(token)) throw new Error(`Missing viewer token: ${token}`);
-}
-console.log("[PASS] V10 relay/viewer contracts");
+
+requireTokens('server.js', [
+  'udpServer.bind(4210', 'PLAYER_HELLO', 'sendRateLimitedEsp32Udp', 'WINMM_USB',
+  '/esp32-front-ws', '/esp32-rear-ws', 'FPV_PHONE_PUBLISHER_INIT', 'qrcode.generate',
+  '/api/battery/action', 'BATTERY_STATE'
+]);
+requireTokens('../www/index.html', [
+  'smart-vr-btn', 'btn-open-qr-multiplayer', 'btn-board-npc-vehicle', 'minimap-canvas',
+  'btn-garage-rr', 'btn-garage-coupe', 'btn-garage-moto', 'top-battery-badge'
+]);
+requireTokens('../www/app.js', [
+  'requestSession', 'immersive-vr', 'renderer.setAnimationLoop', 'CAR_CONTROL',
+  'WHEEL_BRIDGE_STATE', 'BATTERY_STATE'
+]);
+requireTokens('../www/fpv-cam.html', ['FPV_PHONE_PUBLISHER_INIT', 'SWITCH_FPV_SURFACE']);
+
+console.log('[PASS] RC relay and WebXR client contracts');
