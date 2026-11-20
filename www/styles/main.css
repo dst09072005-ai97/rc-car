@@ -1,0 +1,870 @@
+/* Base layout, top bar, modals and overlays */
+body { margin: 0; overflow: hidden; background: #03060c; font-family: 'Segoe UI', sans-serif; color: #fff; user-select: none; }
+
+    /* Hiệu ứng Chớp Mắt khi Mở cửa lên/xuống xe */
+    #eyelid-top, #eyelid-bottom {
+      position: fixed; left: 0; width: 100vw; height: 0vh;
+      background: #000; z-index: 9999; pointer-events: none;
+      transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    #eyelid-top { top: 0; border-bottom: 2px solid #222; }
+    #eyelid-bottom { bottom: 0; border-top: 2px solid #222; }
+    body.blinking #eyelid-top, body.blinking #eyelid-bottom { height: 52vh; }
+
+    /* Thanh công cụ nổi ở mép trên */
+    #top-bar {
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 120; display: flex; gap: 8px; background: rgba(6, 10, 18, 0.90);
+      padding: 6px 14px; border-radius: 30px; border: 1px solid #d4af37;
+      backdrop-filter: blur(10px); box-shadow: 0 4px 20px rgba(0,0,0,0.75);
+      white-space: nowrap;
+    }
+    .bar-btn {
+      padding: 7px 13px; border-radius: 20px; border: none; font-size: 12px;
+      font-weight: bold; cursor: pointer; transition: 0.15s;
+    }
+    .btn-guide-toggle { background: #00e5ff; color: #000; }
+    .btn-func-toggle { background: #d4af37; color: #000; }
+    .btn-yt-open { background: #ff0000; color: #fff; }
+    .btn-hud3d-toggle { background: #2b3548; color: #fff; border: 1px solid #00e5ff; }
+    .btn-enter-360vr {
+      background: linear-gradient(135deg, #00ff88, #00b4d8); color: #000;
+      font-size: 12.5px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
+    }
+    .btn-exit-2d {
+      background: linear-gradient(135deg, #ff9500, #ff3b30); color: #fff;
+      font-size: 12.5px; box-shadow: 0 0 15px rgba(255, 59, 48, 0.5);
+    }
+
+    /* Hai bảng Hướng Dẫn & Chức Năng */
+    .floating-panel {
+      position: fixed; top: 56px; z-index: 30;
+      background: rgba(8, 12, 22, 0.92); border: 1px solid #00e5ff;
+      padding: 12px 14px; border-radius: 10px; width: 380px; max-height: 78vh;
+      overflow-y: auto; backdrop-filter: blur(12px); box-shadow: 0 8px 32px rgba(0,0,0,0.85);
+    }
+    #guide-panel { left: 12px; }
+    #function-panel { right: 12px; border-color: #d4af37; }
+    #function-panel {
+      width: min(460px, calc(100vw - 24px));
+      box-sizing: border-box;
+      padding: 0;
+      background: rgba(9, 15, 27, .96);
+      scrollbar-width: thin;
+      scrollbar-color: #496078 #101a2b;
+    }
+    #function-panel > h2 { margin: 0; padding: 12px; gap: 8px; }
+    #func-tab-bar {
+      position: sticky; top: 0; z-index: 2;
+      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+      padding: 6px; background: #101a2b; border-bottom: 1px solid #34445c;
+    }
+    #func-tab-bar button {
+      min-width: 0; white-space: normal; overflow-wrap: anywhere;
+      padding: 7px 3px; border: 1px solid transparent; border-radius: 6px;
+      background: transparent; color: #c5d0e0; font: 600 11px system-ui; cursor: pointer;
+    }
+    @media (max-width: 480px) {
+      #func-tab-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    #func-tab-bar button[aria-selected="true"] {
+      color: #ffe4a1; background: #293040; border-color: #cbaa55;
+    }
+    .func-tab { padding: 10px; }
+    .func-tab > .row { flex-wrap: wrap; }
+    .func-card {
+      margin: 0 0 8px; padding: 10px; border: 1px solid #34445c; border-radius: 8px;
+      background: #121d30; color: #e0ecff; font: 12px/1.45 system-ui;
+    }
+    .func-card h3 { margin: 0 0 8px; font-size: 14px; }
+    .func-card summary { cursor: pointer; }
+    #tab-camera-legacy { margin-top: 10px; }
+    #function-panel input, #function-panel select { min-width: 0; }
+    #phone-fpv-url-input { box-sizing: border-box; width: 100%; margin: 4px 0 8px; font-family: monospace; }
+    #phone-fpv-status-badge { color: #ffd67d; font-weight: 700; }
+    #phone-fpv-status-badge[data-live="true"] { color: #5ff2af; }
+    .func-actions, .func-speed-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+    .func-actions [aria-pressed="true"] { background: #e4bc63; color: #151a24; }
+    .func-actions a { color: #9ceaff; }
+    .func-speed-heading { justify-content: space-between; }
+    .func-camera-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    #slider-ingame-speed-scale { width: 100%; margin: 8px 0; accent-color: #e4bc63; }
+    #phone-fpv-qr-dialog { margin: auto; text-align: center; }
+    #phone-fpv-qr-dialog form { text-align: right; }
+    #phone-fpv-qr-dialog::backdrop { background: rgba(0, 0, 0, .65); }
+    @media (min-width: 1024px) {
+      body:not(.mobile-clean-ui) #top-bar {
+        right: 12px !important; max-width: calc(100vw - 190px) !important;
+        box-sizing: border-box; gap: 4px; padding: 5px 8px;
+      }
+      #top-bar .bar-btn, #top-bar #realtime-clock-badge {
+        font-size: 10px !important; padding: 5px 7px !important;
+      }
+      body #v260-role-seat-badge {
+        top: max(64px, var(--desktop-role-top, 64px));
+        transition: background .3s ease, color .3s ease;
+      }
+      #function-panel, #guide-panel {
+        top: max(104px, var(--desktop-panel-top, 104px));
+        max-height: min(78vh, calc(100dvh - max(104px, var(--desktop-panel-top, 104px)) - 12px));
+      }
+    }
+    @media (min-width: 1200px) {
+      body:not(.mobile-clean-ui) #top-bar { flex-wrap: nowrap !important; }
+      #top-bar > * { min-width: 0; }
+      #top-bar .bar-btn { overflow: hidden; text-overflow: ellipsis; }
+    }
+    .panel-hidden { display: none !important; }
+
+    .floating-panel h2 {
+      margin: 0 0 8px 0; font-size: 13px; color: #00e5ff;
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid #223046; padding-bottom: 6px;
+    }
+    #function-panel h2 { color: #dfcba8; }
+    .guide-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 8px; }
+    .guide-table th, .guide-table td { border: 1px solid #223046; padding: 5px 6px; text-align: left; }
+    .guide-table th { background: #121d30; color: #ffd60a; }
+    .status-box {
+      background: #101a2b; border-left: 4px solid #00ff88; padding: 7px 9px;
+      font-size: 11.5px; color: #e0ecff; margin-bottom: 8px; border-radius: 4px;
+    }
+
+    .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; font-size: 11.5px; }
+    .row label { width: 115px; color: #c5d0e0; font-weight: 600; }
+    input[type="text"], select {
+      flex: 1; padding: 5px 8px; border-radius: 4px; border: 1px solid #3a4454;
+      background: #141923; color: #00e5ff; font-size: 11.5px;
+    }
+    input[type="range"] { flex: 1; accent-color: #d4af37; cursor: pointer; }
+    button.act-btn {
+      padding: 6px 9px; border-radius: 5px; border: none;
+      background: #d4af37; color: #000; font-weight: bold; cursor: pointer; font-size: 11px; flex: 1;
+    }
+    button.act-btn:hover { filter: brightness(1.12); }
+    .section-title { font-size: 11px; color: #ffd60a; font-weight: bold; margin: 8px 0 4px 0; text-transform: uppercase; }
+
+    /* ====================================================================== */
+    /* CỤM ĐIỀU KHIỂN TRỰC QUAN CHO TIA LASER TAY CẦM META QUEST 3            */
+    /* ====================================================================== */
+    #quest-laser-cockpit {
+      position: fixed; bottom: 14px; left: 14px; right: 14px;
+      z-index: 50; display: flex; justify-content: space-between; align-items: flex-end;
+      pointer-events: none;
+    }
+    #quest-laser-cockpit {
+      bottom: 8px !important; left: 8px !important; right: 8px !important;
+    }
+    .cockpit-pad {
+      transform: scale(0.84);
+      transform-origin: bottom center;
+      opacity: 0.88;
+    }
+    #rear-cam-app-modal {
+      position: fixed; top: 52%; left: 50%; transform: translate(-50%, -50%);
+      width: 560px; max-width: 90vw; background: #0b111e; border: 2px solid #00e5ff;
+      border-radius: 14px; z-index: 195; box-shadow: 0 15px 50px rgba(0,0,0,0.92);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    #rear-cam-modal-canvas {
+      width: 100%; height: 300px; background: #000; display: block;
+    }
+    .cockpit-pad {
+      pointer-events: auto; background: rgba(8, 14, 26, 0.86);
+      border: 2px solid #00e5ff; border-radius: 14px; padding: 10px;
+      backdrop-filter: blur(8px); box-shadow: 0 6px 24px rgba(0,0,0,0.8);
+    }
+    .dpad-grid {
+      display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 48px); gap: 6px;
+    }
+    .pad-btn {
+      border-radius: 8px; border: 1px solid #3a506b; background: #162438;
+      color: #fff; font-weight: bold; font-size: 12px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; text-align: center;
+      transition: 0.1s; user-select: none;
+    }
+    .pad-btn:active, .pad-btn.active-hold {
+      background: #00e5ff; color: #000; transform: scale(0.95);
+    }
+    .pedal-grid { display: flex; gap: 8px; align-items: stretch; }
+    .pedal-btn {
+      width: 82px; height: 96px; border-radius: 10px; border: 2px solid #fff;
+      font-weight: bold; font-size: 13px; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    }
+    .pedal-gas { background: linear-gradient(180deg, #28cd41, #157a24); color: #000; border-color: #a3ffac; }
+    .pedal-brake { background: linear-gradient(180deg, #ff3b30, #9e160f); color: #fff; border-color: #ff9f99; }
+    .action-col { display: flex; flex-direction: column; gap: 6px; width: 118px; }
+
+    /* ====================================================================== */
+    /* GIAO DIỆN ỨNG DỤNG YOUTUBE THẬT (XEM PHIM / NGHE NHẠC TRONG XE)        */
+    /* ====================================================================== */
+    #youtube-app-modal {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 780px; max-width: 94vw; background: #0f0f0f; border: 2px solid #ff0000;
+      border-radius: 14px; z-index: 200; box-shadow: 0 15px 60px rgba(0,0,0,0.95);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .yt-header {
+      background: #181818; padding: 10px 16px; display: flex; justify-content: space-between;
+      align-items: center; border-bottom: 1px solid #303030;
+    }
+    .yt-logo {
+      background: #ff0000; color: #fff; font-weight: bold; padding: 4px 10px;
+      border-radius: 6px; font-size: 14px; margin-right: 10px;
+    }
+    .yt-search-bar { display: flex; gap: 6px; flex: 1; max-width: 420px; }
+    .yt-search-bar input {
+      flex: 1; background: #121212; border: 1px solid #383838; color: #fff;
+      padding: 6px 10px; border-radius: 18px; font-size: 12px;
+    }
+    .yt-body { display: flex; height: 410px; }
+    .yt-player-area { flex: 1.7; background: #000; position: relative; display: flex; flex-direction: column; }
+    #yt-iframe, #yt-html5-player { width: 100%; height: 100%; border: none; background: #000; }
+    .yt-playlist-side {
+      flex: 1; background: #161616; border-left: 1px solid #2c2c2c;
+      padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
+    }
+    .yt-card {
+      background: #222; border: 1px solid #383838; border-radius: 8px; padding: 8px 10px;
+      cursor: pointer; transition: 0.15s; font-size: 12px;
+    }
+    .yt-card:hover, .yt-card.active { border-color: #ff0000; background: #2c1616; }
+    .yt-card b { color: #fff; display: block; margin-bottom: 3px; }
+    .yt-card span { color: #aaa; font-size: 10.5px; }
+
+    /* Giữ phát âm thanh liên tục khi Thu Nhỏ (ẩn khỏi tầm nhìn thay vì display:none làm tắt iframe/audio) */
+    #youtube-app-modal.panel-hidden {
+      display: flex !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      position: fixed !important;
+      top: -9999px !important;
+      left: -9999px !important;
+      transform: none !important;
+      visibility: visible !important;
+    }
+
+    /* Khóa cứng khung YouTube, phóng to chỉ nằm gọn trong khung đã fit */
+    #youtube-app-modal {
+      resize: none;
+      contain: layout paint;
+      user-select: none;
+    }
+    #youtube-app-modal.yt-inframe-full .yt-playlist-side {
+      display: none !important;
+    }
+    #youtube-app-modal.yt-inframe-full .yt-player-area {
+      flex: 1 1 100% !important;
+      width: 100% !important;
+    }
+    .yt-header {
+      cursor: grab;
+    }
+    .yt-header:active {
+      cursor: grabbing;
+    }
+
+    /* Vòng tròn Map Radar hiển thị vị trí người chơi, Điểm Spawn Nhà & Xe Rolls-Royce */
+    #circular-minimap-widget {
+      position: fixed; bottom: 18px; left: 18px; width: 186px; height: 186px;
+      border-radius: 50%; background: rgba(6, 12, 24, 0.92);
+      border: 3px solid #00ff88; box-shadow: 0 0 25px rgba(0, 255, 136, 0.45), inset 0 0 18px rgba(0, 229, 255, 0.25);
+      z-index: 140; overflow: hidden; pointer-events: auto; cursor: pointer;
+    }
+    #minimap-canvas {
+      width: 100%; height: 100%; display: block; border-radius: 50%;
+    }
+    #minimap-legend {
+      position: fixed; bottom: 210px; left: 18px; z-index: 140;
+      background: rgba(6, 12, 24, 0.88); border: 1px solid #00e5ff;
+      border-radius: 12px; padding: 5px 10px; font-size: 10.5px; color: #e0f2fe;
+      pointer-events: auto; display: flex; flex-direction: column; gap: 3px;
+    }
+
+    /* Tự động co giãn linh hoạt cho cả iPhone/Android khi xoay dọc (9:16) lẫn xoay ngang (16:9) */
+    @media screen and (max-width: 920px) {
+      #top-bar {
+        top: 6px; padding: 4px 8px; gap: 4px; max-width: 96vw;
+        overflow-x: auto; justify-content: flex-start;
+      }
+      .bar-btn { padding: 5px 9px; font-size: 10.5px; flex-shrink: 0; }
+      .floating-panel {
+        width: 88vw !important; max-width: 360px !important;
+        max-height: 62vh !important; top: 46px !important;
+        left: 50% !important; right: auto !important;
+        transform: translateX(-50%); font-size: 11px;
+      }
+      #circular-minimap-widget { width: 124px; height: 124px; bottom: 10px; left: 10px; }
+      #minimap-legend { bottom: 140px; left: 10px; font-size: 9.5px; padding: 4px 7px; }
+    }
+    @media screen and (max-height: 520px) and (orientation: landscape) {
+      .floating-panel { max-height: 74vh !important; top: 42px !important; width: 340px !important; }
+      #circular-minimap-widget { width: 110px; height: 110px; bottom: 8px; left: 8px; }
+      #minimap-legend { display: none; }
+    }
+
+    /* Cho phép vuốt 360° đa điểm mượt trên Chrome Mobile mà không bị cuộn trang */
+    html, body, canvas {
+      touch-action: none !important;
+      overscroll-behavior: none !important;
+      -webkit-user-select: none !important;
+      user-select: none !important;
+    }
+
+    /* Giao diện tối giản trên Điện thoại: Ẩn toàn bộ bảng & map vướng tầm nhìn, chỉ hiện khi bấm nút Menu */
+    body.mobile-clean-ui #top-bar,
+    body.mobile-clean-ui #minimap-legend,
+    body.mobile-clean-ui #circular-minimap-widget,
+    body.mobile-clean-ui #quest-laser-cockpit {
+      display: none !important;
+    }
+    body.mobile-clean-ui.show-mobile-map #circular-minimap-widget {
+      display: block !important;
+      width: 115px !important; height: 115px !important;
+      top: 48px !important; bottom: auto !important; left: 10px !important;
+    }
+    body.mobile-clean-ui.show-mobile-topbar #top-bar {
+      display: flex !important;
+      top: 46px !important; left: 50% !important;
+      transform: translateX(-50%) !important;
+      flex-wrap: wrap !important; width: 92vw !important;
+      justify-content: center !important;
+    }
+
+/* Mobile and Quest responsive layout */
+/* 1. Bản đồ Map tròn nằm góc trên bên trái, không đè lên bất kỳ nút nào */
+    #circular-minimap-widget {
+      top: 14px !important;
+      bottom: auto !important;
+      left: 14px !important;
+      width: 148px !important;
+      height: 148px !important;
+      z-index: 155 !important;
+      display: block !important;
+    }
+    #minimap-legend {
+      top: 168px !important;
+      bottom: auto !important;
+      left: 14px !important;
+      z-index: 155 !important;
+    }
+
+    /* 2. Nút 3 gạch (Hamburger Menu) cố định ở góc trên bên phải */
+    #hamburger-menu-btn {
+      position: fixed !important;
+      top: 12px !important;
+      right: 12px !important;
+      z-index: 9990 !important;
+      width: 44px !important;
+      height: 44px !important;
+      border-radius: 50% !important;
+      border: 2px solid #00ff88 !important;
+      background: rgba(6, 12, 24, 0.96) !important;
+      color: #00ff88 !important;
+      font-size: 22px !important;
+      font-weight: bold !important;
+      cursor: pointer !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.9) !important;
+    }
+
+    /* 3. Ghi đè triệt để lỗi display:none của mobile-clean-ui để bấm 3 gạch LUÔN HIỆN MENU */
+    body #top-bar,
+    body.mobile-clean-ui #top-bar {
+      position: fixed !important;
+      top: 12px !important;
+      right: 64px !important;
+      left: auto !important;
+      display: flex !important;
+      flex-wrap: wrap !important;
+      justify-content: flex-end !important;
+      max-width: calc(100vw - 230px) !important;
+      z-index: 9985 !important;
+      transform: scaleX(0) !important;
+      transform-origin: right center !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      transition: transform 0.22s ease, opacity 0.2s ease !important;
+    }
+    @media (min-width: 1024px) {
+      body:not(.mobile-clean-ui) #top-bar {
+        transform: scaleX(1) !important;
+        opacity: 1 !important;
+        pointer-events: auto !important;
+      }
+      body:not(.mobile-clean-ui) #hamburger-menu-btn {
+        display: none !important;
+      }
+    }
+
+    body #top-bar.menu-expanded,
+    body.mobile-clean-ui #top-bar.menu-expanded {
+      display: flex !important;
+      transform: scaleX(1) !important;
+      opacity: 1 !important;
+      pointer-events: auto !important;
+    }
+
+    /* 4. Phân quyền hiển thị: Trên Kính VR (body.device-vr-quest) ẩn toàn bộ nút Mobile dư thừa */
+    body.device-vr-quest #mob-quick-bar,
+    body.device-vr-quest .mobile-only-ui,
+    body.device-vr-quest #quest-laser-cockpit {
+      display: none !important;
+    }
+
+    /* Trên Điện thoại (body.device-mobile-phone): Đặt cụm nút điều khiển ở góc dưới để KHÔNG ĐÈ nút 3 gạch */
+    body.device-mobile-phone #mob-quick-bar {
+      position: fixed !important;
+      bottom: 14px !important;
+      top: auto !important;
+      right: 14px !important;
+      z-index: 180 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 6px !important;
+    }
+
+/* Function panel controls */
+/* 1. Khi mở trên Điện thoại: Hiện cụm nút Di Chuyển (#quest-laser-cockpit) gọn ở 2 góc dưới */
+    body.device-mobile-phone #quest-laser-cockpit {
+      display: flex !important;
+      bottom: 10px !important;
+      left: 10px !important;
+      right: 10px !important;
+      z-index: 185 !important;
+      pointer-events: none;
+    }
+    body.device-mobile-phone #quest-laser-cockpit .cockpit-pad {
+      transform: scale(0.76);
+      transform-origin: bottom center;
+      pointer-events: auto;
+      background: rgba(8, 14, 26, 0.82);
+    }
+
+    /* 2. Thanh điều khiển chuyên dụng khi lên Xe Bus / Xe Cứu Hỏa / Xe Cấp Cứu / Xe Tải */
+    #heavy-vehicle-cockpit-bar {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 210;
+      display: flex;
+      gap: 8px;
+      background: rgba(8, 14, 28, 0.94);
+      border: 2px solid #00e5ff;
+      border-radius: 28px;
+      padding: 8px 14px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.85);
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 92vw;
+    }
+    .hv-btn {
+      padding: 7px 12px;
+      border-radius: 18px;
+      border: none;
+      font-size: 11.5px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .hv-btn:active {
+      transform: scale(0.95);
+    }
+
+/* Top bar and dispatch controls */
+/* Mặc định ẩn thanh chọn ghế xe lớn; chỉ hiện đúng nút khi người chơi thực sự lên Xe Bus hoặc Xe Cứu Hỏa */
+    #heavy-vehicle-cockpit-bar {
+      display: none !important;
+    }
+    #heavy-vehicle-cockpit-bar.active-bus-bar,
+    #heavy-vehicle-cockpit-bar.active-fire-bar,
+    #heavy-vehicle-cockpit-bar.active-heavy-bar {
+      display: flex !important;
+    }
+    .bus-only-seat-btn {
+      display: none;
+    }
+    #heavy-vehicle-cockpit-bar.active-bus-bar .bus-only-seat-btn,
+    #heavy-vehicle-cockpit-bar.active-heavy-bar .bus-only-seat-btn {
+      display: inline-block;
+    }
+    .fire-only-turret-btn {
+      display: none;
+    }
+    #heavy-vehicle-cockpit-bar.active-fire-bar .fire-only-turret-btn {
+      display: inline-block;
+    }
+
+/* Mobile controls and overlays */
+/* 1. Ẩn hoàn toàn 2 bảng điều khiển lớn (#quest-laser-cockpit) trên cả Điện thoại & PC để thoáng màn hình */
+    #quest-laser-cockpit,
+    body.device-mobile-phone #quest-laser-cockpit,
+    body.mobile-clean-ui #quest-laser-cockpit {
+      display: none !important;
+    }
+
+    /* 2. Chỉnh lại tỉ lệ nút 3 gạch (☰) gọn gàng (36x36px) ở sát góc trên phải, không đè lên bất kỳ nút nào */
+    #hamburger-menu-btn {
+      top: 10px !important;
+      right: 10px !important;
+      width: 36px !important;
+      height: 36px !important;
+      font-size: 18px !important;
+      border-width: 1.5px !important;
+      z-index: 10001 !important;
+    }
+
+    /* 3. Thu gọn Map tròn trên màn hình Điện thoại để không chiếm diện tích */
+    @media screen and (max-width: 920px) {
+      #circular-minimap-widget {
+        width: 96px !important;
+        height: 96px !important;
+        top: 8px !important;
+        left: 8px !important;
+        border-width: 2px !important;
+      }
+      #minimap-legend {
+        display: none !important;
+      }
+      #youtube-app-modal {
+        width: 96vw !important;
+        height: 86vh !important;
+        top: 50% !important;
+        left: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        z-index: 10005 !important;
+      }
+      #youtube-app-modal .yt-body {
+        flex-direction: column !important;
+        height: calc(86vh - 50px) !important;
+      }
+      #youtube-app-modal .yt-player-area {
+        flex: none !important;
+        height: 48% !important;
+      }
+      #youtube-app-modal .yt-playlist-side {
+        flex: 1 !important;
+        border-left: none !important;
+        border-top: 1px solid #333 !important;
+      }
+    }
+
+    /* 4. Thanh thao tác nhanh siêu gọn dành riêng cho Điện thoại (Nằm gọn sát mép dưới) */
+    #v160-mobile-minimal-dock {
+      position: fixed;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9500;
+      display: none;
+      gap: 6px;
+      background: rgba(6, 12, 24, 0.86);
+      border: 1px solid #00e5ff;
+      padding: 5px 10px;
+      border-radius: 24px;
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.8);
+    }
+    body.device-mobile-phone #v160-mobile-minimal-dock {
+      display: flex !important;
+    }
+    .mob-min-btn {
+      background: #162438;
+      color: #fff;
+      border: 1px solid #3a506b;
+      border-radius: 16px;
+      padding: 6px 10px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .mob-min-btn:active {
+      background: #00ff88;
+      color: #000;
+    }
+
+/* Touch and scroll behavior */
+/* Chỉ khóa gesture cuộn trang trên vùng vẽ 3D canvas, giữ nguyên khả năng cuộn cho danh sách nhạc và bảng điều khiển */
+    html, body {
+      touch-action: manipulation !important;
+    }
+    canvas {
+      touch-action: none !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
+    #yt-results-list, .yt-playlist-side, .floating-panel {
+      touch-action: pan-y !important;
+      overflow-y: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+
+/* Phone FPV and legacy camera */
+#v250-dual-cam-hud {
+      position: fixed;
+      top: 58px;
+      right: 12px;
+      z-index: 9400;
+      display: none !important; /* Ẩn hoàn toàn khung 2D để không che khuất tầm nhìn lái xe */
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: auto;
+      transition: all 0.25s ease;
+    }
+    .v250-cam-box {
+      width: 210px;
+      height: 118px;
+      background: rgba(8, 15, 30, 0.92);
+      border: 1.5px solid rgba(0, 229, 255, 0.65);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
+    }
+    .v250-cam-box.rear-active-reverse {
+      width: 320px;
+      height: 180px;
+      border: 2.5px solid #ff2a55;
+      box-shadow: 0 0 22px rgba(255, 42, 85, 0.75);
+    }
+    .v250-cam-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .v250-cam-label {
+      position: absolute;
+      top: 4px;
+      left: 6px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #00ff88;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      z-index: 2;
+    }
+    .v250-reverse-guidelines {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      background:
+        linear-gradient(to top, rgba(255, 0, 50, 0.32) 0%, transparent 28%),
+        repeating-linear-gradient(to top, transparent 0px, transparent 22px, rgba(255, 214, 10, 0.55) 23px, transparent 24px);
+    }
+    .v250-cam-box.rear-active-reverse .v250-reverse-guidelines {
+      display: block;
+    }
+    @media (max-width: 768px) {
+      .v250-cam-box { width: 145px; height: 82px; }
+      .v250-cam-box.rear-active-reverse { width: 220px; height: 124px; }
+    }
+
+/* Desktop layout, four-tab settings and battery profiles */
+/* 1. Bố cục Minimap góc trên trái & Nút Bánh Răng Liquid Widget ngay bên dưới */
+  #circular-minimap-widget {
+    top: 14px !important;
+    left: 14px !important;
+    bottom: auto !important;
+    z-index: 950 !important;
+  }
+  #minimap-legend {
+    display: none !important;
+  }
+
+  #liquid-gear-widget-container {
+    position: fixed;
+    top: 196px;
+    left: 14px;
+    z-index: 960;
+    width: 248px;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    user-select: none;
+    pointer-events: none;
+  }
+
+  #liquid-gear-trigger-btn {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 14px;
+    border-radius: 24px;
+    border: 1px solid rgba(0, 229, 255, 0.55);
+    background: linear-gradient(135deg, rgba(10, 18, 34, 0.92), rgba(20, 36, 62, 0.88));
+    color: #00f5d4;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.18);
+    transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  #liquid-gear-trigger-btn:hover {
+    border-color: #00f5d4;
+    box-shadow: 0 10px 28px rgba(0, 245, 212, 0.28);
+    transform: translateY(-1px);
+  }
+  #liquid-gear-trigger-btn .gear-icon {
+    display: inline-block;
+    font-size: 16px;
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #liquid-gear-trigger-btn.liquid-open .gear-icon {
+    transform: rotate(180deg);
+  }
+
+  /* Danh sách cuộn Liquid Glass */
+  #liquid-gear-menu-list {
+    pointer-events: auto;
+    margin-top: 8px;
+    max-height: 0;
+    opacity: 0;
+    overflow-y: hidden;
+    border-radius: 18px;
+    background: rgba(9, 15, 28, 0.94);
+    border: 1px solid rgba(0, 229, 255, 0.0);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.65);
+    transition:
+      max-height 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.28s ease,
+      padding 0.28s ease,
+      border-color 0.28s ease;
+    padding: 0 8px;
+  }
+  #liquid-gear-menu-list.liquid-expanded {
+    max-height: 58vh;
+    opacity: 1;
+    overflow-y: auto;
+    padding: 8px;
+    border-color: rgba(0, 229, 255, 0.42);
+  }
+  #liquid-gear-menu-list::-webkit-scrollbar {
+    width: 5px;
+  }
+  #liquid-gear-menu-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 229, 255, 0.4);
+    border-radius: 4px;
+  }
+
+  .liquid-item-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    margin-bottom: 5px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(22, 32, 52, 0.78);
+    color: #e2e8f0;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.18s ease;
+  }
+  .liquid-item-btn:last-child {
+    margin-bottom: 0;
+  }
+  .liquid-item-btn:hover {
+    background: rgba(34, 52, 84, 0.92);
+    border-color: rgba(0, 229, 255, 0.5);
+    transform: translateX(2px);
+  }
+  .liquid-item-btn.active-true {
+    background: linear-gradient(90deg, rgba(6, 214, 160, 0.25), rgba(0, 187, 249, 0.22));
+    border-color: #06d6a0;
+    color: #ffffff;
+  }
+  .liquid-badge {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffd166;
+    flex-shrink: 0;
+  }
+  .liquid-item-btn.active-true .liquid-badge {
+    background: #06d6a0;
+    color: #041019;
+  }
+
+  /* 2. Tối ưu không gian bản Mobile (Thu gọn panel cồng kềnh) */
+  @media (max-width: 768px) {
+    #liquid-gear-widget-container {
+      top: 175px;
+      left: 10px;
+      width: 215px;
+    }
+    #liquid-gear-trigger-btn {
+      padding: 7px 10px;
+      font-size: 11.5px;
+    }
+    .mobile-compact-hidden {
+      display: none !important;
+    }
+  }
+
+  /* 5. Role Seat Badge hiển thị vai trò thời gian thực */
+  #v260-role-seat-badge {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 980;
+    padding: 7px 18px;
+    border-radius: 20px;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    transition: all 0.3s ease;
+    pointer-events: none;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    user-select: none;
+  }
+  .role-driver {
+    background: rgba(0, 35, 20, 0.88);
+    border: 1.5px solid #00ff88;
+    color: #00ff88;
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+  }
+  .role-passenger {
+    background: rgba(10, 25, 45, 0.88);
+    border: 1.5px solid #00d2ff;
+    color: #00d2ff;
+    text-shadow: 0 0 8px rgba(0, 210, 255, 0.5);
+  }
+  .role-foot {
+    background: rgba(35, 30, 10, 0.88);
+    border: 1.5px solid #ffd60a;
+    color: #ffd60a;
+    text-shadow: 0 0 8px rgba(255, 214, 10, 0.5);
+  }
+  @media (max-width: 768px) {
+    #v260-role-seat-badge {
+      font-size: 11px;
+      padding: 5px 12px;
+      top: 10px;
+      max-width: 90vw;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }

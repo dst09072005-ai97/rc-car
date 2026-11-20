@@ -4,6 +4,8 @@
 // Xử lý Phát Video MP4 Trực Tiếp, Phân Giải Stream YouTube, Đồng Bộ 3D & IFrame Fallback
 // ============================================================================
 
+import { YT_VIDEO_ID_RE, sanitizeSafeMediaUrl } from './modules/safe-media.js';
+
 export function escapeHtml(str) {
   if (!str) return '';
   return String(str)
@@ -70,11 +72,22 @@ function getDomInspectorLogEl() {
   return el;
 }
 
-export function logStatus(msg, color = '#00ff88') {
+export function logStatus(msg, color = '#00ff88', videoId = '') {
   const el = getDomInspectorLogEl();
   if (el) {
     el.style.color = color;
-    el.innerHTML = `🛠 <b>[YT Engine]:</b> ${msg}`;
+    const label = document.createElement('b');
+    label.textContent = '[YT Engine]:';
+    el.replaceChildren(label, ' ' + msg);
+    if (typeof videoId === 'string' && YT_VIDEO_ID_RE.test(videoId)) {
+      const link = document.createElement('a');
+      link.href = 'https://www.youtube.com/watch?v=' + videoId;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.style.cssText = 'color:#00e5ff;text-decoration:underline;margin-left:6px;';
+      link.textContent = '[YouTube]';
+      el.append(link);
+    }
   }
 }
 
@@ -86,7 +99,12 @@ export async function broadcastYouTubeSyncState(videoPayload) {
     await fetch('/api/yt-sync-state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(videoPayload)
+      body: JSON.stringify({
+        ...videoPayload,
+        streamUrl: sanitizeSafeMediaUrl(videoPayload.streamUrl)
+          ? new URL(videoPayload.streamUrl, window.location.href).href
+          : ''
+      })
     });
   } catch (e) {}
 
@@ -113,8 +131,8 @@ export async function playMediaItem(item, seatIdx = 0) {
   currentPlayerState = PlayerState.RESOLVING;
 
   const title = item.title || 'YouTube Video';
-  let vid = (item.videoId || '').trim();
-  let directUrl = (item.directUrl || '').trim();
+  let vid = typeof item.videoId === 'string' && YT_VIDEO_ID_RE.test(item.videoId) ? item.videoId : '';
+  let directUrl = sanitizeSafeMediaUrl(item.directUrl);
   const durText = item.duration || 'Full HD';
 
   // Nhận diện nếu directUrl là URL YouTube
@@ -139,7 +157,8 @@ export async function playMediaItem(item, seatIdx = 0) {
     if (vid) {
       window.currentYtCoverImage.src = `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;
     } else if (item.thumbnail) {
-      window.currentYtCoverImage.src = item.thumbnail;
+      const thumbnail = sanitizeSafeMediaUrl(item.thumbnail);
+      if (thumbnail) window.currentYtCoverImage.src = thumbnail;
     }
   }
 
@@ -152,7 +171,7 @@ export async function playMediaItem(item, seatIdx = 0) {
   // --------------------------------------------------------------------------
   if (directUrl && !vid) {
     currentPlayerState = PlayerState.LOADING;
-    logStatus(`🎬 Đang tải luồng MP4 trực tiếp: <b>${escapeHtml(title.slice(0, 36))}</b>`);
+    logStatus(`🎬 Đang tải luồng MP4 trực tiếp: ${title.slice(0, 36)}`);
 
     iframeEl.src = 'about:blank';
     iframeEl.classList.add('panel-hidden');
@@ -169,14 +188,14 @@ export async function playMediaItem(item, seatIdx = 0) {
     videoEl.onerror = () => {
       if (reqId !== currentRequestId) return;
       currentPlayerState = PlayerState.ERROR;
-      logStatus(`❌ Lỗi tải URL media: ${escapeHtml(directUrl.slice(0, 42))}...`, '#ff3b30');
+      logStatus(`❌ Lỗi tải URL media: ${directUrl.slice(0, 42)}...`, '#ff3b30');
     };
 
     try {
       await videoEl.play();
       if (reqId === currentRequestId) {
         currentPlayerState = PlayerState.PLAYING;
-        logStatus(`▶ Đang phát MP4: <b>${escapeHtml(title.slice(0, 36))}</b>`, '#00ff88');
+        logStatus(`▶ Đang phát MP4: ${title.slice(0, 36)}`, '#00ff88');
       }
     } catch (playErr) {
       videoEl.muted = true;
@@ -191,7 +210,7 @@ export async function playMediaItem(item, seatIdx = 0) {
     }
 
     broadcastYouTubeSyncState({
-      videoId: 'direct_mp4',
+      videoId: '',
       title,
       streamUrl: directUrl,
       durationText: durText,
@@ -207,7 +226,7 @@ export async function playMediaItem(item, seatIdx = 0) {
   // NHÁNH 2: Video YouTube (videoId)
   // --------------------------------------------------------------------------
   if (vid) {
-    logStatus(`🔍 Đang phân giải luồng YouTube: <b>${escapeHtml(title.slice(0, 32))}</b>...`, '#ffd60a');
+    logStatus(`🔍 Đang phân giải luồng YouTube: ${title.slice(0, 32)}...`, '#ffd60a');
 
     // Thử lấy luồng MP4 trực tiếp từ server
     let streamResolved = null;
@@ -265,7 +284,7 @@ export async function playMediaItem(item, seatIdx = 0) {
     // Nếu MP4 trực tiếp chạy thành công -> Hoàn tất
     if (html5PlaySuccess) {
       currentPlayerState = PlayerState.PLAYING;
-      logStatus(`✅ Đang phát MP4 gốc Full thời lượng (${durText}): <b>${escapeHtml(title.slice(0, 32))}</b>`, '#00ff88');
+      logStatus(`✅ Đang phát MP4 gốc Full thời lượng (${durText}): ${title.slice(0, 32)}`, '#00ff88');
 
       broadcastYouTubeSyncState({
         videoId: vid,
@@ -283,7 +302,7 @@ export async function playMediaItem(item, seatIdx = 0) {
     // Nếu MP4 không khả dụng (YouTube DRM/Cipher chặn IP) -> Chuyển sang IFrame YouTube chính thức
     // Màn hình táp-lô 3D tự động hiển thị HD Thumbnail thật + sóng nhạc sống động + timer
     currentPlayerState = PlayerState.FALLBACK;
-    logStatus(`▶ Đang phát qua YouTube Embed (${durText}): <b>${escapeHtml(title.slice(0, 32))}</b> <a href="https://www.youtube.com/watch?v=${vid}" target="_blank" style="color:#00e5ff;text-decoration:underline;margin-left:6px;">[Mở trên YouTube ↗]</a>`, '#00ff88');
+    logStatus(`▶ Đang phát qua YouTube Embed (${durText}): ${title.slice(0, 32)}`, '#00ff88', vid);
 
     videoEl.pause();
     videoEl.classList.add('panel-hidden');
@@ -344,7 +363,7 @@ export async function searchYouTube(rawQuery, seatIdx = 0) {
     return;
   }
 
-  logStatus(`🔍 Đang tìm kiếm video: "<b>${escapeHtml(query)}</b>"...`, '#ffd60a');
+  logStatus(`🔍 Đang tìm kiếm video: "${query}"...`, '#ffd60a');
 
   let items = [];
   try {
@@ -389,7 +408,7 @@ export async function searchYouTube(rawQuery, seatIdx = 0) {
   const playlistSide = document.querySelector('#youtube-app-modal .yt-playlist-side');
 
   if (items.length === 0) {
-    logStatus(`⚠ Không tìm thấy video nào cho: "<b>${escapeHtml(query)}</b>". Hãy thử từ khóa khác.`, '#ff3b30');
+    logStatus(`⚠ Không tìm thấy video nào cho: "${query}". Hãy thử từ khóa khác.`, '#ff3b30');
     if (playlistSide) {
       playlistSide.querySelectorAll('.yt-card').forEach((c) => c.remove());
       const emptyCard = document.createElement('div');
@@ -416,7 +435,7 @@ export async function searchYouTube(rawQuery, seatIdx = 0) {
       card.innerHTML = `
         <div style="display:flex;gap:8px;align-items:center;">
           <div style="position:relative;width:72px;height:44px;flex-shrink:0;">
-            <img src="${escapeHtml(item.thumbnail)}" style="width:72px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
+            <img src="${escapeHtml(sanitizeSafeMediaUrl(item.thumbnail))}" style="width:72px;height:44px;object-fit:cover;border-radius:4px;border:1px solid #ff0000;" />
             <span style="position:absolute;bottom:2px;right:2px;background:rgba(0,0,0,0.85);color:#ffd60a;font-size:9px;padding:1px 3px;border-radius:3px;font-weight:bold;">${escapeHtml(item.duration || 'Full')}</span>
           </div>
           <div style="flex:1;overflow:hidden;">
@@ -435,7 +454,7 @@ export async function searchYouTube(rawQuery, seatIdx = 0) {
     });
   }
 
-  logStatus(`✅ Đã tìm thấy <b>${items.length} video</b>. Đang phát: <b>${escapeHtml(items[0].title.slice(0, 30))}</b>`, '#00ff88');
+  logStatus(`✅ Đã tìm thấy ${items.length} video. Đang phát: ${items[0].title.slice(0, 30)}`, '#00ff88');
   await playMediaItem(items[0], seatIdx);
 }
 
@@ -459,7 +478,7 @@ if (typeof window !== 'undefined' && !window._ytMessageHookBound) {
         };
         const msg = errMap[errCode] || `Mã lỗi IFrame: ${errCode}`;
         const currVid = window.currentYtVideoId || '';
-        logStatus(`⚠ YouTube IFrame Player báo lỗi: <b>${msg}</b> ${currVid ? `<a href="https://www.youtube.com/watch?v=${currVid}" target="_blank" style="color:#00e5ff;text-decoration:underline;margin-left:6px;">[Mở trên YouTube ↗]</a>` : ''}`, '#ff3b30');
+        logStatus(`⚠ YouTube IFrame Player báo lỗi: ${msg}`, '#ff3b30', currVid);
       }
     } catch (e) {}
   });

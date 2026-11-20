@@ -12,28 +12,15 @@ const express = require('express');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
-const dns = require('dns');
 const WebSocket = require('ws');
-const { exec: cpExec } = require('child_process');
-const { promisify: utilPromisify } = require('util');
-const execPromise = utilPromisify(cpExec);
+const { isForbiddenSsrfIp, validateProxyTargetUrl, fetchWithSsrfGuard, clampFinite } = require('./modules/ssrf-guard');
+const { getBestNetworkAddresses, getLocalLanIp, loadEnvConfig, renderPhoneFpvQrSvg } = require('./modules/network-utils');
+const { isTrustedLocalControlRequest, hardwareActions } = require('./modules/local-control-guard');
+const { YT_VIDEO_ID_RE, tryResolveYtDlpStream, resolveDirectMp4FromVideoId } = require('./modules/youtube-resolver');
+const { setupFpvPhoneAndDuckDnsManager, startCloudflareTunnelManager, stopCloudflareTunnelManager, getCloudflareTunnelUrl } = require('./modules/fpv-tunnel-manager');
+const { attachUdpTelemetry, attachUnifiedInputAndBridgeServer } = require('./modules/udp-rc-arbiter');
 
-async function tryResolveYtDlpStream(videoId) {
-  if (!videoId || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
-  try {
-    const { stdout } = await execPromise(
-      `yt-dlp -f "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/b" -g --no-warnings "https://youtube.com/watch?v=${videoId}"`,
-      { timeout: 12000 }
-    );
-    const urls = stdout.trim().split(/\r?\n/).filter(Boolean);
-    if (urls.length > 0 && urls[0].startsWith('http')) {
-      return urls[0];
-    }
-  } catch (e) {}
-  return null;
-}
-
-
+loadEnvConfig();
 const app = express();
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 // ============================================================================
@@ -80,10 +67,9 @@ const candidateStaticDirs = [
   path.resolve(__dirname, 'www'),
   path.resolve(__dirname, '../www'),
   path.resolve(__dirname, 'server/public'),
-  path.resolve(__dirname, 'public'),
-  __dirname
+  path.resolve(__dirname, 'public')
 ];
-// Profile data is served through the battery API only, including on the server-directory static fallback.
+// Profile data is served through the battery API only.
 app.use((req, res, next) => {
   let requestedPath;
   try {
@@ -173,89 +159,10 @@ app.get('/api/health', (req, res) => {
 // ============================================================================
 const IPV4_REGEX = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
 
-function isForbiddenSsrfIp(ipOrHost) {
-  if (!ipOrHost) return true;
-  let normalized = String(ipOrHost).toLowerCase().trim();
-
-  if (normalized.startsWith('[') && normalized.endsWith(']')) {
-    normalized = normalized.slice(1, -1);
-  }
-  if (!normalized.includes('::') && normalized.includes(':')) {
-    normalized = normalized.split(':')[0];
-  }
-
-  // Chặn localhost, loopback IPv4/IPv6, any-address
-  if (
-    normalized === 'localhost' ||
-    normalized.endsWith('.localhost') ||
-    normalized === '127.0.0.1' ||
-    normalized === '::1' ||
-    normalized === '0.0.0.0' ||
-    normalized === '0' ||
-    normalized === '::' ||
-    normalized === 'metadata.google.internal' ||
-    normalized === 'metadata' ||
-    normalized === 'instance-data'
-  ) {
-    return true;
-  }
-
-  // Chặn toàn dải Loopback (127.0.0.0/8)
-  if (normalized.startsWith('127.')) {
-    return true;
-  }
-
-  // Chặn Cloud Metadata IP (169.254.0.0/16) (AWS, GCP, Azure, OpenStack...)
-  if (normalized === '169.254.169.254' || normalized.startsWith('169.254.')) {
-    return true;
-  }
-
-  // Chặn Loopback IPv6 & Link-Local IPv6
-  if (
-    normalized.startsWith('fe80:') ||
-    normalized.startsWith('::ffff:127.') ||
-    normalized.startsWith('::ffff:169.254.')
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-function validateProxyTargetUrl(rawUrl) {
-  if (!rawUrl || typeof rawUrl !== 'string') {
-    return { valid: false, reason: 'URL trống hoặc không đúng định dạng' };
-  }
-  try {
-    const parsed = new URL(rawUrl);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return { valid: false, reason: 'Chỉ chấp nhận giao thức HTTP/HTTPS' };
-    }
-    const hostname = parsed.hostname;
-    if (isForbiddenSsrfIp(hostname)) {
-      return { valid: false, reason: 'SSRF Guard: Địa chỉ IP/Host bị chặn' };
-    }
-
-    const blockedPorts = new Set(['21', '22', '23', '25', '53', '110', '135', '137', '138', '139', '445', '1433', '1521', '3306', '5432', '6379', '11211', '27017']);
-    if (parsed.port && blockedPorts.has(String(parsed.port))) {
-      return { valid: false, reason: `SSRF Guard: Cổng kết nối ${parsed.port} bị chặn do nhạy cảm` };
-    }
-
-    return { valid: true, parsed };
-  } catch (err) {
-    return { valid: false, reason: 'Cú pháp URL không hợp lệ: ' + err.message };
-  }
-}
-
-function clampFinite(val, min, max, fallback = 0) {
-  const num = Number(val);
-  if (!Number.isFinite(num)) return fallback;
-  return Math.min(Math.max(num, min), max);
-}
-
 // Proxy lấy luồng Camera ESP32 & Thumbnail YouTube không bị chặn CORS/HTTPS (hỗ trợ Follow 301/302 Redirects)
 app.get('/api/esp32-proxy', async (req, res) => {
-  const targetUrl = (req.query.url || '').trim();
+  res.setHeader('Content-Security-Policy', 'sandbox');
+  const targetUrl = req.query.url;
   const check = validateProxyTargetUrl(targetUrl);
   if (!check.valid) {
     return res.status(400).send('SSRF Guard: ' + check.reason);
@@ -263,17 +170,16 @@ app.get('/api/esp32-proxy', async (req, res) => {
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 12000);
-  req.on('close', () => controller.abort());
+  res.on('close', () => controller.abort());
 
   try {
-    const upstream = await fetch(targetUrl, {
+    const upstream = await fetchWithSsrfGuard(targetUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
       },
-      redirect: 'follow',
       signal: controller.signal
-    });
+    }, { blockPrivateLan: false });
     clearTimeout(timeoutId);
 
     res.status(upstream.status || 200);
@@ -285,7 +191,7 @@ app.get('/api/esp32-proxy', async (req, res) => {
 
     if (upstream.body) {
       const { Readable } = require('stream');
-      Readable.fromWeb(upstream.body).pipe(res);
+      Readable.fromWeb(upstream.body).on('error', (err) => res.destroy(err)).pipe(res);
     } else {
       res.end();
     }
@@ -303,49 +209,14 @@ app.get('/api/esp32-proxy', async (req, res) => {
 // ============================================================================
 // CẬP NHẬT TRONG server.js (V125): CHỐNG TIMEOUT KẾT NỐI QR/QUEST & YOUTUBE FULL >5H
 // ============================================================================
-const os = require('os');
-
-function getBestNetworkAddresses() {
-  const nets = os.networkInterfaces();
-  const wifiLanCandidates = [];
-  let tailscaleIp = null;
-
-  for (const name of Object.keys(nets)) {
-    // Bỏ qua các card mạng ảo (WSL, Hyper-V, VirtualBox, Docker, VPN) gây lỗi timeout khi quét QR
-    if (/vethernet|wsl|docker|vbox|vmware|loopback|pseudo/i.test(name)) continue;
-
-    for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
-        if (net.address.startsWith('100.')) {
-          tailscaleIp = net.address;
-        } else if (
-          net.address.startsWith('192.168.') ||
-          net.address.startsWith('10.') ||
-          /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(net.address)
-        ) {
-          // Ưu tiên số 1 cho card Wi-Fi / WLAN thực tế
-          const isWifi = /wi-fi|wlan|wireless|airport/i.test(name);
-          if (isWifi) wifiLanCandidates.unshift(net.address);
-          else wifiLanCandidates.push(net.address);
-        }
-      }
-    }
-  }
-
-  const primaryLanIp = wifiLanCandidates[0] || tailscaleIp || 'localhost';
-  return {
-    lanIp: primaryLanIp,
-    tailscaleIp: tailscaleIp || primaryLanIp,
-    publicTunnelUrl: process.env.PUBLIC_TUNNEL_URL || null
-  };
-}
-
-function getLocalLanIp() {
-  return getBestNetworkAddresses().lanIp;
-}
 
 // Cho phép mọi thiết bị kiểm tra kết nối nhanh không bị chặn CORS
+const localMutationPaths = new Set([
+  '/api/set-esp32-car-ip', '/api/register-esp32', '/api/scan-esp32',
+  '/api/battery/action', '/api/yt-sync-state', '/api/rc-control', '/api/esp32-config'
+]);
 app.use((req, res, next) => {
+  if (localMutationPaths.has(req.path.toLowerCase().replace(/\/+$/, ''))) return next();
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
@@ -363,6 +234,9 @@ app.get('/api/network-info', (req, res) => {
     lanIp,
     tailscaleIp,
     publicTunnelUrl,
+    optionalSupabase: process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
+      ? { url: process.env.SUPABASE_URL, anonKey: process.env.SUPABASE_ANON_KEY }
+      : null,
     webUrl: `http://${lanIp}:${HTTP_PORT}`,
     mobilePassengerUrl: `${baseMobile}/?mode=passenger_mobile`,
     mobileTailscaleUrl: `http://${tailscaleIp}:${HTTP_PORT}/?mode=passenger_mobile`,
@@ -382,15 +256,7 @@ app.get('/api/phone-fpv-qr', (req, res) => {
       url.pathname !== '/fpv-cam.html' || url.username || url.password || url.search || url.hash) {
     return res.sendStatus(400);
   }
-  const QRCode = require('qrcode-terminal/vendor/QRCode');
-  const { L } = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel');
-  const code = new QRCode(-1, L);
-  code.addData(url.href);
-  code.make();
-  const size = code.getModuleCount() + 8;
-  const modules = code.modules.map((row, y) => row.map((dark, x) =>
-    dark ? `M${x + 4} ${y + 4}h1v1h-1z` : '').join('')).join('');
-  const image = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="white"/><path d="${modules}"/></svg>`;
+  const image = renderPhoneFpvQrSvg(url.href);
   res.set('Cache-Control', 'no-store').type('image/svg+xml').send(image);
 });
 
@@ -570,7 +436,7 @@ function getEffectiveCamEndpoints() {
   const now = Date.now();
   const frontHw = discoveredEsp32Cams.front && discoveredEsp32Cams.front.ip && (now - (discoveredEsp32Cams.front.lastSeen || 0) < 20000);
   const rearHw = discoveredEsp32Cams.rear && discoveredEsp32Cams.rear.ip && (now - (discoveredEsp32Cams.rear.lastSeen || 0) < 20000);
-  const publicTunnelUrl = (typeof cloudflareTunnelUrl === 'string' && cloudflareTunnelUrl) ? cloudflareTunnelUrl : null;
+  const publicTunnelUrl = getCloudflareTunnelUrl();
   const phoneOnline = fpvPhoneState.connected || (now - (fpvPhoneState.lastFrameAt || 0) < 10000);
 
   const front = frontHw ? discoveredEsp32Cams.front : {
@@ -625,134 +491,8 @@ const esp32CarConfig = {
   packetsSent: 0
 };
 
-// Hàm gửi xung Neutral trực tiếp tới ESP32 Car để arming an toàn ngay lập tức
-function sendDirectNeutralPulseToCar(targetIp, targetPort) {
-  if (!targetIp) return;
-  const p = Buffer.alloc(4);
-  p.writeInt16LE(90, 0);   // 90° thẳng lái
-  p.writeInt16LE(1500, 2); // 1500µs Neutral dừng an toàn tuyệt đối
-  try {
-    udpServer.send(p, 0, 4, Number(targetPort || 4210), targetIp, () => {});
-    if (typeof udpOutSocket !== 'undefined' && udpOutSocket) {
-      udpOutSocket.send(p, 0, 4, Number(targetPort || 4210), targetIp, () => {});
-    }
-  } catch (e) {}
-}
-
-// Hàm gửi gói tin nhị phân 4 bytes [int16_t steer, int16_t throttle] qua UDP tới ESP32 Xe RC Thật
-function sendUdpCarCommand(steer, throttle) {
-  if (!esp32CarConfig.ip) return;
-  // Ưu tiên ủy thác toàn bộ qua sendRateLimitedEsp32Udp duy nhất có bộ trọng tài phần cứng và slew rate chống giật
-  if (typeof globalThis.sendRateLimitedEsp32Udp === 'function') {
-    const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-    const sNorm = (rawS - 90) / 45;
-    const rawT = Math.max(1050, Math.min(1950, Math.round(Number(throttle) || 1500)));
-    const dNorm = (rawT - 1500) / 350;
-    globalThis.sendRateLimitedEsp32Udp(sNorm, dNorm, rawT, (rawT < 1490 ? 'R' : 'D'), 'UDP_CAR_CMD');
-    return;
-  }
-
-  const rawS = Math.max(45, Math.min(135, Math.round(Number(steer) || 90)));
-  const s = rawS;
-  const t = Math.max(1050, Math.min(1950, Math.round(Number(throttle) || 1500)));
-
-  const buf = Buffer.alloc(4);
-  buf.writeInt16LE(s, 0);
-  buf.writeInt16LE(t, 2);
-
-  try {
-    udpServer.send(buf, 0, 4, esp32CarConfig.port || 4210, esp32CarConfig.ip);
-  } catch (err) {}
-}
-
-let latestEsp32Telemetry = {
-  connected: false,
-  lastPacketTime: 0,
-  speedKmh: 0,
-  steerDeg: 0,
-  gear: 'P',
-  rpm: 0,
-  esp32RefSpeed: 1.0,
-  obstacleHit: false,
-  x: null,
-  z: null,
-  heading: null
-};
-
-udpServer.on('message', (msg, rinfo) => {
-  try {
-    const str = msg.toString().trim();
-    const data = str.startsWith('{') ? JSON.parse(str) : {};
-
-    // Tự động nhận diện IP của ESP32 Camera (Cam trước hoặc Cam lùi) khi đổi Wi-Fi (có chống spam flood log)
-    if (data.type === 'ESP32_CAM' || data.type === 'ESP32_ANNOUNCE' || (data.cam && !data.speedKmh)) {
-      const role = (data.role === 'rear' || data.cam === 'rear') ? 'rear' : 'front';
-      const newCamIp = rinfo.address;
-      const newCamPort = Number(data.port || 4213);
-      const prevCam = discoveredEsp32Cams[role];
-      const isNewCam = !prevCam || prevCam.ip !== newCamIp || prevCam.port !== newCamPort;
-      const now = Date.now();
-
-      discoveredEsp32Cams[role] = {
-        ip: newCamIp,
-        port: newCamPort,
-        lastSeen: now,
-        lastLoggedTime: prevCam ? prevCam.lastLoggedTime : 0
-      };
-
-      if (isNewCam) {
-        discoveredEsp32Cams[role].lastLoggedTime = now;
-        console.log(`📡 [AUTO-DISCOVERY UDP] Đã nhận diện ESP32 ${role.toUpperCase()}: ${newCamIp}:${newCamPort}`);
-        if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
-      }
-      return; // Chỉ cập nhật IP Camera, KHÔNG ghi đè telemetry xe!
-    }
-
-    // Tự động nhận diện IP của Mạch Lái Xe ESP32 (Controller GPIO 12/13 qua UDP 4210)
-    if (data.type === 'ESP32_CAR' || data.type === 'ESP32_CAR_ANNOUNCE' || data.role === 'car') {
-      const newIp = rinfo.address;
-      const newPort = Number(data.port || 4210);
-      const isNewCar = (esp32CarConfig.ip !== newIp) || (esp32CarConfig.port !== newPort);
-      const now = Date.now();
-
-      esp32CarConfig.ip = newIp;
-      esp32CarConfig.port = newPort;
-      esp32CarConfig.lastSeen = now;
-
-      // Chống flood log Terminal: Chỉ in log khi IP/Port của mạch xe mới xuất hiện
-      if (isNewCar) {
-        esp32CarConfig.lastLoggedTime = now;
-        console.log(`📡 [AUTO-DISCOVERY UDP] Đã nhận diện ESP32 MẠCH LÁI XE: ${newIp}:${newPort}`);
-        if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
-      }
-
-      // ARMING KHÓA AN TOÀN TUYỆT ĐỐI (SAFETY ARMING):
-      // Khi vừa nhận diện xe hoặc kết nối mới, phát ngay lệnh Neutral 1500µs cho ESC để khóa motor dừng hẳn!
-      if (isNewCar) {
-        sendDirectNeutralPulseToCar(newIp, newPort);
-      }
-      return;
-    }
-
-    // Chỉ nhận Telemetry nếu gói tin thực sự chứa thông số lái xe ESP32 Twin / Godot
-    if (data.speedKmh !== undefined || data.speed !== undefined || data.steerDeg !== undefined || data.steer !== undefined) {
-      latestEsp32Telemetry = {
-        connected: true,
-        lastPacketTime: Date.now(),
-        remoteIp: rinfo.address,
-        remotePort: rinfo.port,
-        speedKmh: Number(data.speedKmh ?? data.speed ?? 0),
-        steerDeg: Number(data.steerDeg ?? data.steer ?? 0),
-        gear: data.gear || (Number(data.speedKmh) > 0.1 ? 'D' : Number(data.speedKmh) < -0.1 ? 'R' : 'P'),
-        rpm: Number(data.rpm ?? 800),
-        esp32RefSpeed: Number(data.esp32RefSpeed ?? data.refSpeed ?? 1.0),
-        obstacleHit: Boolean(data.obstacleHit || data.crash),
-        x: data.x !== undefined ? Number(data.x) : null,
-        z: data.z !== undefined ? Number(data.z) : null,
-        heading: data.heading !== undefined ? Number(data.heading) : null
-      };
-    }
-  } catch (e) {}
+const { sendUdpCarCommand, getLatestEsp32Telemetry } = attachUdpTelemetry({
+  udpServer, discoveredEsp32Cams, esp32CarConfig, broadcastCameraIpUpdate
 });
 
 udpServer.bind(4210, '0.0.0.0', () => {
@@ -760,6 +500,7 @@ udpServer.bind(4210, '0.0.0.0', () => {
 });
 
 app.get('/api/esp32-telemetry', (req, res) => {
+  const latestEsp32Telemetry = getLatestEsp32Telemetry();
   const now = Date.now();
   const ageMs = now - (latestEsp32Telemetry.lastPacketTime || 0);
   res.json({
@@ -771,6 +512,7 @@ app.get('/api/esp32-telemetry', (req, res) => {
 
 // Endpoint tự động đăng ký IP cho ESP32 qua HTTP khi mạch vừa kết nối Wi-Fi mới
 app.get('/api/register-esp32', (req, res) => {
+  if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
   const rawRole = String(req.query.role || req.query.cam || 'front').toLowerCase().trim();
   const role = (rawRole === 'car' || rawRole === 'rear') ? rawRole : 'front';
   const rawIp = req.query.ip || req.ip;
@@ -797,6 +539,7 @@ app.get('/api/register-esp32', (req, res) => {
 
 // Endpoint cấu hình hoặc kiểm tra IP mạch lái xe RC (Controller)
 app.all('/api/set-esp32-car-ip', (req, res) => {
+  if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
   const rawIp = (req.body && req.body.ip) || req.query.ip;
   const rawPort = (req.body && req.body.port) || req.query.port;
   if (!rawIp) {
@@ -843,6 +586,7 @@ let lastScanEsp32Time = 0;
 
 // Endpoint quét nhanh mạng LAN để tự động dò tìm IP của 2 mạch ESP32
 app.get('/api/scan-esp32', async (req, res) => {
+  if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
   const nowScan = Date.now();
   if (nowScan - lastScanEsp32Time < 5000) {
     return res.json({ found: [], discovered: discoveredEsp32Cams, throttled: true });
@@ -902,15 +646,16 @@ app.get('/api/scan-esp32', async (req, res) => {
 
 // Proxy truyền tải luồng video MP4 về thẻ <video> trong xe không bị lỗi CORS (SSRF Protected)
 app.get('/api/yt-stream-proxy', async (req, res) => {
+  res.setHeader('Content-Security-Policy', 'sandbox');
   const streamUrl = req.query.url;
-  const check = validateProxyTargetUrl(streamUrl);
+  const check = validateProxyTargetUrl(streamUrl, { blockPrivateLan: true });
   if (!check.valid) return res.status(400).send('SSRF Guard: ' + check.reason);
 
   // Chọn UA khớp với client đã ký URL
   const ua = 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip';
 
   try {
-    const upstream = await fetch(streamUrl, {
+    const upstream = await fetchWithSsrfGuard(streamUrl, {
       method: 'GET',
       headers: {
         'User-Agent': ua,
@@ -919,9 +664,8 @@ app.get('/api/yt-stream-proxy', async (req, res) => {
         'Range': req.headers.range || 'bytes=0-',
         'Accept-Encoding': 'identity',
       },
-      redirect: 'follow',                 // ← follow 302 tới CDN thật
       signal: AbortSignal.timeout(30000)
-    });
+    }, { blockPrivateLan: true });
 
     // QUAN TRỌNG: luôn set CORS header kể cả khi lỗi
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -930,6 +674,7 @@ app.get('/api/yt-stream-proxy', async (req, res) => {
     res.setHeader('Accept-Ranges', 'bytes');
 
     if (!upstream.ok) {
+      await upstream.body.cancel();
       return res.status(upstream.status).end();
     }
 
@@ -942,7 +687,7 @@ app.get('/api/yt-stream-proxy', async (req, res) => {
       res.setHeader('Content-Range', upstream.headers.get('content-range'));
 
     const { Readable } = require('stream');
-    Readable.fromWeb(upstream.body).pipe(res);
+    Readable.fromWeb(upstream.body).on('error', (err) => res.destroy(err)).pipe(res);
   } catch (err) {
     if (!res.headersSent) {
       res.setHeader('Access-Control-Allow-Origin', '*');
@@ -950,8 +695,6 @@ app.get('/api/yt-stream-proxy', async (req, res) => {
     }
   }
 });
-
-
 
 // ============================================================================
 // MULTIPLAYER SERVER: MỖI THIẾT BỊ JOIN VÀO SẼ SPAWN 1 XE RIÊNG & CÓ THỂ LÊN XE NHAU
@@ -980,7 +723,6 @@ cars.set('car_host', {
 // (Chỉ giữ lại car_host, KHÔNG tự spawn car_guest_1 giữa đường khi chưa có người thứ 2)
 // ============================================================================
 cars.delete('car_guest_1');
-
 
 const activeMultiplayerSockets = new Set();
 const { RcBatteryEstimator, dispatchBatteryAction } = require('./rc-battery-estimator');
@@ -1014,22 +756,10 @@ function publishBatteryState(ws, onlyIfChanged = false) {
   lastBroadcastBatteryJson = allSent ? packet : undefined;
 }
 
-function canChangeBattery(req) {
-  if (req.headers['cf-connecting-ip'] || req.headers['cf-ray']) return false;
-  const origin = req.headers.origin;
-  if (!origin) return true;
-  try {
-    const url = new URL(origin);
-    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
-
 function handleBatterySocketAction(ws, req, data) {
   if (typeof data?.type !== 'string' || !data.type.startsWith('BATTERY_')) return false;
   const readOnly = data.type === 'BATTERY_GET';
-  const result = readOnly || canChangeBattery(req)
+  const result = readOnly || isTrustedLocalControlRequest(req)
     ? dispatchBatteryAction(rcBatteryEstimator, data)
     : { ok: false, error: 'Kết nối này chỉ có quyền xem pin.' };
   if (result.ok && readOnly) {
@@ -1175,7 +905,7 @@ function proxyEsp32WebSocket(clientWs, targetIp, targetPort, roleName) {
 }
 
 function attachMultiplayerServer(serverInstance) {
-  const wss = new WebSocket.Server({ server: serverInstance });
+  const wss = new WebSocket.Server({ server: serverInstance, maxPayload: 2 * 1024 * 1024 });
   wss.on('error', () => {});
   if (typeof bindUnifiedWss === 'function') {
     bindUnifiedWss(wss);
@@ -1392,6 +1122,7 @@ function attachMultiplayerServer(serverInstance) {
 
       try {
         const data = JSON.parse(msg.toString());
+        if (hardwareActions.has(data?.type) && !isTrustedLocalControlRequest(req)) return;
         if (handleBatterySocketAction(ws, req, data)) return;
         if (data.type === 'FPV_PHONE_PUBLISHER_INIT') {
           const phoneIp = (ws._clientIp || '').replace(/^::ffff:/, '');
@@ -1410,7 +1141,7 @@ function attachMultiplayerServer(serverInstance) {
               role: fpvPhoneState.surface,
               phoneIp: fpvPhoneState.ip,
               lanIp: typeof getLocalLanIp === 'function' ? getLocalLanIp() : '',
-              publicTunnelUrl: cloudflareTunnelUrl || null
+              publicTunnelUrl: getCloudflareTunnelUrl()
             }));
           } catch (e) {}
           if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
@@ -1549,60 +1280,6 @@ function attachMultiplayerServer(serverInstance) {
           }
 
 let lastMovingForwardAt = 0;
-function clampNum(val, min, max, fallback) {
-  const n = Number(val);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, n));
-}
-
-function computeSafeEscPulseUs(msg) {
-  const rawBrake = clampNum(msg.brakeNorm ?? msg.brake ?? 0, 0, 1, 0);
-  const gear = String(msg.gear || 'D').toUpperCase();
-
-  // 1. Nếu có lệnh phanh chủ động -> cắt ga đưa về trung tính 1500 µs ngay lập tức (không bao giờ lùi)
-  if (rawBrake > 0.05) {
-    return 1500;
-  }
-
-  // 2. Nếu client gửi trực tiếp xung micro-giây (ví dụ CAR_CONTROL: { steer: 90, throttle: 1500 })
-  if (msg.escPulseUs !== undefined || (msg.throttle !== undefined && Math.abs(Number(msg.throttle)) >= 500)) {
-    const rawUs = clampNum(msg.escPulseUs ?? msg.throttle, 1150, 1850, 1500);
-    if (rawUs > 1520) {
-      lastMovingForwardAt = Date.now();
-      return Math.round(rawUs);
-    }
-    if (rawUs < 1480) {
-      // Interlock: Nếu vừa mới chạy tiến trong vòng 350ms và chưa sang số R, khóa ở 1500 µs để tránh biến phanh thành lùi
-      if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
-        return 1500;
-      }
-      return Math.round(rawUs);
-    }
-    return 1500;
-  }
-
-  // 3. Nếu client gửi giá trị chuẩn hóa [-1..1] (throttleNorm / steerNorm / steeringNorm)
-  const normDrive = clampNum(msg.throttleNorm ?? msg.throttle ?? 0, -1, 1, 0);
-  if (normDrive > 0.02) {
-    if (gear === 'R') {
-      // Đang cài số R và đạp ga -> Lùi trong dải an toàn [1500..1300 µs]
-      return Math.round(1500 - normDrive * 200);
-    }
-    lastMovingForwardAt = Date.now();
-    // Đang ở số D và đạp ga -> Tiến trong dải an toàn [1500..1700 µs]
-    return Math.round(1500 + normDrive * 200);
-  }
-
-  if (normDrive < -0.02) {
-    // Nếu giá trị âm được gửi khi chưa gạt số R và xe vừa tiến -> coi là phanh dừng (1500 µs)
-    if (gear !== 'R' && (Date.now() - lastMovingForwardAt < 350)) {
-      return 1500;
-    }
-    return Math.round(1500 + normDrive * 200); // normDrive âm -> [1500..1300 µs]
-  }
-
-  return 1500;
-}
 
         } else if (data.type === 'CAR_CONTROL' || data.type === 'RC_CONTROL_CMD') {
           // BỘ TRỌNG TÀI ĐIỀU KHIỂN XE THẬT 2 CHIỀU (Seamless Dual-Mode Arbitration):
@@ -1833,181 +1510,14 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
   console.log(`[HTTP] Server đang chạy tại: http://localhost:${HTTP_PORT}`);
 });
 
-
-function loadEnvConfig() {
-  const envPaths = [
-    path.resolve(__dirname, 'config/.env'),
-    path.resolve(__dirname, '../config/.env'),
-    path.resolve(__dirname, '.env')
-  ];
-  for (const envPath of envPaths) {
-    if (fs.existsSync(envPath)) {
-      try {
-        const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
-          const eqIdx = trimmed.indexOf('=');
-          if (eqIdx !== -1) {
-            const key = trimmed.slice(0, eqIdx).trim();
-            const val = trimmed.slice(eqIdx + 1).trim();
-            if (!process.env[key]) {
-              process.env[key] = val;
-            }
-          }
-        }
-      } catch (e) {}
-    }
-  }
-}
-
-let cloudflareTunnelProcess = null;
-
 const shutdownServer = (code = 0) => {
   if (rcBatteryEstimator.saveTimer) rcBatteryEstimator.save();
   console.log('\n🛑 [SHUTDOWN] Đang đóng Server và giải phóng đường hầm Cloudflare...');
-  if (cloudflareTunnelProcess) {
-    try {
-      const pid = cloudflareTunnelProcess.pid;
-      if (process.platform === 'win32') {
-        require('child_process').execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
-      } else {
-        cloudflareTunnelProcess.kill('SIGKILL');
-      }
-    } catch (e) {}
-    cloudflareTunnelProcess = null;
-  }
+  stopCloudflareTunnelManager();
   process.exit(code);
 };
 process.on('SIGINT', () => shutdownServer(0));
 process.on('SIGTERM', () => shutdownServer(0));
-let cloudflareTunnelUrl = null;
-
-function startCloudflareTunnelManager(httpPort = 8080) {
-  if (cloudflareTunnelProcess) return;
-  const wingetLink = process.env.LOCALAPPDATA
-    ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links', 'cloudflared.exe')
-    : '';
-  const binaryCandidates = [
-    'C:\\Program Files (x86)\\cloudflared\\cloudflared.exe',
-    'C:\\Program Files\\cloudflared\\cloudflared.exe',
-    ...(wingetLink ? [wingetLink] : []),
-    'cloudflared'
-  ];
-  let binaryPath = binaryCandidates.find(p => p && fs.existsSync(p));
-  if (!binaryPath) {
-    try {
-      require('child_process').execSync('where cloudflared', { stdio: 'ignore' });
-      binaryPath = 'cloudflared';
-    } catch (e) {
-      console.warn('⚠️ [Cloudflare Tunnel] Chưa tìm thấy binary cloudflared trên máy.');
-      return;
-    }
-  }
-
-  try {
-    const cp = require('child_process');
-    cloudflareTunnelProcess = cp.spawn(binaryPath, ['tunnel', '--url', `http://127.0.0.1:${httpPort}`, '--no-autoupdate'], {
-      windowsHide: true
-    });
-
-    let urlCaptured = false;
-    cloudflareTunnelProcess.on('error', (err) => {
-      console.warn(`[Cloudflare Tunnel] Lỗi tiến trình cloudflared: ${err.message}`);
-    });
-    cloudflareTunnelProcess.stderr.on('data', (data) => {
-      if (urlCaptured) return;
-      const str = data.toString();
-      const match = str.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/i);
-      if (match) {
-        urlCaptured = true;
-        cloudflareTunnelUrl = match[0].trim();
-        printCloudflareTunnelQr(cloudflareTunnelUrl);
-        if (typeof broadcastCameraIpUpdate === 'function') broadcastCameraIpUpdate();
-      }
-    });
-
-    process.on('exit', () => {
-      if (cloudflareTunnelProcess) {
-        try { cloudflareTunnelProcess.kill(); } catch (e) {}
-      }
-    });
-  } catch (err) {
-    console.warn(`[Cloudflare Tunnel] Không thể khởi động đường hầm: ${err.message}`);
-  }
-}
-
-function printCloudflareTunnelQr(tunnelUrl) {
-  try {
-    const qrcode = require('qrcode-terminal');
-    const fpvTunnelUrl = `${tunnelUrl}/fpv-cam.html`;
-    const passengerTunnelUrl = `${tunnelUrl}/?mode=passenger_mobile`;
-
-    console.log('\n======================================================================');
-    console.log('🌐 [MÃ QR 1B - TOÀN NĂNG XUYÊN WI-FI CÔNG CỘNG & 4G/5G] (CLOUDFLARE SSL XANH):');
-    console.log('👉 Quét bằng BẤT KỲ điện thoại nào (kể cả Wi-Fi quán cafe bật cô lập thiết bị AP Isolation)');
-    console.log('👉 100% Khóa Xanh SSL Quốc Tế - Tuyệt đối không cảnh báo riêng tư - Không cần cài đặt!');
-    console.log(`🔗 URL SSL Công Cộng (Cloudflare): ${fpvTunnelUrl}`);
-    console.log('======================================================================');
-    qrcode.generate(fpvTunnelUrl, { small: true });
-    console.log(`📱 Link Ghế Phụ công cộng (Xem 3D & YouTube): ${passengerTunnelUrl}\n`);
-  } catch (e) {}
-}
-
-function setupFpvPhoneAndDuckDnsManager() {
-  loadEnvConfig();
-  let lanIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : '192.168.1.76';
-  const rawDomain = process.env.DUCKDNS_DOMAIN || 'vr-cam-fpv';
-  const token = process.env.DUCKDNS_TOKEN;
-  const domain = rawDomain.replace(/\.duckdns\.org/g, '');
-  const primarySubdomain = domain.split(',')[0].trim();
-  const fullDomain = `${primarySubdomain}.duckdns.org`;
-
-  function pushDuckDnsUpdate(targetIp, isDynamicChange = false) {
-    if (!domain || !token) return;
-    const updateUrl = `https://www.duckdns.org/update?domains=${encodeURIComponent(domain)}&token=${encodeURIComponent(token)}&ip=${encodeURIComponent(targetIp)}`;
-    https.get(updateUrl, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (data.trim() === 'OK') {
-          if (isDynamicChange) {
-            console.log(`\n======================================================================`);
-            console.log(`🔄 [MẠNG ĐÃ THAY ĐỔI] Phát hiện Wi-Fi mới! IP chuyển: ➔ ${targetIp}`);
-            console.log(`🦆 [DuckDNS] Đã tự động cập nhật ${fullDomain} -> ${targetIp}: THÀNH CÔNG (OK)!`);
-            console.log(`👉 Điện thoại khác chỉ cần quét mã QR là vào ngay IP mới!`);
-            console.log(`======================================================================\n`);
-          } else {
-            console.log(`🦆 [DuckDNS] Tự động ánh xạ ${domain}.duckdns.org -> ${targetIp}: THÀNH CÔNG (OK)`);
-          }
-        } else {
-          console.log(`🦆 [DuckDNS] Cập nhật ${domain}.duckdns.org: ${data.trim()}`);
-        }
-      });
-    }).on('error', (err) => {
-      console.warn(`🦆 [DuckDNS] Không thể kết nối cập nhật DuckDNS: ${err.message}`);
-    });
-  }
-
-  // Cập nhật ngay khi khởi động
-  pushDuckDnsUpdate(lanIp, false);
-
-  // [DYNAMIC NETWORK WATCHER] Giám sát mạng động định kỳ 6 giây: Tự động đổi IP DuckDNS khi đổi Wi-Fi / Hotspot
-  if (!globalThis.__networkWatcherStarted) {
-    globalThis.__networkWatcherStarted = true;
-    let lastIp = lanIp;
-    setInterval(() => {
-      const currentIp = typeof getLocalLanIp === 'function' ? getLocalLanIp() : lastIp;
-      if (currentIp && currentIp !== 'localhost' && currentIp !== lastIp) {
-        lastIp = currentIp;
-        lanIp = currentIp;
-        pushDuckDnsUpdate(currentIp, true);
-      }
-    }, 6000);
-  }
-
-  return { domain, fullDomain, lanIp };
-}
 
 const certPath = fs.existsSync(path.resolve(__dirname, 'tools/cert.pem')) ? path.resolve(__dirname, 'tools/cert.pem') : path.resolve(__dirname, '../tools/cert.pem');
 const keyPath = fs.existsSync(path.resolve(__dirname, 'tools/key.pem')) ? path.resolve(__dirname, 'tools/key.pem') : path.resolve(__dirname, '../tools/key.pem');
@@ -2079,7 +1589,7 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
 
       // Tự động khởi động Cloudflare Quick Tunnel cho Wi-Fi công cộng (AP Isolation Bypass)
       if (typeof startCloudflareTunnelManager === 'function') {
-        startCloudflareTunnelManager(HTTP_PORT || 8080);
+        startCloudflareTunnelManager(HTTP_PORT || 8080, broadcastCameraIpUpdate);
       }
     } catch (e) {}
   });
@@ -2101,14 +1611,14 @@ let sharedYoutubeRoomState = {
 };
 
 // API lấy & cập nhật trạng thái đồng bộ màn hình YouTube giữa Táp-lô trước và 2 màn hình Ghế phụ sau
-app.use(express.json());
+app.use(express.json({ limit: '64kb' }));
 
 app.get('/api/battery', (req, res) => {
   res.set('Cache-Control', 'no-store').json({ battery: rcBatteryEstimator.getPublicState() });
 });
 
 app.post('/api/battery/action', (req, res) => {
-  if (!canChangeBattery(req) && req.body?.type !== 'BATTERY_GET') {
+  if (!isTrustedLocalControlRequest(req) && req.body?.type !== 'BATTERY_GET') {
     return res.status(403).json({ ok: false, error: 'Kết nối này chỉ có quyền xem pin.' });
   }
   const result = dispatchBatteryAction(rcBatteryEstimator, req.body);
@@ -2126,10 +1636,27 @@ app.get('/api/yt-sync-state', (req, res) => {
 });
 
 app.post('/api/yt-sync-state', (req, res) => {
+  if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
   const body = req.body || {};
+  const { videoId, title, currentTime, isPlaying, streamUrl } = body;
+  const updates = {};
+  if (typeof videoId === 'string' && (videoId === '' || YT_VIDEO_ID_RE.test(videoId))) updates.videoId = videoId;
+  if (typeof title === 'string') updates.title = title.slice(0, 200);
+  if (typeof currentTime === 'number' || typeof currentTime === 'string') {
+    updates.currentTime = clampFinite(currentTime, 0, 86400);
+  }
+  if (typeof isPlaying === 'boolean') updates.isPlaying = isPlaying;
+  if (typeof streamUrl === 'string' && streamUrl.length <= 2048) {
+    if (streamUrl === '') updates.streamUrl = streamUrl;
+    else {
+      try {
+        if (['http:', 'https:'].includes(new URL(streamUrl).protocol)) updates.streamUrl = streamUrl;
+      } catch {}
+    }
+  }
   sharedYoutubeRoomState = {
     ...sharedYoutubeRoomState,
-    ...body,
+    ...updates,
     updatedAt: Date.now()
   };
   res.json({ ok: true, state: sharedYoutubeRoomState });
@@ -2137,8 +1664,8 @@ app.post('/api/yt-sync-state', (req, res) => {
 
 // Ghi đè /api/yt-dom-stream hỗ trợ Video > 5 tiếng (18.000+ giây) bằng Multi-Client Innertube
 app.get('/api/yt-long-stream', (req, res) => {
-  const videoId = (req.query.videoId || '').trim();
-  if (!videoId) return res.status(400).json({ error: 'Missing videoId' });
+  const videoId = req.query.videoId;
+  if (typeof videoId !== 'string' || !YT_VIDEO_ID_RE.test(videoId)) return res.status(400).json({ error: 'Invalid videoId' });
 
   const postData = JSON.stringify({
     context: {
@@ -2218,89 +1745,19 @@ const VERIFIED_MP4_FALLBACK_POOL = [
   { url: 'https://vjs.zencdn.net/v/oceans.mp4', duration: '06:00:00' }
 ];
 
-const { exec } = require('child_process');
-const { promisify } = require('util');
-const execP = promisify(exec);
-
-function resolveDirectMp4FromVideoId(videoId) {
-  return new Promise(async (resolve) => {
-    if (!videoId) return resolve(null);
-    try {
-      const { stdout } = await execP(
-        `yt-dlp -f "bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4]/b" -g --no-warnings "https://youtube.com/watch?v=${videoId}"`,
-        { timeout: 15000, maxBuffer: 1024 * 1024 }
-      );
-      const urls = stdout.trim().split('\n').filter(Boolean);
-      if (urls[0] && urls[0].startsWith('http')) {
-        return resolve(urls[0]);
-      }
-    } catch (e) {}
-
-    // Dự phòng qua Android VR Innertube API nếu máy chủ chưa cài yt-dlp
-    try {
-      const postData = JSON.stringify({
-        context: {
-          client: {
-            clientName: 'ANDROID_VR',
-            clientVersion: '1.56.21',
-            androidSdkVersion: 32,
-            hl: 'vi',
-            gl: 'VN'
-          }
-        },
-        videoId,
-        contentCheckOk: true,
-        racyCheckOk: true
-      });
-
-      const options = {
-        hostname: 'www.youtube.com',
-        path: '/youtubei/v1/player?prettyPrint=false',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData),
-          'User-Agent': 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip'
-        },
-        timeout: 6000
-      };
-
-      const req = https.request(options, (res) => {
-        let raw = '';
-        res.on('data', (c) => { raw += c; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(raw);
-            const formats = (json.streamingData && json.streamingData.formats) || [];
-            const mp4 = formats.find((f) => f.url && (f.itag === 18 || f.itag === 22)) ||
-                        formats.find((f) => f.url && f.mimeType && f.mimeType.includes('video/mp4')) ||
-                        formats[0];
-            if (mp4 && mp4.url) return resolve(mp4.url);
-          } catch (e) {}
-          resolve(null);
-        });
-      });
-
-      req.on('error', () => resolve(null));
-      req.on('timeout', () => { req.destroy(); resolve(null); });
-      req.write(postData);
-      req.end();
-    } catch (err) {
-      resolve(null);
-    }
-  });
-}
-
 // Endpoint trả về thẳng luồng MP4 cho bất kỳ videoId hoặc URL F12 nào (Không bao giờ lỗi Unavailable)
 app.get('/api/yt-mp4-direct', async (req, res) => {
-  const videoId = (req.query.videoId || '').trim();
-  const rawUrl = (req.query.url || '').trim();
+  const videoId = req.query.videoId;
+  const rawUrl = req.query.url;
 
-  if (rawUrl && (rawUrl.includes('.mp4') || rawUrl.includes('googlevideo.com/videoplayback'))) {
+  if (rawUrl) {
+    const check = validateProxyTargetUrl(rawUrl, { blockPrivateLan: true });
+    if (!check.valid) return res.status(400).send('SSRF Guard: ' + check.reason);
     return res.redirect(`/api/yt-stream-proxy?url=${encodeURIComponent(rawUrl)}`);
   }
 
   // 1. Thử lấy URL MP4 thật bằng yt-dlp nếu server có cài đặt
+  if (typeof videoId !== 'string' || !YT_VIDEO_ID_RE.test(videoId)) return res.status(400).json({ error: 'Invalid videoId' });
   const dlpUrl = await tryResolveYtDlpStream(videoId);
   if (dlpUrl) {
     return res.redirect(`/api/yt-stream-proxy?url=${encodeURIComponent(dlpUrl)}`);
@@ -2324,25 +1781,15 @@ app.get('/api/yt-mp4-direct', async (req, res) => {
 // ============================================================================
 let cachedScClientId = process.env.SOUNDCLOUD_CLIENT_ID || '';
 
-function fetchUrlText(targetUrl, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const lib = targetUrl.startsWith('https') ? https : http;
-    const req = lib.get(targetUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-        ...headers
-      }
-    }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return fetchUrlText(res.headers.location, headers).then(resolve).catch(reject);
-      }
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => resolve(data));
-    });
-    req.on('error', reject);
-    req.setTimeout(7000, () => { req.destroy(new Error('Timeout')); });
-  });
+async function fetchUrlText(targetUrl, headers = {}) {
+  const upstream = await fetchWithSsrfGuard(targetUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+      ...headers
+    },
+    signal: AbortSignal.timeout(7000)
+  }, { blockPrivateLan: true });
+  return upstream.text();
 }
 
 async function resolveSoundCloudClientId() {
@@ -2450,7 +1897,6 @@ async function handleSoundCloudSearch(req, res) {
 }
 
 app.get('/api/sc-search', handleSoundCloudSearch);
-
 
 // ============================================================================
 // PATCH V250 CHO SERVER.JS:
@@ -2683,7 +2129,10 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
   // Middleware ưu tiên xử lý tất cả API Camera, Điều khiển ESP32 và Đồng bộ HTTP <-> HTTPS
   function rcHardwareV250Middleware(req, res, next) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    const isCameraMutation = (req.query.ip || req.query.port) &&
+      ['/api/esp32-cam-proxy', '/api/esp32-snapshot', '/stream/front', '/stream/rear'].includes(req.path);
+    const isMutationPath = isCameraMutation || localMutationPaths.has(req.path.toLowerCase().replace(/\/+$/, ''));
+    if (!isMutationPath) res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Access-Control-Allow-Private-Network', 'true');
@@ -2693,10 +2142,12 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     if (req.path === '/api/esp32-cam-proxy' || req.path === '/stream/front' || req.path === '/stream/rear') {
       const camType = (req.query.cam === 'rear' || req.path === '/stream/rear') ? 'rear' : 'front';
       if (req.query.ip) {
+        if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
         if (camType === 'rear') rcHardwareState.rearCamIp = String(req.query.ip).trim();
         else rcHardwareState.frontCamIp = String(req.query.ip).trim();
       }
       if (req.query.port) {
+        if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
         if (camType === 'rear') rcHardwareState.rearCamPort = Number(req.query.port) || 81;
         else rcHardwareState.frontCamPort = Number(req.query.port) || 81;
       }
@@ -2707,6 +2158,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
     if (req.path === '/api/esp32-snapshot') {
       const camType = req.query.cam === 'rear' ? 'rear' : 'front';
       if (req.query.ip) {
+        if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
         if (camType === 'rear') rcHardwareState.rearCamIp = String(req.query.ip).trim();
         else rcHardwareState.frontCamIp = String(req.query.ip).trim();
       }
@@ -2725,6 +2177,7 @@ app.get('/api/sc-search', handleSoundCloudSearch);
 
     // 3. API Nhận lệnh điều khiển từ Vô lăng GOG808 / Tay cầm Quest 3 / Điện thoại / Bảng chức năng -> Bắn ra ESP32 Controller
     if (req.path === '/api/rc-control' || req.path === '/api/esp32-config') {
+      if (!isTrustedLocalControlRequest(req)) return res.sendStatus(403);
       const applyParams = (data) => {
         if (data.frontCamIp) rcHardwareState.frontCamIp = String(data.frontCamIp).trim();
         if (data.rearCamIp) rcHardwareState.rearCamIp = String(data.rearCamIp).trim();
@@ -2740,9 +2193,16 @@ app.get('/api/sc-search', handleSoundCloudSearch);
       };
 
       if (req.method === 'POST') {
+        if (req.body !== undefined) return applyParams(req.body || {});
         let raw = '';
-        req.on('data', (c) => { raw += c; });
+        let size = 0;
+        req.on('data', (chunk) => {
+          size += chunk.length;
+          if (size <= 64 * 1024) raw += chunk;
+          else if (!res.headersSent) res.sendStatus(413);
+        });
         req.on('end', () => {
+          if (res.headersSent) return;
           try {
             return applyParams(JSON.parse(raw || '{}'));
           } catch (e) {
@@ -2771,623 +2231,14 @@ app.get('/api/sc-search', handleSoundCloudSearch);
   }
 })();
 
-
 // ============================================================================
 // [UNIFIED INPUT & BRIDGE RELAY] - server/server.js & server.js
 // Đồng bộ tín hiệu GOG R808 từ Laptop (Admin) sang Kính VR (Player) & ESP32 UDP
 // Không spam log, không tạo tiến trình PowerShell phụ, chặn ROOM_SYNC gây giật xe.
 // ============================================================================
-(function attachUnifiedInputAndBridgeServer() {
-  'use strict';
-
-  const os = require('os');
-  const http = require('http');
-  const dgram = require('dgram');
-  const WebSocket = require('ws');
-
-  const ESP32_HOST = process.env.ESP32_CONTROLLER_HOST || process.env.ESP32_CAR_IP || '192.168.1.238';
-  const ESP32_PORT = Number(process.env.ESP32_CONTROLLER_UDP_PORT || process.env.ESP32_CAR_PORT || 4210);
-
-  const udpOutSocket = dgram.createSocket('udp4');
-  udpOutSocket.on('error', () => {});
-
-  let lastUdpSendMs = 0;
-  let lastSteerDegSent = 90;
-  let lastEscUsSent = 1500;
-
-  // ============================================================================
-  // [V504 RESTORED + 1100µs REVERSE] BỘ TRỌNG TÀI ƯU TIÊN VÔ LĂNG & UDP 4210 CHUẨN
-  // ============================================================================
-  const serverStartTime = Date.now();
-
-  const rcArbitration = {
-    lastPhysicalWheelActiveAt: 0,
-    lastSentSteerDeg: 90,
-    lastSentEscUs: 1500,
-    currentSlewEscUs: 1500,
-    idleNeutralCount: 0,
-    lastUdpSendMs: 0,
-    WHEEL_PRIORITY_WINDOW_MS: 350
-  };
-
-  // Trạng thái sự kiện gần nhất để chỉ in log 1 lần khi có thay đổi thực tế (Event-driven)
-  const rcEventState = {
-    action: 'DỪNG',
-    steerSector: 'THẲNG',
-    lastLoggedSteerDeg: 90,
-    lastLoggedEscUs: 1500,
-    lastLoggedSteerTime: 0
-  };
-
-  // Tính toán xung điều tốc ESC mượt mà, triệt tiêu giật bắn và tiếng kêu hú motor
-  function computeAsymmetricEscPulseUs(driveNorm, explicitPulseUs, gear = 'D') {
-    const rawExplicit = Number(explicitPulseUs);
-    if (Number.isFinite(rawExplicit) && rawExplicit >= 1000 && rawExplicit <= 2000 && Math.abs(rawExplicit - 1500) > 15) {
-      if (rawExplicit < 1445 && rawExplicit >= 1250 && driveNorm < -0.05) {
-        const revMag = Math.min(1, Math.max(0, Math.abs(driveNorm)));
-        return Math.round(1480 - Math.pow(revMag, 1.35) * 380);
-      }
-      return Math.round(rawExplicit);
-    }
-
-    const d = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-    // Vùng chết an toàn 4.5% - Đảm bảo triệt để khi xe dừng/khởi động server ESC nhận chuẩn 1500µs, không bao giờ bị kêu hú motor
-    if (Math.abs(d) <= 0.045) return 1500;
-
-    if (d > 0.045 && gear !== 'R') {
-      // TIẾN: Ramping êm ái từ 1522µs đến 1850µs (Lũy thừa 1.6 chống giật bắn)
-      const normD = (d - 0.045) / 0.955;
-      return Math.round(1522 + Math.pow(normD, 1.6) * 328);
-    } else {
-      // LÙI: Ramping êm ái từ 1478µs xuống 1100µs (Lũy thừa 1.35 đạt 1100µs chuẩn v504)
-      const revMag = (Math.abs(d) - 0.045) / 0.955;
-      return Math.round(1478 - Math.pow(revMag, 1.35) * 378);
-    }
-  }
-
-  // Hàm duy nhất gửi tín hiệu qua UDP tới mạch ESP32 Xe RC
-  function sendRateLimitedEsp32Udp(steerNorm, driveNorm, explicitEscPulseUs, gear = 'D', source = 'UNKNOWN') {
-    const now = Date.now();
-    const rawS = Math.max(-1, Math.min(1, Number(steerNorm) || 0));
-    const rawD = Math.max(-1, Math.min(1, Number(driveNorm) || 0));
-
-    // Lọc deadzone sạch sẽ chống rung cảm biến DirectInput
-    const sNorm = Math.abs(rawS) < 0.035 ? 0 : rawS;
-    const dNorm = Math.abs(rawD) < 0.045 ? 0 : rawD;
-
-    const isInputActive = sNorm !== 0 || dNorm !== 0 ||
-      (Number.isFinite(Number(explicitEscPulseUs)) && Math.abs(Number(explicitEscPulseUs) - 1500) > 20);
-
-    if (isInputActive) {
-      rcArbitration.idleNeutralCount = 0;
-      if (source === 'WINMM_USB') {
-        rcArbitration.lastPhysicalWheelActiveAt = now;
-      }
-    } else {
-      // Khi xe ở trạng thái nghỉ: Duy trì nhịp heartbeat 350ms gửi gói Neutral [90°, 1500µs]
-      // để duy trì failsafe ESP32 luôn an toàn, không bị mất tín hiệu hoặc nhiễu
-      if (now - rcArbitration.lastUdpSendMs < 350) {
-        return;
-      }
-    }
-
-    // Khóa trọng tài: Nếu vô lăng USB vật lý trên host (WINMM_USB) đang kết nối hoặc vừa hoạt động,
-    // TUYỆT ĐỐI BỎ QUA mọi nguồn điều khiển khác (WHEEL_BRIDGE, QUEST_CAR_CONTROL, UDP_CAR_CMD) để chống xung đột và ga/lùi ảo từ trình duyệt!
-    const isNativeWheelMaster = Boolean(latestBridgeState && latestBridgeState.connected && latestBridgeState.source === 'GOG808_NATIVE' && (now - (latestBridgeState.timestamp || 0) < 2000));
-    if (source !== 'WINMM_USB' &&
-        (isNativeWheelMaster || (now - rcArbitration.lastPhysicalWheelActiveAt < rcArbitration.WHEEL_PRIORITY_WINDOW_MS))) {
-      return;
-    }
-
-    // Tự động báo Điện Thoại FPV đổi mặt camera khi vào số lùi (R) hoặc tiến (D)
-    let effectiveGear = String(gear || 'D').toUpperCase();
-    if (dNorm < -0.04) {
-      effectiveGear = 'R';
-    } else if (dNorm > 0.04) {
-      effectiveGear = 'D';
-    }
-    const desiredSurface = effectiveGear === 'R' ? 'rear' : 'front';
-    if (globalThis.__lastFpvSurface !== desiredSurface) {
-      globalThis.__lastFpvSurface = desiredSurface;
-      const switchPkt1 = JSON.stringify({ type: 'SWITCH_FPV_SURFACE', surface: desiredSurface, gear: effectiveGear });
-      const switchPkt2 = JSON.stringify({ type: 'FPV_SWITCH_CAMERA', surface: desiredSurface, gear: effectiveGear });
-      for (const client of activeMultiplayerSockets) {
-        if (client.readyState === 1) {
-          try {
-            client.send(switchPkt1);
-            client.send(switchPkt2);
-          } catch (e) {}
-        }
-      }
-    }
-
-    // Góc lái chuẩn RC Servo (V504): 45° (phải) .. 90° (thẳng) .. 135° (trái)
-    let steerDeg = Math.max(45, Math.min(135, Math.round(90 - sNorm * 45)));
-    let targetEscUs = computeAsymmetricEscPulseUs(dNorm, explicitEscPulseUs, effectiveGear);
-
-    // KHÓA AN TOÀN KHỞI ĐỘNG (Startup Safety Gate 3.0s):
-    // Trong 3 giây đầu khi server mới bật, KHÓA CỨNG xung ga ở 1500µs (Neutral) và lái ở 90°,
-    // tuyệt đối không phát bất kỳ xung ga tiến/lùi nào để chờ phần cứng và driver vô lăng ổn định!
-    if (now - serverStartTime < 3000) {
-      steerDeg = 90;
-      targetEscUs = 1500;
-      rcArbitration.currentSlewEscUs = 1500;
-    }
-
-    // Bộ lọc Slew Rate Limiter chống giật xung đột ngột
-    if (targetEscUs === 1500) {
-      // Trả về neutral dứt khoát triệt tiêu tiếng hú motor
-      if (Math.abs(rcArbitration.currentSlewEscUs - 1500) <= 80) {
-        rcArbitration.currentSlewEscUs = 1500;
-      } else if (rcArbitration.currentSlewEscUs > 1500) {
-        rcArbitration.currentSlewEscUs -= 80;
-      } else {
-        rcArbitration.currentSlewEscUs += 80;
-      }
-    } else {
-      const maxSlewPerTick = 45;
-      if (targetEscUs > rcArbitration.currentSlewEscUs) {
-        rcArbitration.currentSlewEscUs = Math.min(targetEscUs, rcArbitration.currentSlewEscUs + maxSlewPerTick);
-      } else if (targetEscUs < rcArbitration.currentSlewEscUs) {
-        rcArbitration.currentSlewEscUs = Math.max(targetEscUs, rcArbitration.currentSlewEscUs - maxSlewPerTick);
-      }
-    }
-    const escPulseUs = rcArbitration.currentSlewEscUs;
-
-    // Giới hạn tần số gửi gói tin UDP:
-    // - Khi xe đang có thao tác lái/ga: duy trì dòng xung liên tục ~22Hz (45ms) để servo giữ góc vững, tuyệt đối không bị dính failsafe ESP32 500ms
-    // - Khi xe đứng yên ở neutral: giãn cách heartbeat 250ms để tiết kiệm băng thông và chống tràn log
-    const isActivelyControlling = (sNorm !== 0 || dNorm !== 0 || targetEscUs !== 1500 || steerDeg !== 90);
-    const keepaliveIntervalMs = isActivelyControlling ? 45 : 250;
-    const changed = (steerDeg !== rcArbitration.lastSentSteerDeg) || (escPulseUs !== rcArbitration.lastSentEscUs);
-    if (!changed && (now - rcArbitration.lastUdpSendMs < keepaliveIntervalMs)) return;
-    if (now - rcArbitration.lastUdpSendMs < 25) return;
-
-    rcArbitration.lastUdpSendMs = now;
-    rcArbitration.lastSentSteerDeg = steerDeg;
-    rcArbitration.lastSentEscUs = escPulseUs;
-
-    // --- CƠ CHẾ LOG SỰ KIỆN DUY NHẤT (STRICT EVENT-DRIVEN: CHỈ IN 1 LẦN KHI SỰ KIỆN THAY ĐỔI) ---
-    const action = escPulseUs > 1520 ? 'TIẾN' : (escPulseUs < 1480 ? 'LÙI' : 'DỪNG');
-    const steerSector = steerDeg < 85 ? 'PHẢI' : (steerDeg > 95 ? 'TRÁI' : 'THẲNG');
-    const actionChanged = action !== rcEventState.action;
-    const steerSectorChanged = steerSector !== rcEventState.steerSector && (now - (rcEventState.lastLoggedSteerTime || 0) > 600);
-
-    if (actionChanged || steerSectorChanged) {
-      rcEventState.action = action;
-      rcEventState.steerSector = steerSector;
-      rcEventState.lastLoggedSteerDeg = steerDeg;
-      rcEventState.lastLoggedEscUs = escPulseUs;
-
-      if (actionChanged) {
-        if (action === 'TIẾN') {
-          const gasPct = Math.round(((escPulseUs - 1520) / 330) * 100);
-          console.log(`🏎️ [RC EVENT] TIẾN | Ga: ${escPulseUs}µs (~${Math.max(1, gasPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
-        } else if (action === 'LÙI') {
-          const revPct = Math.round(((1480 - escPulseUs) / 380) * 100);
-          console.log(`🔙 [RC EVENT] LÙI | Ga: ${escPulseUs}µs (~${Math.max(1, revPct)}%) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
-        } else if (action === 'DỪNG') {
-          console.log(`🛑 [RC EVENT] DỪNG XE (Neutral 1500µs) | Lái: ${steerDeg}° [${steerSector}] (${source})`);
-        }
-      } else if (steerSectorChanged) {
-        rcEventState.lastLoggedSteerTime = now;
-        console.log(`🛞 [RC EVENT] ĐÁNH LÁI: ${steerDeg}° [${steerSector}] (${source})`);
-      }
-    }
-
-    const targetHost = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.ip) ? esp32CarConfig.ip : ESP32_HOST;
-    const targetPort = (typeof esp32CarConfig !== 'undefined' && esp32CarConfig && esp32CarConfig.port) ? esp32CarConfig.port : ESP32_PORT;
-
-    const pkt = Buffer.alloc(4);
-    pkt.writeInt16LE(steerDeg, 0);
-    rcBatteryEstimator.recordControlInput({ escPulseUs, steerDeg, gear: effectiveGear, source, nowMs: now });
-    pkt.writeInt16LE(escPulseUs, 2);
-    const activeUdpSocket = (typeof udpOutSocket !== 'undefined' && udpOutSocket) ? udpOutSocket : udpServer;
-    try {
-      if (activeUdpSocket) {
-        activeUdpSocket.send(pkt, 0, 4, targetPort, targetHost, (err) => {
-          if (!err && typeof esp32CarConfig !== 'undefined' && esp32CarConfig) {
-            esp32CarConfig.lastSentTime = now;
-            esp32CarConfig.packetsSent++;
-          }
-        });
-      }
-    } catch (e) {}
-  }
-
-  // Xuất ra globalThis để sendUdpCarCommand sử dụng thống nhất 1 socket và 1 bộ trọng tài
-  globalThis.sendRateLimitedEsp32Udp = sendRateLimitedEsp32Udp;
-  globalThis.rcArbitration = rcArbitration;
-
-  function getLanIpv4List() {
-    const list = [];
-    const nets = os.networkInterfaces();
-    for (const name of Object.keys(nets)) {
-      if (/vmware|vbox|vethernet|wsl|tailscale|loopback|tun|tap/i.test(name)) continue;
-      for (const net of nets[name] || []) {
-        if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('169.254.')) {
-          list.push(net.address);
-        }
-      }
-    }
-    return list.length ? list : ['127.0.0.1'];
-  }
-
-  const latestBridgeState = globalThis.latestBridgeState;
-
-  // Endpoint nhẹ cho phép kính VR khám phá IP LAN một lần khi khởi động
-  if (!http.Server.prototype.__unifiedBridgePingBound) {
-    http.Server.prototype.__unifiedBridgePingBound = true;
-    const origEmit = http.Server.prototype.emit;
-    http.Server.prototype.emit = function (event, req, res, ...rest) {
-      if (event === 'request' && req && res && req.url && req.url.startsWith('/api/bridge-ping')) {
-        res.writeHead(200, {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-store'
-        });
-        res.end(JSON.stringify({
-          ok: true,
-          service: 'GOG808_LAPTOP_BRIDGE',
-          ips: getLanIpv4List(),
-          wheel: latestBridgeState,
-          car: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig) ? esp32CarConfig : { ip: '192.168.1.238', port: 4210 },
-          cams: (typeof discoveredEsp32Cams !== 'undefined') ? discoveredEsp32Cams : {},
-          timestamp: Date.now()
-        }));
-        return true;
-      }
-      return origEmit.call(this, event, req, res, ...rest);
-    };
-  }
-
-  function bindUnifiedWss(wssInstance) {
-    if (!wssInstance || wssInstance.__unifiedInputBound) return;
-    wssInstance.__unifiedInputBound = true;
-
-    wssInstance.on('connection', (ws, req) => {
-      const reqUrl = (req && req.url) || '';
-      if (reqUrl.includes('/esp32-front-ws') || reqUrl.includes('/esp32-rear-ws')) {
-        return;
-      }
-      if (ws.readyState === WebSocket.OPEN) {
-        if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
-        activeMultiplayerSockets.add(ws);
-        ws.on('close', () => activeMultiplayerSockets.delete(ws));
-        ws.on('error', () => activeMultiplayerSockets.delete(ws));
-      }
-      const unifiedCams = typeof getEffectiveCamEndpoints === 'function' ? getEffectiveCamEndpoints() : {
-        front: discoveredEsp32Cams.front,
-        rear: discoveredEsp32Cams.rear
-      };
-      ws.send(JSON.stringify({
-          type: 'SERVER_LAN_INFO',
-          ips: getLanIpv4List(),
-          lanIp: typeof getLocalLanIp === 'function' ? getLocalLanIp() : (getLanIpv4List()[0] || '127.0.0.1'),
-          port: typeof HTTP_PORT === 'number' ? HTTP_PORT : 8080,
-          publicTunnelUrl: unifiedCams.publicTunnelUrl || null,
-          fpvPhone: unifiedCams.fpvPhone || null,
-          car: {
-            ip: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.ip) ? esp32CarConfig.ip : '192.168.1.238',
-            port: (typeof esp32CarConfig !== 'undefined' && esp32CarConfig.port) ? esp32CarConfig.port : 4210
-          },
-          cams: unifiedCams
-        }));
-        try {
-          ws.send(JSON.stringify({
-            type: 'CAM_IP_UPDATED',
-            cams: unifiedCams,
-            fpvPhone: unifiedCams.fpvPhone || null,
-            publicTunnelUrl: unifiedCams.publicTunnelUrl || null,
-            front: unifiedCams.front,
-            rear: unifiedCams.rear
-          }));
-        } catch (e) {}
-        if (latestBridgeState.connected && (Date.now() - latestBridgeState.timestamp < 2000)) {
-          ws.send(JSON.stringify({
-            type: 'WHEEL_BRIDGE_STATE',
-            ...latestBridgeState
-          }));
-        } else {
-          ws.send(JSON.stringify({
-            type: 'WHEEL_BRIDGE_STATE',
-            connected: false,
-            source: 'NONE',
-            deviceId: 'None (Disconnected)',
-            steerNorm: 0,
-            gasNorm: 0,
-            brakeNorm: 0,
-            driveNorm: 0,
-            gear: 'D',
-            timestamp: Date.now()
-          }));
-        }
-      }
-
-      ws.on('message', (raw, isBinary) => {
-        if (isBinary) return;
-        let data;
-        try {
-          const str = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);
-          if (!str.startsWith('{')) return;
-          data = JSON.parse(str);
-        } catch (e) {
-          return;
-        }
-        if (!data || typeof data !== 'object') return;
-
-        // 1. Nhận tín hiệu GOG R808 đã chuẩn hóa từ Laptop (Admin) và đồng bộ sang Kính VR
-        if (data.type === 'WHEEL_BRIDGE_INPUT') {
-          const src = data.payload || data;
-          const steerNorm = Number(Math.max(-1, Math.min(1, Number(src.steerNorm ?? src.steeringNorm ?? 0))).toFixed(4));
-          const gasNorm = Number(Math.max(0, Math.min(1, Number(src.gasNorm ?? (typeof src.gasPercent === 'number' ? src.gasPercent / 100 : 0))).toFixed(4)));
-          const brakeNorm = Number(Math.max(0, Math.min(1, Number(src.brakeNorm ?? (typeof src.brakePercent === 'number' ? src.brakePercent / 100 : 0))).toFixed(4)));
-          const reverseNorm = Number(Math.max(0, Math.min(1, Number(src.reverseNorm ?? (typeof src.reversePercent === 'number' ? src.reversePercent / 100 : 0))).toFixed(4)));
-          const driveNorm = Number(Math.max(-1, Math.min(1, Number(src.driveNorm ?? (gasNorm - brakeNorm - reverseNorm)))).toFixed(4));
-          const gear = src.gear || (brakeNorm > 0.04 && gasNorm < 0.03 ? 'R' : (reverseNorm > 0.04 ? 'R' : 'D'));
-          const buttonEvents = Array.isArray(src.buttonEvents) ? src.buttonEvents : [];
-
-          latestBridgeState.connected = Boolean(src.connected !== false);
-          latestBridgeState.source = src.source || 'BROWSER_BRIDGE';
-          latestBridgeState.steerNorm = steerNorm;
-          latestBridgeState.gasNorm = gasNorm;
-          latestBridgeState.brakeNorm = brakeNorm;
-          latestBridgeState.reverseNorm = reverseNorm;
-          latestBridgeState.driveNorm = driveNorm;
-          latestBridgeState.gear = gear;
-          latestBridgeState.seq = (latestBridgeState.seq + 1) % 1000000;
-          latestBridgeState.timestamp = Date.now();
-
-          const outMsg = JSON.stringify({
-            type: 'WHEEL_BRIDGE_STATE',
-            connected: latestBridgeState.connected,
-            steerNorm,
-            steeringNorm: steerNorm,
-            steerAngleDeg: Math.max(-540, Math.min(540, Math.round(steerNorm * 540))),
-            gasNorm,
-            brakeNorm,
-            reverseNorm: gear === 'R' ? Math.max(brakeNorm, reverseNorm) : reverseNorm,
-            driveNorm,
-            throttleNorm: driveNorm,
-            gasPercent: Math.round(gasNorm * 100),
-            brakePercent: Math.round(brakeNorm * 100),
-            reversePercent: gear === 'R' ? Math.round(Math.max(brakeNorm, reverseNorm) * 100) : Math.round(reverseNorm * 100),
-            gear,
-            steer: Math.max(45, Math.min(135, Math.round(90 - steerNorm * 45))),
-            throttle: Math.max(1000, Math.min(2000, Math.round(1500 + driveNorm * 260))),
-            buttonEvents,
-            seq: latestBridgeState.seq,
-            timestamp: latestBridgeState.timestamp
-          });
-
-          if (wssInstance.clients) {
-            wssInstance.clients.forEach((client) => {
-              // Chỉ gửi khi buffer của client thông thoáng (< 64KB) để tránh dồn gói gây giật lag
-              if (client !== ws && client.readyState === WebSocket.OPEN && client.bufferedAmount < 65536) {
-                client.send(outMsg);
-              }
-            });
-          }
-
-          sendRateLimitedEsp32Udp(steerNorm, driveNorm, null, gear, 'WHEEL_BRIDGE');
-          return;
-        }
-
-        // 2. Nhận lệnh điều khiển từ Bàn phím (Localhost) hoặc Tay cầm VR (Kính) gửi xuống ESP32
-        if (data.type === 'RC_CONTROL_CMD' || data.type === 'CAR_CONTROL') {
-          let sNorm = 0;
-          if (data.steeringNorm !== undefined || data.steerNorm !== undefined) {
-            sNorm = Number(data.steeringNorm ?? data.steerNorm ?? 0);
-          } else if (data.steer !== undefined || data.steeringDeg !== undefined) {
-            const rawS = Math.max(45, Math.min(135, Math.round(Number(data.steer ?? data.steeringDeg) || 90)));
-            sNorm = (rawS - 90) / 45;
-          }
-          let dNorm = 0;
-          let explicitPulse = null;
-          if (data.throttleNorm !== undefined || data.driveNorm !== undefined) {
-            dNorm = Number(data.throttleNorm ?? data.driveNorm ?? 0);
-          } else if (data.throttle !== undefined || data.escPulseUs !== undefined) {
-            const rawT = Math.max(1050, Math.min(1950, Math.round(Number(data.throttle ?? data.escPulseUs) || 1500)));
-            dNorm = (rawT - 1500) / 350;
-            explicitPulse = rawT;
-          }
-          sendRateLimitedEsp32Udp(sNorm, dNorm, explicitPulse, data.gear || (dNorm < -0.02 ? 'R' : 'D'), 'QUEST_CAR_CONTROL');
-          return;
-        }
-      });
-    });
-  }
-
-  if (typeof wss !== 'undefined' && wss) {
-    bindUnifiedWss(wss);
-  }
-  const WssProto = WebSocket.Server ? WebSocket.Server.prototype : null;
-  if (WssProto && !WssProto.__unifiedProtoHooked) {
-    WssProto.__unifiedProtoHooked = true;
-    const origOn = WssProto.on;
-    WssProto.on = function (evt, listener) {
-      if (evt === 'connection') bindUnifiedWss(this);
-      return origOn.call(this, evt, listener);
-    };
-  }
-
-
-  // --------------------------------------------------------------------------
-  
-
-
-
-  // --------------------------------------------------------------------------
-  // BỘ ĐỌC NATIVE VÔ LĂNG GOG R808 TỰ ĐỘNG KHỞI CHẠY TRÊN WINDOWS HOST
-  // (Không cần mở trình duyệt localhost, Kính Quest 3 nhận ngay lập tức!)
-  // --------------------------------------------------------------------------
-  const { spawn: spawnProcess } = require('child_process');
-  const pathModule = require('path');
-  const fsModule = require('fs');
-
-  let nativeWheelChild = null;
-  let lastTerminalLogMs = 0;
-
-  function startNativeWheelBridge() {
-    if (process.platform !== 'win32') return;
-    const exeCandidates = [
-      pathModule.join(__dirname, 'tools', 'gog808_native_bridge.exe'),
-      pathModule.join(__dirname, '..', 'tools', 'gog808_native_bridge.exe'),
-      pathModule.resolve('tools/gog808_native_bridge.exe')
-    ];
-    const exePath = exeCandidates.find(p => fsModule.existsSync(p));
-    if (!exePath) {
-      console.warn('⚠️ [GOG808 NATIVE] Không tìm thấy file gog808_native_bridge.exe');
-      return;
-    }
-
-    try {
-      if (nativeWheelChild) {
-        try { nativeWheelChild.kill(); } catch (e) {}
-        nativeWheelChild = null;
-      }
-      nativeWheelChild = spawnProcess(exePath, [], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
-      });
-    } catch (e) {
-      console.warn('⚠️ [GOG808 NATIVE] Lỗi khởi chạy native bridge:', e.message);
-      return;
-    }
-
-    console.log('✅ [V503 USB] Đã nhận diện Vô lăng GOG R808 tại cổng ID=0 (Native Host 50Hz)');
-
-    let buf = '';
-    nativeWheelChild.stdout.on('data', (chunk) => {
-      buf += chunk.toString('utf8');
-      const lines = buf.split('\n');
-      buf = lines.pop() || '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('{')) continue;
-        try {
-          const data = JSON.parse(trimmed);
-          if (data && data.type === 'WHEEL_BRIDGE_STATE') {
-            if (data.connected) {
-              latestBridgeState.connected = true;
-              latestBridgeState.source = 'GOG808_NATIVE';
-            latestBridgeState.steerNorm = data.steerNorm;
-            latestBridgeState.gasNorm = data.gasNorm;
-            latestBridgeState.brakeNorm = data.brakeNorm;
-            latestBridgeState.reverseNorm = data.reverseNorm;
-            latestBridgeState.driveNorm = data.driveNorm;
-            latestBridgeState.gear = data.gear;
-            latestBridgeState.seq = data.seq;
-            latestBridgeState.timestamp = Date.now();
-
-            const clientCount = (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) ? activeMultiplayerSockets.size : 0;
-
-            const outMsg = JSON.stringify({
-              type: 'WHEEL_BRIDGE_STATE',
-              connected: true,
-              source: 'GOG808_NATIVE',
-              deviceId: 'GOG R808 (Native Host)',
-              steerNorm: data.steerNorm,
-              steeringNorm: data.steerNorm,
-              steerAngleDeg: Math.max(-540, Math.min(540, Math.round(data.steerNorm * 540))),
-              gasNorm: data.gasNorm,
-              brakeNorm: data.brakeNorm,
-              reverseNorm: data.reverseNorm,
-              driveNorm: data.driveNorm,
-              throttleNorm: data.driveNorm,
-              gasPercent: Math.round(data.gasNorm * 100),
-              brakePercent: Math.round(data.brakeNorm * 100),
-              reversePercent: Math.round(data.reverseNorm * 100),
-              gear: data.gear,
-              steer: Math.max(45, Math.min(135, Math.round(90 - data.steerNorm * 45))),
-              throttle: Math.max(1000, Math.min(2000, Math.round(1500 + data.driveNorm * 260))),
-              buttonEvents: [],
-              seq: data.seq,
-              timestamp: latestBridgeState.timestamp
-            });
-
-            // Phát sóng tới toàn bộ WebSocket clients (Kính Quest 3, Mobile, v.v.)
-            if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
-              for (const client of activeMultiplayerSockets) {
-                if (client && client.readyState === WebSocket.OPEN && client.bufferedAmount < 65536) {
-                  try { client.send(outMsg); } catch (err) {}
-                }
-              }
-            }
-
-            // Gửi xuống ESP32 RC Car qua UDP (Port 4210)
-            sendRateLimitedEsp32Udp(data.steerNorm, data.driveNorm, null, data.gear, 'WINMM_USB');
-          } else {
-            // Khi rút dây USB GOG808 hoặc không tìm thấy joystick:
-            if (latestBridgeState.connected || rcArbitration.lastPhysicalWheelActiveAt > 0) {
-              latestBridgeState.connected = false;
-              rcArbitration.lastPhysicalWheelActiveAt = 0;
-              console.log('🔌 [GOG808] Vô lăng USB ngắt kết nối -> Nhượng quyền điều khiển cho Kính VR / Tay cầm!');
-              const outMsg = JSON.stringify({
-                type: 'WHEEL_BRIDGE_STATE',
-                connected: false,
-                source: 'GOG808_NATIVE',
-                deviceId: 'None (Disconnected)',
-                steerNorm: 0,
-                gasNorm: 0,
-                brakeNorm: 0,
-                driveNorm: 0,
-                gear: 'D',
-                timestamp: Date.now()
-              });
-              if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
-                for (const client of activeMultiplayerSockets) {
-                  if (client && client.readyState === WebSocket.OPEN) {
-                    try { client.send(outMsg); } catch (err) {}
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {}
-      }
-    });
-
-    nativeWheelChild.stderr.on('data', (d) => {
-      const errStr = d.toString('utf8');
-      if (errStr.includes('CALIBRATED_REST')) {
-        console.log('⚙️ [GOG808 NATIVE]', errStr.trim());
-      }
-    });
-
-    nativeWheelChild.on('exit', () => {
-      nativeWheelChild = null;
-      if (latestBridgeState.connected) {
-        latestBridgeState.connected = false;
-        rcArbitration.lastPhysicalWheelActiveAt = 0;
-        const outMsg = JSON.stringify({
-          type: 'WHEEL_BRIDGE_STATE',
-          connected: false,
-          source: 'GOG808_NATIVE',
-          deviceId: 'None (Disconnected)',
-          timestamp: Date.now()
-        });
-        if (typeof activeMultiplayerSockets !== 'undefined' && activeMultiplayerSockets) {
-          for (const client of activeMultiplayerSockets) {
-            if (client && client.readyState === WebSocket.OPEN) {
-              try { client.send(outMsg); } catch (err) {}
-            }
-          }
-        }
-      }
-      setTimeout(startNativeWheelBridge, 2500);
-    });
-
-    process.on('exit', () => {
-      if (nativeWheelChild) {
-        try { nativeWheelChild.kill(); } catch (e) {}
-        nativeWheelChild = null;
-      }
-    });
-  }
-
-  startNativeWheelBridge();
-
-})();
+attachUnifiedInputAndBridgeServer({
+  serverDir: __dirname,
+  nativeWheelSource: 'WINMM_USB',
+  HTTP_PORT, activeMultiplayerSockets, discoveredEsp32Cams, esp32CarConfig,
+  getEffectiveCamEndpoints, getLocalLanIp, rcBatteryEstimator, udpServer,
+});
